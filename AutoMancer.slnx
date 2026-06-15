@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/AutoMancer.Cli/AutoMancer.Cli.csproj" />
+    <Project Path="src/AutoMancer.Engine/AutoMancer.Engine.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/AutoMancer.Engine.Tests/AutoMancer.Engine.Tests.csproj" />
+  </Folder>
+</Solution>

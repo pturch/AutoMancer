@@ -30,7 +30,7 @@ All git operations are the developer's responsibility. Never run `git add`, `git
 
 ## Code style
 
-Write the minimum code that satisfies the requirement. No speculative abstractions, no helper methods for single call sites, no defensive error handling for internal code paths. Three similar lines beats a premature abstraction. Comments only when the *why* is non-obvious — never narrate what the code already says.
+Write the minimum code that satisfies the requirement. No speculative abstractions, no helper methods for single call sites, no defensive error handling for internal code paths. Three similar lines beats a premature abstraction. Functions should have a topline header comment that is brief and explains the purpose of the function. Inline comments only when the *why* is non-obvious — never narrate what the code already says.
 
 ## Key invariants
 

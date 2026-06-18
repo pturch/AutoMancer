@@ -1,5 +1,5 @@
 
-// Copyright (c) AutoMancer Contributors. Licensed under the MIT License.
+// Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
 namespace AutoMancer.Engine.Core;
 
 public sealed class ResolverOptions

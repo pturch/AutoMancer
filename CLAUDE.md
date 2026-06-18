@@ -30,7 +30,16 @@ All git operations are the developer's responsibility. Never run `git add`, `git
 
 ## Code style
 
-Write the minimum code that satisfies the requirement. No speculative abstractions, no helper methods for single call sites, no defensive error handling for internal code paths. Three similar lines beats a premature abstraction. Functions should have a topline header comment that is brief and explains the purpose of the function. Inline comments only when the *why* is non-obvious — never narrate what the code already says.
+Write the minimum code that satisfies the requirement. No speculative abstractions, no helper methods for single call sites, no defensive error handling for internal code paths. Three similar lines beats a premature abstraction.
+
+**Every function/method gets a one-line topline header comment** that briefly explains its purpose. This applies to constructors, public methods, and private helpers alike. Place it directly above the signature:
+
+```csharp
+// Serializes and writes one JSON line; no-ops when level is below the configured minimum.
+private void Write(LogLevel level, string message, object? data) { ... }
+```
+
+Inline comments only when the *why* is non-obvious — never narrate what the code already says.
 
 ## Key invariants
 
@@ -43,5 +52,5 @@ Write the minimum code that satisfies the requirement. No speculative abstractio
 ## Every `.cs` file starts with
 
 ```csharp
-// Copyright (c) AutoMancer Contributors. Licensed under the MIT License.
+// Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
 ```

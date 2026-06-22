@@ -500,7 +500,7 @@ dotnet build AutoMancer.slnx
 
 ## Constraints
 
-- Every `.cs` file starts with `// Copyright (c) AutoMancer Contributors. Licensed under the MIT License.`
+- Every `.cs` file starts with `// Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.`
 - `net10.0-windows10.0.22621.0` only — no cross-platform guards
 - `System.Text.Json` throughout — no Newtonsoft.Json
 - No DI container — providers wired manually at call sites

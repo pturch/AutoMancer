@@ -11,4 +11,10 @@
     <PackageReference Include="Interop.UIAutomationClient" Version="10.19041.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+      <_Parameter1>AutoMancer.Engine.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
 </Project>

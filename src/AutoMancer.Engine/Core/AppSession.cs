@@ -1,9 +1,11 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
 using System.Diagnostics;
+using AutoMancer.Engine.Dpi;
 using AutoMancer.Engine.Errors;
 
 namespace AutoMancer.Engine.Core;
 
+// Wraps a running target application — launch, attach by PID/title, and the window handle used to find/act on its elements.
 public sealed class AppSession : IAsyncDisposable
 {
     public string SessionId { get; }
@@ -11,6 +13,9 @@ public sealed class AppSession : IAsyncDisposable
     public IntPtr RootWindowHandle { get; }
 
     private readonly Process _process;
+
+    // Runs once per process, before any session is created, so every coordinate query that follows sees true physical pixels.
+    static AppSession() => DpiAwareness.EnsureConfigured();
 
     // Direct construction is intentionally private — use the static factory methods.
     private AppSession(string sessionId, Process process, IntPtr rootWindowHandle)
@@ -45,18 +50,30 @@ public sealed class AppSession : IAsyncDisposable
         if (process is null)
             throw new AppLaunchError($"Failed to start process: {executablePath}");
 
+        var processName = process.ProcessName;
         var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
-        while (process.MainWindowHandle == IntPtr.Zero && DateTime.UtcNow < deadline)
+        while (DateTime.UtcNow < deadline)
         {
+            if (!process.HasExited)
+            {
+                process.Refresh();
+                if (process.MainWindowHandle != IntPtr.Zero)
+                    return FromProcess(process);
+            }
+            else
+            {
+                // Packaged apps (e.g. Windows 11's Notepad) exit their launcher stub once activation has been handed
+                // off to the real windowed host process — which may be a pre-existing instance reused as a new tab.
+                var windowed = Process.GetProcessesByName(processName).FirstOrDefault(p => p.MainWindowHandle != IntPtr.Zero);
+                if (windowed is not null)
+                    return FromProcess(windowed);
+            }
+
             await Task.Delay(200, ct).ConfigureAwait(false);
-            process.Refresh();
         }
 
-        if (process.MainWindowHandle == IntPtr.Zero)
-            throw new AppLaunchError(
-                $"Process started (PID {process.Id}) but no window appeared within {timeoutMs} ms: {executablePath}");
-
-        return FromProcess(process);
+        throw new AppLaunchError(
+            $"Process started (PID {process.Id}) but no window appeared within {timeoutMs} ms: {executablePath}");
     }
 
     // Wraps an already-running process identified by PID.
@@ -111,4 +128,8 @@ public sealed class AppSession : IAsyncDisposable
     // Creates a session from an already-validated process with a known window handle.
     private static AppSession FromProcess(Process process) =>
         new(Guid.NewGuid().ToString("N"), process, process.MainWindowHandle);
+
+    // Bypasses launch/attach validation to build a session for unit tests that mock providers and never touch a real window.
+    internal static AppSession CreateForTesting(Process process, IntPtr rootWindowHandle) =>
+        new(Guid.NewGuid().ToString("N"), process, rootWindowHandle);
 }

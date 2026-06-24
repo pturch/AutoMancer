@@ -1,6 +1,7 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
 namespace AutoMancer.Engine.Core;
 
+// A read-only, point-in-time copy of an element's properties and its full subtree, used for tree dumps and closest-match search.
 public sealed record ElementSnapshot(
     string Id,
     string? Name,
@@ -11,6 +12,7 @@ public sealed record ElementSnapshot(
     IReadOnlyList<ElementSnapshot> Children
 );
 
+// The contract every automation backend (UIA3, UIA2, Win32, ...) implements to find elements and snapshot the tree.
 public interface IElementProvider
 {
     string ProviderName { get; }

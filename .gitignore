@@ -18,6 +18,7 @@ packages/
 project.lock.json
 project.fragment.lock.json
 artifacts/
+NuGet.Config
 
 # Test results
 TestResults/

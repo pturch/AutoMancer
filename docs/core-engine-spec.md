@@ -32,7 +32,7 @@ AutoMancer/
 │   │   │   ├── LocatorStrategy.cs        enum: Name, AutomationId, ClassName, ControlType, RuntimeId, AutoMancerPath, AutomancerXPath
 │   │   │   ├── Locator.cs                value object + factory methods (incl. ByRuntimeId, ByXPath)
 │   │   │   ├── ElementHandle.cs          resolved element + Rect struct
-│   │   │   ├── ResolverOptions.cs        timeouts, chain, DPI flag
+│   │   │   ├── ElementProviderOptions.cs timeouts, chain, DPI flag
 │   │   │   ├── AppSession.cs             connection to a running app
 │   │   │   ├── IElementProvider.cs       provider contract + ElementSnapshot
 │   │   │   ├── ElementResolver.cs        fallback chain orchestrator
@@ -120,7 +120,7 @@ dotnet build AutoMancer.slnx
 - `src/AutoMancer.Engine/Core/LocatorStrategy.cs` — enum: Name, AutomationId, ClassName, ControlType, AutoMancerPath
 - `src/AutoMancer.Engine/Core/Locator.cs` — sealed record with `ByName`, `ByAutomationId`, `ByControlType`, `ByClassName`, `ByPath` factory methods
 - `src/AutoMancer.Engine/Core/ElementHandle.cs` — opaque `Id`, `ResolvedVia`, `NativeHandle`, metadata properties, and the `Rect` struct
-- `src/AutoMancer.Engine/Core/ResolverOptions.cs` — `ProviderChain`, `ImplicitWaitMs`, `PollIntervalMs`, `DpiNormalize`; static `Default`
+- `src/AutoMancer.Engine/Core/ElementProviderOptions.cs` — `ProviderChain`, `ImplicitWaitMs`, `PollIntervalMs`, `DpiNormalize`; static `Default`
 
 
 - [ ] **Implement and verify**

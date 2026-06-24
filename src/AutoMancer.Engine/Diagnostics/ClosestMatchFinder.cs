@@ -6,6 +6,7 @@ namespace AutoMancer.Engine.Diagnostics;
 // Produced by ClosestMatchFinder and attached to ElementNotFoundError when a near-match exists.
 public sealed record ClosestMatch(string ElementName, double Confidence);
 
+// Finds the closest-named element in a snapshot tree when an exact locator match fails, powering "Did you mean?" hints.
 public static class ClosestMatchFinder
 {
     private const double MinConfidence = 0.70;

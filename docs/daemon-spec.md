@@ -258,7 +258,7 @@ curl -X POST http://127.0.0.1:27272/session/$SESSION_ID/window/current/maximize
 
 ### Task 10: Screenshot, timeout, and extension endpoints
 
-**What:** Completes the daemon's surface area. Screenshot captures the app window as a base64 PNG. Timeout endpoints read/acknowledge (timeouts are baked into `ResolverOptions` at session creation). Extension endpoints expose AutoMancer-specific capabilities: provider info, scroll-to, PID, kill app, and annotated snapshot.
+**What:** Completes the daemon's surface area. Screenshot captures the app window as a base64 PNG. Timeout endpoints read/acknowledge (timeouts are baked into `ElementProviderOptions` at session creation). Extension endpoints expose AutoMancer-specific capabilities: provider info, scroll-to, PID, kill app, and annotated snapshot.
 
 **Creates:**
 - `src/AutoMancer.Daemon/Endpoints/ScreenshotEndpoint.cs` — `GDI+ CopyFromScreen` → base64 PNG; `CaptureBase64Internal` for extension endpoint reuse

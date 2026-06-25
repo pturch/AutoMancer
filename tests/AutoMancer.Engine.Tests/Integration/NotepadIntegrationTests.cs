@@ -9,6 +9,7 @@ using Interop.UIAutomationClient;
 
 namespace AutoMancer.Engine.Tests.Integration;
 
+[Collection("Notepad")]
 [Trait("Category", "Integration")]
 public sealed class NotepadIntegrationTests : IAsyncLifetime
 {
@@ -28,6 +29,9 @@ public sealed class NotepadIntegrationTests : IAsyncLifetime
         if (_session is null) return;
         SendEscape();  // dismiss any open menu/popup so WinUI3 host processes don't linger after the kill
         _session.KillApp();
+        // WinUI3 Notepad is single-instance: if the killed process hasn't fully exited before the next
+        // test's LaunchAsync runs, the OS redirects the new launch into the dying window instead of starting fresh.
+        await Task.Delay(800);
         await _session.DisposeAsync();
     }
 

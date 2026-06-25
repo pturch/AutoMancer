@@ -126,17 +126,21 @@ All C# code (engine + daemon) is tested in C# with xunit + Moq. SDK client code 
 
 ### Stage 4 — Full Provider Fallback Chain
 > **Unlocks:** Automating apps with partial or no UIA accessibility trees.
-> **Estimated time:** 2 hours
-> **Done when:** Win32 fallback triggers correctly when UIA finds nothing; chain order logged.
+> **Estimated time:** 2–3 hours
+> **Done when:** Win32 fallback triggers correctly when UIA finds nothing; all 15 integration tests pass.
 
 | Batch | Work | Plan ref |
 |---|---|---|
-| 4.1 | `Uia2Provider` — same strategy support as UIA3, all calls in `Task.Run`; `TreeWalker.ControlViewWalker` for snapshot | Engine Task 12 |
-| 4.2 | `Win32Provider` — `EnumChildWindows`, title match, class name match; `SnapshotTreeAsync` via enum | Engine Task 13 |
+| 4.1 | `IElementOperator` interface (find/operate split); extract `Uia3Operator` from `Uia3Provider`; add `Uia2Provider` + `Uia2Operator`; `UseWPF` in engine csproj | Engine Task 12 |
+| 4.2 | `Win32Provider` — `EnumChildWindows`, title/class match; no operator (SendInput covers it; `Win32Operator` added in 6.1 for window management) | Engine Task 13 |
 | 4.3 | `ClearAction` — `ValuePattern.SetValue("")` → Ctrl+A Delete; `ScrollAction` — `ScrollItemPattern` | Engine Task 14 |
-| 4.4 | Integration test — `Win32Fallback_FindsByWindowTitle` (Win32 only resolver finds Notepad window) | Engine Task 13 |
+| 4.4 | `NotepadWorkflowTests` — 10-test comprehensive suite covering the full chain, all locator strategies, snapshot, and error hints | Engine Task 13b |
 
-**After 4.4:** All integration tests pass; Win32 fallback verified in logs.
+**Architecture note:** Provider and operator responsibilities are separated. `IElementProvider` (find-only) and `IElementOperator` (native interact) are distinct interfaces. Each provider holds a stateless operator singleton in a `private static readonly` field and injects it into `ElementHandle.Operator` at wrap time. `ClickAction` and `TypeAction` check `element.Operator` first; they fall through to `SendInput` when it is `null` (Win32/Visual) or when the pattern returns `false` (pattern not supported).
+
+**WinUI3 test isolation:** Windows 11 Notepad is single-instance. Test classes that each launch Notepad must share a `[Collection("Notepad")]` with `DisableParallelization = true`. Each `DisposeAsync` adds an 800 ms post-kill delay to ensure the process fully exits before the next `LaunchAsync`. A UIA3-only warmup in each `InitializeAsync` ensures the COM element tree is populated before the chain resolver runs.
+
+**After 4.4:** 15 integration tests pass; Win32 snapshot and provider-chain order verified.
 
 ---
 

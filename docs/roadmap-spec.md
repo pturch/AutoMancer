@@ -83,7 +83,7 @@ All C# code (engine + daemon) is tested in C# with xunit + Moq. SDK client code 
 | Batch | Work | Plan ref |
 |---|---|---|
 | 1.1 | Solution scaffold — `AutoMancer.slnx`, three `.csproj` files, NuGet refs, delete stubs | Engine Task 1 |
-| 1.2 | `LocatorStrategy`, `Locator`, `ElementHandle`, `Rect`, `ResolverOptions` | Engine Task 2 |
+| 1.2 | `LocatorStrategy`, `Locator`, `ElementHandle`, `Rect`, `ElementProviderOptions` | Engine Task 2 |
 | 1.3 | `IElementProvider` + `ElementSnapshot`; `AppSession` (`LaunchAsync`, `AttachByPid`, `AttachByTitle`) | Engine Task 3 |
 | 1.4 | `EngineLogger` + error types (`ElementNotFoundError`, `ElementNotInteractableError`, `AppLaunchError`) | Engine Task 4 |
 | 1.5 | `ClosestMatchFinder` + Levenshtein; `DpiHelper` testable overloads | Engine Tasks 5–6 |
@@ -278,7 +278,7 @@ All C# code (engine + daemon) is tested in C# with xunit + Moq. SDK client code 
 | 12.1 | `VisualProvider` skeleton — implements `IElementProvider`; screenshots target window via `GDI+` | Engine spec §4.3 |
 | 12.2 | OCR path — `Windows.Media.Ocr.OcrEngine` (on-device, no external service); `automancer:text` strategy | Engine spec §4.3 |
 | 12.3 | Template matching — `OpenCvSharp4.Windows`; `automancer:image` strategy (base64 PNG template) | Engine spec §4.3 |
-| 12.4 | Add `visual` to default `ResolverOptions.ProviderChain`; integration test with a no-UIA test app | Engine spec §4.3 |
+| 12.4 | Add `visual` to default `ElementProviderOptions.ProviderChain`; integration test with a no-UIA test app | Engine spec §4.3 |
 | 12.5 | Add `VisualProvider` to `FindEndpoints` resolver builder; expose via `automancer:resolverChain` capability | Daemon spec §3.3 |
 
 **After 12.5:** The full UIA3 → UIA2 → Win32 → Visual fallback chain is complete.

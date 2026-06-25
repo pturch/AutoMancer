@@ -5,6 +5,7 @@ using AutoMancer.Engine.Diagnostics;
 
 namespace AutoMancer.Engine.Errors;
 
+// Thrown by ElementResolver when no provider in the chain finds a match before the implicit wait expires.
 public sealed class ElementNotFoundError : Exception
 {
     public Locator Locator { get; }

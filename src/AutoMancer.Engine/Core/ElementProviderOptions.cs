@@ -1,8 +1,8 @@
-
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
 namespace AutoMancer.Engine.Core;
 
-public sealed class ResolverOptions
+// Configures which UI providers ElementResolver tries, in what order, and how long/often it retries before giving up.
+public sealed class ElementProviderOptions
 {
     public IReadOnlyList<string> ProviderChain { get; init; } = ["uia3", "uia2", "win32"];
     public int ImplicitWaitMs { get; init; } = 5000;
@@ -10,5 +10,5 @@ public sealed class ResolverOptions
     public bool DpiNormalize { get; init; } = true;
 
     // Preconfigured defaults suitable for most automation scenarios.
-    public static ResolverOptions Default { get; } = new();
+    public static ElementProviderOptions Default { get; } = new();
 }

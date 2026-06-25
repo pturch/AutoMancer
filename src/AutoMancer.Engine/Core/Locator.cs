@@ -1,6 +1,7 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
 namespace AutoMancer.Engine.Core;
 
+// Describes what element to find — a strategy plus the value to match against it. Use the factory methods below, not the constructor directly.
 public sealed record Locator(LocatorStrategy Strategy, string Value)
 {
     // Matches the element's visible text or accessible name.

@@ -3,6 +3,7 @@ using AutoMancer.Engine.Core;
 
 namespace AutoMancer.Engine.Errors;
 
+// Thrown when a resolved element can't accept the requested interaction (e.g. no usable pattern and no fallback worked).
 public sealed class ElementNotInteractableError : Exception
 {
     public ElementHandle Element { get; }

@@ -39,6 +39,13 @@ Write the minimum code that satisfies the requirement. No speculative abstractio
 private void Write(LogLevel level, string message, object? data) { ... }
 ```
 
+**Every class/struct/enum gets the same one-line topline header comment**, explaining what it's for. Place it directly above the type declaration:
+
+```csharp
+// Converts between logical (96 DPI baseline) and physical screen coordinates for SendInput targeting.
+public static class DpiHelper { ... }
+```
+
 Inline comments only when the *why* is non-obvious — never narrate what the code already says.
 
 ## Key invariants

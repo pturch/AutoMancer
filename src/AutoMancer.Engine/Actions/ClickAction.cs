@@ -9,37 +9,25 @@ namespace AutoMancer.Engine.Actions;
 // Which mouse button(s)/sequence ClickAction synthesizes.
 public enum ClickType { Left, Right, Double }
 
-// Clicks a resolved element: tries UIA's InvokePattern first (no mouse movement), falling back to a synthesized
-// SendInput click at the element's center. Bounding rects are already true physical pixels (see DpiAwareness).
+// Clicks a resolved element: delegates to the provider's native click first (e.g. InvokePattern), falling back to a
+// synthesized SendInput click at the element's center. Bounding rects are already true physical pixels (see DpiAwareness).
 public static class ClickAction
 {
-    // Performs the click; never throws on a missing pattern — falls straight through to the SendInput fallback.
-    public static Task ExecuteAsync(ElementHandle element, ClickType clickType = ClickType.Left, CancellationToken ct = default)
+    // Performs the click; tries the element's provider first, then falls through to synthesized mouse input.
+    public static async Task ExecuteAsync(ElementHandle element, ClickType clickType = ClickType.Left, CancellationToken ct = default)
     {
-        return Task.Run(() =>
-        {
-            if (clickType == ClickType.Left && TryInvoke(element))
+        if (clickType == ClickType.Left && element.Provider is not null)
+            if (await element.Provider.TryClickAsync(element, ct).ConfigureAwait(false))
                 return;
 
+        await Task.Run(() =>
+        {
             if (element.NativeHandle is IUIAutomationElement uiaElement && uiaElement.CurrentNativeWindowHandle != IntPtr.Zero)
                 NativeMethods.SetForegroundWindow(uiaElement.CurrentNativeWindowHandle);
 
             var (x, y) = GetCenter(element);
             SendClick(x, y, clickType);
-        }, ct);
-    }
-
-    // Invokes the element via UIA's InvokePattern if it exposes one; returns false when it doesn't.
-    private static bool TryInvoke(ElementHandle element)
-    {
-        if (element.NativeHandle is not IUIAutomationElement uiaElement)
-            return false;
-
-        if (uiaElement.GetCurrentPattern(UIA_PatternIds.UIA_InvokePatternId) is not IUIAutomationInvokePattern invoke)
-            return false;
-
-        invoke.Invoke();
-        return true;
+        }, ct).ConfigureAwait(false);
     }
 
     // Computes the absolute physical-screen point at the center of the element's bounding rect.

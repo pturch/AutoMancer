@@ -12,7 +12,7 @@ public sealed record ElementSnapshot(
     IReadOnlyList<ElementSnapshot> Children
 );
 
-// The contract every automation backend (UIA3, UIA2, Win32, ...) implements to find elements and snapshot the tree.
+// The contract every automation backend (UIA3, UIA2, Win32, ...) implements to find elements, snapshot the tree, and perform native interactions.
 public interface IElementProvider
 {
     string ProviderName { get; }
@@ -25,4 +25,10 @@ public interface IElementProvider
 
     // Returns a read-only snapshot of the element tree rooted at the session's window.
     Task<IReadOnlyList<ElementSnapshot>> SnapshotTreeAsync(AppSession session, CancellationToken ct = default);
+
+    // Attempts a native click (e.g. InvokePattern) without synthesized mouse input; returns false when the provider cannot perform the click.
+    Task<bool> TryClickAsync(ElementHandle element, CancellationToken ct = default);
+
+    // Attempts to set the element's value via a native mechanism (e.g. ValuePattern); returns false when the provider cannot set the value.
+    Task<bool> TrySetValueAsync(ElementHandle element, string value, CancellationToken ct = default);
 }

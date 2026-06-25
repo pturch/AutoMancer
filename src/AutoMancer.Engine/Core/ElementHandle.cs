@@ -17,6 +17,9 @@ public sealed class ElementHandle
     public string? ControlType { get; init; }
     public Rect BoundingRect { get; init; }
 
+    // The provider that resolved this element — used by actions to delegate native interactions back to the right backend.
+    internal IElementProvider? Provider { get; init; }
+
     // Constructed by providers only — callers receive handles exclusively from the resolver.
     internal ElementHandle(string id, string resolvedVia, object nativeHandle)
     {

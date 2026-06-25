@@ -146,14 +146,39 @@ public sealed class Uia3Provider : IElementProvider
         _ => null,
     };
 
+    // Invokes the element via InvokePattern if it exposes one; returns false when it does not.
+    public Task<bool> TryClickAsync(ElementHandle element, CancellationToken ct = default) => Task.Run(() =>
+    {
+        if (element.NativeHandle is not IUIAutomationElement uiaElement)
+            return false;
+        if (uiaElement.GetCurrentPattern(UIA_PatternIds.UIA_InvokePatternId) is not IUIAutomationInvokePattern invoke)
+            return false;
+        invoke.Invoke();
+        return true;
+    }, ct);
+
+    // Sets the element's value via ValuePattern if it is supported and not read-only; returns false otherwise.
+    public Task<bool> TrySetValueAsync(ElementHandle element, string value, CancellationToken ct = default) => Task.Run(() =>
+    {
+        if (element.NativeHandle is not IUIAutomationElement uiaElement)
+            return false;
+        if (uiaElement.GetCurrentPattern(UIA_PatternIds.UIA_ValuePatternId) is not IUIAutomationValuePattern valuePattern)
+            return false;
+        if (valuePattern.CurrentIsReadOnly != 0)
+            return false;
+        valuePattern.SetValue(value);
+        return true;
+    }, ct);
+
     // Wraps a live UIA element as an opaque ElementHandle, capturing its display metadata at resolve time.
-    private static ElementHandle Wrap(IUIAutomationElement element) => new(GetRuntimeId(element), "uia3", element)
+    private ElementHandle Wrap(IUIAutomationElement element) => new(GetRuntimeId(element), "uia3", element)
     {
         Name = element.CurrentName,
         AutomationId = element.CurrentAutomationId,
         ClassName = element.CurrentClassName,
         ControlType = ControlTypeNames.GetValueOrDefault(element.CurrentControlType, "Unknown"),
         BoundingRect = ToRect(element.CurrentBoundingRectangle),
+        Provider = this,
     };
 
     // Converts a UIA RuntimeId (an int array, opaque per-session) into the dotted string ID AutoMancer uses for ElementHandle.Id.

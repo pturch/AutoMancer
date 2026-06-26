@@ -12,7 +12,7 @@
 
 ## Delivery Strategy
 
-This project ships in two distinct phases. **Phase 1** is a self-contained C# proof of concept — engine + CLI, no HTTP, no daemon, no SDK toolchain required. **Phase 2** adds the daemon and polyglot SDKs on top of the engine without modifying it.
+This project ships in three distinct phases. **Phase 1** is a self-contained C# proof of concept — engine + CLI. **Phase 2** completes the C# library surface so direct C# consumers have a full-featured automation API. **Phase 3** adds the daemon and polyglot SDKs on top of the frozen engine without modifying it.
 
 ```
 ╔══════════════════════════════════════════════════════════╗
@@ -31,32 +31,45 @@ This project ships in two distinct phases. **Phase 1** is a self-contained C# pr
 ║   Stage 6: Window Management + CLI ─► PoC complete ✓     ║
 ╚══════════════════════════════════════════════════════════╝
                         │
+                        │  PoC done. Enrich the C# surface.
+                        ▼
+╔══════════════════════════════════════════════════════════╗
+║  PHASE 2 — C# Enrichment  (Stages 7–8, ~3 hours)        ║
+║                                                          ║
+║   Stage 7: Extended Interactions ───► hover, hotkeys,    ║
+║       │                               double-click, drag ║
+║       │                                                  ║
+║   Stage 8: Screenshot + Wait + App ─► full C# API ✓      ║
+╚══════════════════════════════════════════════════════════╝
+                        │
                         │  Engine API frozen. Daemon added
                         │  as a new project — no engine changes.
                         ▼
 ╔══════════════════════════════════════════════════════════╗
-║  PHASE 2 — Polyglot HTTP Layer  (Stages 7–13)           ║
+║  PHASE 3 — Polyglot HTTP Layer  (Stages 9–15)           ║
 ║                                                          ║
-║   Stage 7:  Daemon Foundation ──────► curl finds elements ║
+║   Stage 9:  Daemon Foundation ──────► curl finds elements ║
 ║       │                                                  ║
-║   Stage 8:  Daemon Interactions ────► full HTTP surface   ║
+║   Stage 10: Daemon Interactions ────► full HTTP surface   ║
 ║       │                                                  ║
-║   ├──► Stage 9:  Python SDK ────────► pip install works  ║
-║   ├──► Stage 10: TypeScript SDK ────► npm install works  ║
+║   ├──► Stage 11: Python SDK ────────► pip install works  ║
+║   ├──► Stage 12: TypeScript SDK ────► npm install works  ║
 ║       │                                                  ║
-║   Stage 11: CI Session ─────────────► headless CI works  ║
+║   Stage 13: CI Session ─────────────► headless CI works  ║
 ║       │                                                  ║
-║   Stage 12: Visual Provider ────────► OCR + template     ║
+║   Stage 14: Visual Provider ────────► OCR + template     ║
 ║       │                                                  ║
-║   Stage 13: Polish ─────────────────► v0.1 shippable ✓  ║
+║   Stage 15: Polish ─────────────────► v0.1 shippable ✓  ║
 ╚══════════════════════════════════════════════════════════╝
 ```
 
 ### Why this split works
 
-`AutoMancer.Engine` is a pure class library with no HTTP awareness. The daemon is a separate project that consumes the engine — it doesn't modify it. A C# consumer in Phase 1 calls the engine API directly (no port, no process, no wire protocol). When Phase 2 adds the daemon, the engine API is unchanged and the daemon is purely additive.
+`AutoMancer.Engine` is a pure class library with no HTTP awareness. C# consumers in Phases 1 and 2 call the engine API directly — no port, no process, no wire protocol. When Phase 3 adds the daemon, the engine API is unchanged and the daemon is purely additive.
 
-The one thing to keep clean during Phase 1: `ElementHandle` must stay opaque (only `Id` and `NativeHandle` exposed). The daemon's element registry depends on this — it stores handles by ID between stateless HTTP requests. The existing design already does this correctly.
+Phase 2 exists to complete the C# interaction surface before it is frozen. Any action added after Phase 2 begins would require modifying the engine (breaking the freeze) and then updating the daemon to expose it. Completing the C# surface first means the daemon in Phase 3 is a straightforward wrapping exercise with no design work left.
+
+The one thing to keep clean throughout Phase 1 and 2: `ElementHandle` must stay opaque (only `Id` and `NativeHandle` exposed). The daemon's element registry depends on this — it stores handles by ID between stateless HTTP requests.
 
 ---
 
@@ -174,135 +187,173 @@ All C# code (engine + daemon) is tested in C# with xunit + Moq. SDK client code 
 | 6.4 | CLI commands — `click`, `type` | Engine Task 16 |
 | 6.5 | Full unit test pass | Engine Task 20 |
 
-**After 6.5:** Phase 1 complete. The engine library is production-ready. Every unit and integration test is green. C# consumers can use `AutoMancer.Engine` directly — no daemon required.
+**After 6.5:** Phase 1 complete. The engine library handles basic automation from C#. Every unit and integration test is green.
 
 ---
 
-## Phase 2 — Polyglot HTTP Layer
+## Phase 2 — C# Enrichment
 
 > **Prerequisite:** Phase 1 complete and `dotnet build AutoMancer.slnx` reporting 0 errors.
-> The engine API is treated as stable from this point. The daemon and SDKs are additive — no engine source files are modified.
+> The goal is to complete the C# interaction surface before it is frozen for Phase 3. Any action not added here would require modifying the engine after the freeze.
 
-### Stage 7 — Daemon Foundation
+### Stage 7 — Extended Interactions
+> **Unlocks:** The full range of mouse and keyboard interactions a real automation script needs.
+> **Estimated time:** 1.5–2 hours
+> **Done when:** Integration tests confirm double-click, right-click, hover, hotkey, and drag all work against Notepad.
+
+| Batch | Work |
+|---|---|
+| 7.1 | `DoubleClickAction`, `RightClickAction`, `HoverAction` — SendInput mouse event variants; extend `ClickAction` or add alongside it |
+| 7.2 | `KeyboardAction` — `PressKeyAsync(Key)`, `HotkeyAsync(modifiers, key)`, `KeyDownAsync`/`KeyUpAsync`; VK codes for non-printable keys; `KEYEVENTF_KEYUP` for release |
+| 7.3 | `DragAction` — `DragAsync(from, to)` via SendInput mouse press + move + release |
+| 7.4 | Integration tests — double-click selects a word, Ctrl+A selects all text, right-click opens context menu |
+
+**After 7.4:** All mouse and keyboard interaction types covered.
+
+---
+
+### Stage 8 — Screenshot, Wait Utilities, and App Facade
+> **Unlocks:** Screenshot capture and reactive wait patterns; the `App` facade exposes everything as a single cohesive C# API.
+> **Estimated time:** 1.5–2 hours
+> **Done when:** `app.ScreenshotAsync()` returns a valid PNG; `app.WaitUntilGoneAsync(locator)` resolves when an element disappears.
+> **Phase 2 complete after this stage. Engine API is now frozen.**
+
+| Batch | Work |
+|---|---|
+| 8.1 | `ScreenshotAction` — `CaptureAsync(hwnd)` → `byte[]` PNG via GDI+ `BitBlt`; no external dependencies |
+| 8.2 | `WaitUntilGoneAsync` in `ElementResolver` — retry until every provider returns null within the implicit wait window |
+| 8.3 | `App` facade enrichment — add `DoubleClickAsync`, `RightClickAsync`, `HoverAsync`, `HotkeyAsync`, `DragAsync`, `ScreenshotAsync`, `WaitUntilGoneAsync` |
+| 8.4 | Integration tests — screenshot returns non-empty bytes; wait-until-gone resolves after Notepad dialog is dismissed |
+
+**After 8.4:** Phase 2 complete. The C# API is production-ready and frozen. Phase 3 adds no engine changes.
+
+---
+
+## Phase 3 — Polyglot HTTP Layer
+
+> **Prerequisite:** Phase 2 complete and `dotnet build AutoMancer.slnx` reporting 0 errors.
+> The engine and `App` facade APIs are treated as stable from this point. The daemon and SDKs are additive — no engine source files are modified.
+
+### Stage 9 — Daemon Foundation
 > **Unlocks:** Any HTTP client can find elements in a Windows app. `curl` test is possible.
 > **Estimated time:** 3 hours
 > **Done when:** `curl -X POST http://127.0.0.1:27272/session/.../element -d '{"using":"control type","value":"Edit"}'` returns an element ID.
 
 | Batch | Work | Plan ref |
 |---|---|---|
-| 7.1 | Daemon project scaffold — `AutoMancer.Daemon.csproj`, test project; add both to solution | Daemon Task 1 |
-| 7.2 | `W3CErrorWriter`, `HttpContext`, `DaemonConfig` | Daemon Task 2 |
-| 7.3 | `Router` (regex route table), `DaemonSession` (element registry + lock), `SessionManager` | Daemon Task 3 |
-| 7.4 | `StatusEndpoint` + `Program.cs` entry point; smoke test `GET /status` | Daemon Task 4 |
-| 7.5 | `SessionEndpoints` — `POST /session` (parse capabilities, launch/attach, return sessionId), `DELETE /session/:id` | Daemon Task 5 |
-| 7.6 | `FindEndpoints` — 4 W3C find endpoints; routes all 8 strategies including `id` and `automancer:xpath` | Daemon Task 6 |
+| 9.1 | Daemon project scaffold — `AutoMancer.Daemon.csproj`, test project; add both to solution | Daemon Task 1 |
+| 9.2 | `W3CErrorWriter`, `HttpContext`, `DaemonConfig` | Daemon Task 2 |
+| 9.3 | `Router` (regex route table), `DaemonSession` (element registry + lock), `SessionManager` | Daemon Task 3 |
+| 9.4 | `StatusEndpoint` + `Program.cs` entry point; smoke test `GET /status` | Daemon Task 4 |
+| 9.5 | `SessionEndpoints` — `POST /session` (parse capabilities, launch/attach, return sessionId), `DELETE /session/:id` | Daemon Task 5 |
+| 9.6 | `FindEndpoints` — 4 W3C find endpoints; routes all strategies including `id` and `automancer:xpath` | Daemon Task 6 |
 
-**After 7.6:** Full element-finding stack reachable via HTTP. Selenium client can locate elements.
+**After 9.6:** Full element-finding stack reachable via HTTP. Selenium client can locate elements.
 
 ---
 
-### Stage 8 — Daemon Interactions and Properties
+### Stage 10 — Daemon Interactions and Properties
 > **Unlocks:** Full automation loop over HTTP. SDKs can now be built.
 > **Estimated time:** 3–4 hours
 > **Done when:** All C# daemon integration tests pass.
 
 | Batch | Work | Plan ref |
 |---|---|---|
-| 8.1 | `InteractionEndpoints` — click, value (type), clear | Daemon Task 7 |
-| 8.2 | `PropertyEndpoints` — text, name, enabled, selected, displayed, rect, attribute | Daemon Task 8 |
-| 8.3 | `ScreenshotEndpoint` (base64 PNG), `TimeoutEndpoints` | Daemon Task 9 (partial) |
-| 8.4 | `WindowEndpoints` — size GET/POST, maximize, minimize | Daemon Task 9 (window) |
-| 8.5 | `ExtensionEndpoints` — `/automancer/element/:id/provider`, scroll-to, app PID, kill, snapshot | Daemon Task 10 |
-| 8.6 | C# daemon integration tests — `DaemonIntegrationTests.cs`; 7 tests covering full HTTP surface | Daemon Task 11 |
+| 10.1 | `InteractionEndpoints` — click, double-click, right-click, hover, value (type), clear, drag | Daemon Task 7 |
+| 10.2 | `PropertyEndpoints` — text, name, enabled, selected, displayed, rect, attribute | Daemon Task 8 |
+| 10.3 | `ScreenshotEndpoint` (base64 PNG), `TimeoutEndpoints` | Daemon Task 9 (partial) |
+| 10.4 | `WindowEndpoints` — size GET/POST, maximize, minimize | Daemon Task 9 (window) |
+| 10.5 | `KeyboardEndpoints` — hotkey, key-down/up; `ExtensionEndpoints` — provider, scroll-to, app PID, kill, snapshot | Daemon Tasks 9–10 |
+| 10.6 | C# daemon integration tests — `DaemonIntegrationTests.cs`; 7 tests covering full HTTP surface | Daemon Task 11 |
 
-**After 8.6:** Complete daemon. All W3C + extension endpoints covered by C# tests. No Python/TypeScript toolchain needed to verify daemon correctness.
+**After 10.6:** Complete daemon. All W3C + extension endpoints covered by C# tests. No Python/TypeScript toolchain needed to verify daemon correctness.
 
 ---
 
-### Stage 9 — Python SDK
+### Stage 11 — Python SDK
 > **Unlocks:** `pip install automancer` and `from automancer import App`.
 > **Estimated time:** 2–3 hours
 > **Done when:** `pytest tests/integration/ -m integration` passes all 5 Notepad tests.
 
 | Batch | Work | Plan ref |
 |---|---|---|
-| 9.1 | `pyproject.toml`, `errors.py`, package scaffold | SDK Task 1 |
-| 9.2 | `locator.py` — `build_locator` with all 8 strategies including `runtime_id` and `xpath` | SDK Task 2 |
-| 9.3 | `session.py` — W3C HTTP client, `_unwrap` error mapper, window methods | SDK Task 2 |
-| 9.4 | `element.py` (`Rect`, `Element`) + `app.py` (`App.launch`, `attach`, `find`, `wait_*`, `window_size`, `maximize`) | SDK Task 3 |
-| 9.5 | Control subclasses — `Button`, `TextBox`, `ComboBox`, `DataGrid` | SDK Task 4 |
-| 9.6 | Integration tests — launch, type, click, attach-by-pid, screenshot, closest-match error | SDK Task 5 |
-| 9.7 | `mypy --strict` pass | SDK Task 5 |
+| 11.1 | `pyproject.toml`, `errors.py`, package scaffold | SDK Task 1 |
+| 11.2 | `locator.py` — `build_locator` with all strategies including `runtime_id` and `xpath` | SDK Task 2 |
+| 11.3 | `session.py` — W3C HTTP client, `_unwrap` error mapper, window methods | SDK Task 2 |
+| 11.4 | `element.py` (`Rect`, `Element`) + `app.py` (`App.launch`, `attach`, `find`, `wait_*`, `window_size`, `maximize`) | SDK Task 3 |
+| 11.5 | Control subclasses — `Button`, `TextBox`, `ComboBox`, `DataGrid` | SDK Task 4 |
+| 11.6 | Integration tests — launch, type, click, attach-by-pid, screenshot, closest-match error | SDK Task 5 |
+| 11.7 | `mypy --strict` pass | SDK Task 5 |
 
-**After 9.7:** Python SDK ships.
+**After 11.7:** Python SDK ships.
 
 ---
 
-### Stage 10 — TypeScript SDK
+### Stage 12 — TypeScript SDK
 > **Unlocks:** `npm install automancer` and `import { App } from 'automancer'`.
 > **Estimated time:** 2–3 hours
 > **Done when:** `npm test` passes all integration tests; `tsc --noEmit` clean.
 
 | Batch | Work | Plan ref |
 |---|---|---|
-| 10.1 | `package.json`, `tsconfig.json`, `errors.ts`, `index.ts` scaffold | SDK Task 6 |
-| 10.2 | `types.ts` (all interfaces incl. `runtimeId`, `xpath`), `Locator.ts` (`buildLocator`), unit tests | SDK Task 7 |
-| 10.3 | `Session.ts` — HTTP client, error mapper, window methods | SDK Task 7 |
-| 10.4 | `Element.ts` (async getters + actions) + `App.ts` (launch, attach, find, waitUntilGone, window management) | SDK Task 8 |
-| 10.5 | Control subclasses — `Button`, `TextBox`, `ComboBox`, `DataGrid` | SDK Task 9 |
-| 10.6 | Integration tests + final `tsc --noEmit` pass | SDK Task 9 |
+| 12.1 | `package.json`, `tsconfig.json`, `errors.ts`, `index.ts` scaffold | SDK Task 6 |
+| 12.2 | `types.ts` (all interfaces incl. `runtimeId`, `xpath`), `Locator.ts` (`buildLocator`), unit tests | SDK Task 7 |
+| 12.3 | `Session.ts` — HTTP client, error mapper, window methods | SDK Task 7 |
+| 12.4 | `Element.ts` (async getters + actions) + `App.ts` (launch, attach, find, waitUntilGone, window management) | SDK Task 8 |
+| 12.5 | Control subclasses — `Button`, `TextBox`, `ComboBox`, `DataGrid` | SDK Task 9 |
+| 12.6 | Integration tests + final `tsc --noEmit` pass | SDK Task 9 |
 
-**After 10.6:** Both SDKs ship. The full stack (engine → daemon → SDKs) is complete.
+**After 12.6:** Both SDKs ship. The full stack (engine → daemon → SDKs) is complete.
 
 ---
 
-### Stage 11 — CI Session (`automancer-session`)
+### Stage 13 — CI Session (`automancer-session`)
 > **Unlocks:** Running AutoMancer tests in GitHub Actions and Azure Pipelines without a real desktop.
 > **Estimated time:** 2–3 hours
 > **Done when:** `automancer-session start && automancer-session run pytest tests/ && automancer-session stop` exits 0 in a CI pipeline.
 
 | Batch | Work | Plan ref |
 |---|---|---|
-| 11.1 | `VirtualDesktop.cs` in daemon — `CreateDesktop` / `SetThreadDesktop` Win32 APIs | Engine spec §9 |
-| 11.2 | `automancer-session` CLI — `start`, `run`, `stop`, `list` sub-commands | Engine spec §9 |
-| 11.3 | Session isolation — each `automancer-session start` gets a named desktop; parallel sessions don't interfere | Engine spec §9 |
-| 11.4 | CI example — GitHub Actions `.yml` with start/run/stop steps | Engine spec §9 |
+| 13.1 | `VirtualDesktop.cs` in daemon — `CreateDesktop` / `SetThreadDesktop` Win32 APIs | Engine spec §9 |
+| 13.2 | `automancer-session` CLI — `start`, `run`, `stop`, `list` sub-commands | Engine spec §9 |
+| 13.3 | Session isolation — each `automancer-session start` gets a named desktop; parallel sessions don't interfere | Engine spec §9 |
+| 13.4 | CI example — GitHub Actions `.yml` with start/run/stop steps | Engine spec §9 |
 
-**After 11.4:** Headless CI works. The `automancer-session run pytest tests/integration/` pattern is validated.
+**After 13.4:** Headless CI works. The `automancer-session run pytest tests/integration/` pattern is validated.
 
 ---
 
-### Stage 12 — Visual Provider (OCR + Template Matching)
+### Stage 14 — Visual Provider (OCR + Template Matching)
 > **Unlocks:** Automating apps that expose no accessibility tree at all (legacy ERP, custom-rendered UIs).
 > **Estimated time:** 3–4 hours
 > **Done when:** `app.find(text="Submit Order")` finds a button by its visible text in an app with no UIA elements.
 
 | Batch | Work | Plan ref |
 |---|---|---|
-| 12.1 | `VisualProvider` skeleton — implements `IElementProvider`; screenshots target window via `GDI+` | Engine spec §4.3 |
-| 12.2 | OCR path — `Windows.Media.Ocr.OcrEngine` (on-device, no external service); `automancer:text` strategy | Engine spec §4.3 |
-| 12.3 | Template matching — `OpenCvSharp4.Windows`; `automancer:image` strategy (base64 PNG template) | Engine spec §4.3 |
-| 12.4 | Add `visual` to default `ElementProviderOptions.ProviderChain`; integration test with a no-UIA test app | Engine spec §4.3 |
-| 12.5 | Add `VisualProvider` to `FindEndpoints` resolver builder; expose via `automancer:resolverChain` capability | Daemon spec §3.3 |
+| 14.1 | `VisualProvider` skeleton — implements `IElementProvider`; screenshots target window via `GDI+` | Engine spec §4.3 |
+| 14.2 | OCR path — `Windows.Media.Ocr.OcrEngine` (on-device, no external service); `automancer:text` strategy | Engine spec §4.3 |
+| 14.3 | Template matching — `OpenCvSharp4.Windows`; `automancer:image` strategy (base64 PNG template) | Engine spec §4.3 |
+| 14.4 | Add `visual` to default `ElementProviderOptions.ProviderChain`; integration test with a no-UIA test app | Engine spec §4.3 |
+| 14.5 | Add `VisualProvider` to `FindEndpoints` resolver builder; expose via `automancer:resolverChain` capability | Daemon spec §3.3 |
 
-**After 12.5:** The full UIA3 → UIA2 → Win32 → Visual fallback chain is complete.
+**After 14.5:** The full UIA3 → UIA2 → Win32 → Visual fallback chain is complete.
 
 ---
 
-### Stage 13 — Polish and v0.1 Release
+### Stage 15 — Polish and v0.1 Release
 > **Unlocks:** Something you can actually publish and point people to.
 > **Estimated time:** ongoing
 > **Done when:** The Definition of Done checklist below is fully satisfied.
 
 | Batch | Work |
 |---|---|
-| 13.1 | Annotated error screenshots — when `automancer:debugScreenshots` is true, save PNG with red overlay on search area to `%TEMP%` |
-| 13.2 | Example projects — `examples/notepad/`, `examples/winforms-calculator/`, `examples/legacy-no-uia/` |
-| 13.3 | DPI compat matrix — run the Notepad integration test at 100%, 125%, 150% DPI; assert identical logical coordinates |
-| 13.4 | Windows 10/11 compat — run full integration suite on both; fix any behavioral differences |
-| 13.5 | `protocol/endpoints.md` — generated endpoint reference from the daemon's route table |
-| 13.6 | `README.md` — 15-minute quickstart; `pip install automancer` + 10-line Notepad example |
-| 13.7 | MIT license header audit — every `.cs`, `.py`, `.ts` file must start with the copyright line |
+| 15.1 | Annotated error screenshots — when `automancer:debugScreenshots` is true, save PNG with red overlay on search area to `%TEMP%` |
+| 15.2 | Example projects — `examples/notepad/`, `examples/winforms-calculator/`, `examples/legacy-no-uia/` |
+| 15.3 | DPI compat matrix — run the Notepad integration test at 100%, 125%, 150% DPI; assert identical logical coordinates |
+| 15.4 | Windows 10/11 compat — run full integration suite on both; fix any behavioral differences |
+| 15.5 | `protocol/endpoints.md` — generated endpoint reference from the daemon's route table |
+| 15.6 | `README.md` — 15-minute quickstart; `pip install automancer` + 10-line Notepad example |
+| 15.7 | MIT license header audit — every `.cs`, `.py`, `.ts` file must start with the copyright line |
 
 ---
 
@@ -315,7 +366,15 @@ All C# code (engine + daemon) is tested in C# with xunit + Moq. SDK client code 
 - [ ] `ElementNotFoundError` includes `closestMatch` when a near-match exists
 - [ ] MIT license header present in all `.cs` source files
 
-**Phase 2 complete when (full v0.1):**
+**Phase 2 complete when:**
+- [ ] `dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category!=Integration"` — all unit tests green
+- [ ] `dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration"` — all integration tests green including Phase 2 additions
+- [ ] Double-click, right-click, hover, hotkey, drag all verified against a live app
+- [ ] `ScreenshotAsync()` returns a valid PNG from a live window
+- [ ] `WaitUntilGoneAsync()` resolves correctly when an element disappears
+- [ ] Engine API frozen — no further changes to `AutoMancer.Engine` source files after this point
+
+**Phase 3 complete when (full v0.1):**
 - [ ] `automancer-session start && automancer-session run pytest tests/integration/notepad_test.py && automancer-session stop` exits 0 on clean Windows 11
 - [ ] Same test passes at 100%, 125%, 150% DPI without modification
 - [ ] Raw `curl` to `/session` with Selenium capabilities creates a session and returns a valid `sessionId`
@@ -336,13 +395,15 @@ All C# code (engine + daemon) is tested in C# with xunit + Moq. SDK client code 
 | 4 — Full Provider Chain | 2 h | 9 h | 1 |
 | 5 — Extended Locators | 2–3 h | 12 h | 1 |
 | 6 — Window + CLI | 2 h | **14 h ← Phase 1 done** | 1 |
-| 7 — Daemon Foundation | 3 h | 17 h | 2 |
-| 8 — Daemon Interactions + C# Tests | 3–4 h | 21 h | 2 |
-| 9 — Python SDK | 2–3 h | 24 h | 2 |
-| 10 — TypeScript SDK | 2–3 h | 27 h | 2 |
-| 11 — CI Session | 2–3 h | 30 h | 2 |
-| 12 — Visual Provider | 3–4 h | 34 h | 2 |
-| 13 — Polish | ongoing | — | 2 |
+| 7 — Extended Interactions | 1.5–2 h | 16 h | 2 |
+| 8 — Screenshot + Wait + App | 1.5–2 h | **18 h ← Phase 2 done** | 2 |
+| 9 — Daemon Foundation | 3 h | 21 h | 3 |
+| 10 — Daemon Interactions + C# Tests | 3–4 h | 25 h | 3 |
+| 11 — Python SDK | 2–3 h | 28 h | 3 |
+| 12 — TypeScript SDK | 2–3 h | 31 h | 3 |
+| 13 — CI Session | 2–3 h | 34 h | 3 |
+| 14 — Visual Provider | 3–4 h | 38 h | 3 |
+| 15 — Polish | ongoing | — | 3 |
 
 ---
 

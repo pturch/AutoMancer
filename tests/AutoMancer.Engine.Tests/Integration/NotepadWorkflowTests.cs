@@ -1,5 +1,4 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
-using System.Runtime.InteropServices;
 using AutoMancer.Engine;
 using AutoMancer.Engine.Core;
 using AutoMancer.Engine.Errors;
@@ -11,32 +10,9 @@ namespace AutoMancer.Engine.Tests.Integration;
 // action dispatch, session attachment, and error handling against a live Notepad instance.
 [Collection("Notepad")]
 [Trait("Category", "Integration")]
-public sealed class NotepadWorkflowTests : IAsyncLifetime
+public sealed class NotepadWorkflowTests(NotepadFixture fixture) : IClassFixture<NotepadFixture>
 {
-    private App _app = null!;
-
-    // Launches Notepad and warms up the UIA3 tree before any test runs.
-    public async Task InitializeAsync()
-    {
-        _app = await App.LaunchAsync("notepad.exe");
-        // UIA3's COM tree is sometimes empty on the first query while WinUI3 is still initializing.
-        // Warming up with a UIA3-only App ensures Document is reachable before the full-chain App runs,
-        // preventing UIA2 from intercepting on UIA3's cold-start failure.
-        await _app.WithOptions(new AppOptions { ProviderChain = ["uia3"], ImplicitWaitMs = 5_000, PollIntervalMs = 200 })
-                  .FindAsync(Locator.ByControlType("Document"));
-    }
-
-    // Kills Notepad and dismisses any open popup before teardown.
-    public async Task DisposeAsync()
-    {
-        if (_app is null) return;
-        SendEscape();
-        _app.Kill();
-        // WinUI3 Notepad is single-instance: if the killed process hasn't fully exited before the next
-        // test's LaunchAsync runs, the OS redirects the new launch into the dying window instead of starting fresh.
-        await Task.Delay(800);
-        await _app.DisposeAsync();
-    }
+    private readonly App _app = fixture.App;
 
     // -------------------------------------------------------------------------
     // Full workflow
@@ -54,7 +30,7 @@ public sealed class NotepadWorkflowTests : IAsyncLifetime
 
         await _app.ClickAsync(Locator.ByName("File"));
         await Task.Delay(300); // flyout animation — longer than ActionDelayMs
-        SendEscape();
+        NotepadFixture.SendEscape();
         await Task.Delay(200);
 
         // Re-attach to the same process by PID — the editor RuntimeId must be stable across sessions.
@@ -221,14 +197,4 @@ public sealed class NotepadWorkflowTests : IAsyncLifetime
         }
         return result;
     }
-
-    // Sends a bare Escape keystroke to dismiss any open menu before teardown.
-    private static void SendEscape()
-    {
-        KeybdEvent(0x1B, 0, 0, IntPtr.Zero);
-        KeybdEvent(0x1B, 0, 2, IntPtr.Zero);
-    }
-
-    [DllImport("user32.dll", EntryPoint = "keybd_event")]
-    private static extern void KeybdEvent(byte bVk, byte bScan, uint dwFlags, IntPtr dwExtraInfo);
 }

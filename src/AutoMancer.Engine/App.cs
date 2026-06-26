@@ -85,6 +85,24 @@ public sealed class App : IAsyncDisposable
             await Task.Delay(_actionDelayMs, ct);
     }
 
+    // Finds the element and clears its content; waits ActionDelayMs after clearing for the UI to settle.
+    public async Task ClearAsync(Locator locator, CancellationToken ct = default)
+    {
+        var element = await _resolver.FindAsync(locator, _session, ct);
+        await ClearAction.ExecuteAsync(element, ct);
+        if (_actionDelayMs > 0)
+            await Task.Delay(_actionDelayMs, ct);
+    }
+
+    // Finds the element and scrolls it into view; waits ActionDelayMs after scrolling for the UI to settle.
+    public async Task ScrollIntoViewAsync(Locator locator, CancellationToken ct = default)
+    {
+        var element = await _resolver.FindAsync(locator, _session, ct);
+        await ScrollAction.ExecuteAsync(element, ct);
+        if (_actionDelayMs > 0)
+            await Task.Delay(_actionDelayMs, ct);
+    }
+
     // Terminates the target process immediately; no-op if it has already exited.
     public void Kill() => _session.KillApp();
 

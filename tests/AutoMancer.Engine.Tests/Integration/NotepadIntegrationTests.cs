@@ -1,55 +1,24 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
 using System.Diagnostics;
-using System.Runtime.InteropServices;  // DllImport for KeybdEvent
-using AutoMancer.Engine.Actions;
+using AutoMancer.Engine;
 using AutoMancer.Engine.Core;
 using AutoMancer.Engine.Errors;
-using AutoMancer.Engine.Providers;
 using Interop.UIAutomationClient;
 
 namespace AutoMancer.Engine.Tests.Integration;
 
 [Collection("Notepad")]
 [Trait("Category", "Integration")]
-public sealed class NotepadIntegrationTests : IAsyncLifetime
+public sealed class NotepadIntegrationTests(NotepadFixture fixture) : IClassFixture<NotepadFixture>
 {
-    private AppSession _session = null!;
-    private ElementResolver _resolver = null!;
-
-    // Launches a fresh Notepad instance before each test in this class.
-    public async Task InitializeAsync()
-    {
-        _session = await AppSession.LaunchAsync("notepad.exe");
-        _resolver = new ElementResolver([new Uia3Provider()], new ElementProviderOptions { ProviderChain = ["uia3"] });
-    }
-
-    // Kills the Notepad instance launched for the test that just ran; null-guards against a failed InitializeAsync (xUnit skips DisposeAsync when Init throws, but defensive here just in case).
-    public async Task DisposeAsync()
-    {
-        if (_session is null) return;
-        SendEscape();  // dismiss any open menu/popup so WinUI3 host processes don't linger after the kill
-        _session.KillApp();
-        // WinUI3 Notepad is single-instance: if the killed process hasn't fully exited before the next
-        // test's LaunchAsync runs, the OS redirects the new launch into the dying window instead of starting fresh.
-        await Task.Delay(800);
-        await _session.DisposeAsync();
-    }
-
-    // Sends a bare Escape keystroke so any open menu popup closes before the process is killed.
-    private static void SendEscape()
-    {
-        KeybdEvent(0x1B, 0, 0, IntPtr.Zero);  // VK_ESCAPE down
-        KeybdEvent(0x1B, 0, 2, IntPtr.Zero);  // VK_ESCAPE up (KEYEVENTF_KEYUP = 0x0002)
-    }
-
-    [DllImport("user32.dll", EntryPoint = "keybd_event")]
-    private static extern void KeybdEvent(byte bVk, byte bScan, uint dwFlags, IntPtr dwExtraInfo);
+    // UIA3-only App — mirrors the old ElementResolver([new Uia3Provider()]) used before the App facade.
+    private readonly App _app = fixture.App.WithOptions(new AppOptions { ProviderChain = ["uia3"] });
 
     // Windows 11's Notepad (WinUI3) exposes its text area as ControlType "Document", not the classic Win32 "Edit" control.
     [Fact]
     public async Task FindEditControl_ResolvesViaUia3()
     {
-        var handle = await _resolver.FindAsync(Locator.ByControlType("Document"), _session);
+        var handle = await _app.FindAsync(Locator.ByControlType("Document"));
 
         Assert.Equal("uia3", handle.ResolvedVia);
         Assert.Equal("Document", handle.ControlType);
@@ -58,25 +27,23 @@ public sealed class NotepadIntegrationTests : IAsyncLifetime
     [Fact]
     public async Task AttachByTitleAsync_FindsTheLaunchedNotepad()
     {
-        var title = Process.GetProcessById(_session.ProcessId).MainWindowTitle;
+        var title = Process.GetProcessById(fixture.App.ProcessId).MainWindowTitle;
 
-        var attached = await AppSession.AttachByTitleAsync(title);
+        var attached = await App.AttachByTitleAsync(title);
 
-        Assert.Equal(_session.ProcessId, attached.ProcessId);
+        Assert.Equal(fixture.App.ProcessId, attached.ProcessId);
     }
 
     [Fact]
     public async Task FindAsync_TypoInName_ThrowsWithClosestMatchHint()
     {
-        var provider = new Uia3Provider();
-        var tree = await provider.SnapshotTreeAsync(_session);
-        var realName = FindNameLongerThan(tree, minLength: 5)
+        var snapshot = await _app.SnapshotAsync();
+        var realName = FindNameLongerThan(snapshot!, minLength: 5)
             ?? throw new InvalidOperationException("Notepad's element tree has no name long enough for a reliable typo test.");
         var typo = realName[..^1];
 
-        var resolver = new ElementResolver([provider], new ElementProviderOptions { ImplicitWaitMs = 300, PollIntervalMs = 100, ProviderChain = ["uia3"] });
-
-        var ex = await Assert.ThrowsAsync<ElementNotFoundError>(() => resolver.FindAsync(Locator.ByName(typo), _session));
+        var quick = fixture.App.WithOptions(new AppOptions { ProviderChain = ["uia3"], ImplicitWaitMs = 300, PollIntervalMs = 100 });
+        var ex = await Assert.ThrowsAsync<ElementNotFoundError>(() => quick.FindAsync(Locator.ByName(typo)));
 
         Assert.NotNull(ex.ClosestMatch);
         Assert.Equal(realName, ex.ClosestMatch!.ElementName);
@@ -86,30 +53,39 @@ public sealed class NotepadIntegrationTests : IAsyncLifetime
     public async Task TypeInEditor_TextAppears()
     {
         const string text = "Hello AutoMancer";
-        var editor = await _resolver.FindAsync(Locator.ByControlType("Document"), _session);
-
-        await ClickAction.ExecuteAsync(editor);
-        await TypeAction.ExecuteAsync(editor, text);
+        await _app.ClickAsync(Locator.ByControlType("Document"));
+        await _app.TypeAsync(Locator.ByControlType("Document"), text);
         await Task.Delay(200);
 
-        // Read typed text back via IUIAutomationTextPattern — the reliable way to verify editor content.
+        var editor = await _app.FindAsync(Locator.ByControlType("Document"));
         var uiaElement = (IUIAutomationElement)editor.NativeHandle;
         var textPattern = (IUIAutomationTextPattern)uiaElement.GetCurrentPattern(UIA_PatternIds.UIA_TextPatternId);
-        var content = textPattern.DocumentRange.GetText(-1);
+        Assert.Contains(text, textPattern.DocumentRange.GetText(-1));
+    }
 
-        Assert.Contains(text, content);
+    [Fact]
+    public async Task ClearEditor_RemovesTypedText()
+    {
+        await _app.ClickAsync(Locator.ByControlType("Document"));
+        await _app.TypeAsync(Locator.ByControlType("Document"), "text to clear");
+        await Task.Delay(200);
+
+        await _app.ClearAsync(Locator.ByControlType("Document"));
+        await Task.Delay(200);
+
+        var editor = await _app.FindAsync(Locator.ByControlType("Document"));
+        var uiaElement = (IUIAutomationElement)editor.NativeHandle;
+        var textPattern = (IUIAutomationTextPattern)uiaElement.GetCurrentPattern(UIA_PatternIds.UIA_TextPatternId);
+        Assert.Empty(textPattern.DocumentRange.GetText(-1).Trim());
     }
 
     [Fact]
     public async Task ClickFileMenu_OpensMenu()
     {
-        // Establish a known focus baseline: editor has focus.
-        var editor = await _resolver.FindAsync(Locator.ByControlType("Document"), _session);
-        await ClickAction.ExecuteAsync(editor);
+        await _app.ClickAsync(Locator.ByControlType("Document"));
         await Task.Delay(100);
 
-        var fileMenu = await _resolver.FindAsync(Locator.ByName("File"), _session);
-        await ClickAction.ExecuteAsync(fileMenu);
+        await _app.ClickAsync(Locator.ByName("File"));
         await Task.Delay(500);
 
         // WinUI3 Notepad pre-loads all menu items into the UIA tree so popup-window counting won't change.
@@ -120,6 +96,10 @@ public sealed class NotepadIntegrationTests : IAsyncLifetime
             return automation.GetFocusedElement()?.CurrentControlType ?? -1;
         });
         Assert.NotEqual(UIA_ControlTypeIds.UIA_DocumentControlTypeId, focusedControlType);
+
+        // Close the menu so subsequent tests in this shared session aren't affected.
+        NotepadFixture.SendEscape();
+        await Task.Delay(200);
     }
 
     // Depth-first search for the first element name at least minLength characters long.
@@ -129,12 +109,10 @@ public sealed class NotepadIntegrationTests : IAsyncLifetime
         {
             if (node.Name is { Length: var len } name && len >= minLength)
                 return name;
-
             var fromChildren = FindNameLongerThan(node.Children, minLength);
             if (fromChildren is not null)
                 return fromChildren;
         }
-
         return null;
     }
 }

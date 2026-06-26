@@ -1,0 +1,13 @@
+// Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
+namespace AutoMancer.Engine.Core;
+
+// Optional contract for providers that can interact with elements via native automation patterns (e.g. InvokePattern, ValuePattern).
+// Providers that lack pattern support (Win32, Visual) do not implement this — actions fall through to SendInput.
+public interface IElementOperator
+{
+    // Attempts a native click via InvokePattern; returns false when the element does not expose the pattern.
+    Task<bool> TryClickAsync(ElementHandle element, CancellationToken ct = default);
+
+    // Attempts to set the element's value via ValuePattern; returns false when the element does not expose the pattern or is read-only.
+    Task<bool> TrySetValueAsync(ElementHandle element, string value, CancellationToken ct = default);
+}

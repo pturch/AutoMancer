@@ -16,8 +16,8 @@ public static class ClickAction
     // Performs the click; tries the element's provider first, then falls through to synthesized mouse input.
     public static async Task ExecuteAsync(ElementHandle element, ClickType clickType = ClickType.Left, CancellationToken ct = default)
     {
-        if (clickType == ClickType.Left && element.Provider is not null)
-            if (await element.Provider.TryClickAsync(element, ct).ConfigureAwait(false))
+        if (clickType == ClickType.Left && element.Operator is not null)
+            if (await element.Operator.TryClickAsync(element, ct).ConfigureAwait(false))
                 return;
 
         await Task.Run(() =>

@@ -8,7 +8,7 @@
 
 **Goal:** Build the `AutoMancer.Engine` class library and `AutoMancer.Cli` console harness — the Windows automation core with UIA3/UIA2/Win32 providers, element resolver, retry loop, actions, and DPI normalization.
 
-**Architecture:** `AutoMancer.Engine` is a pure class library with no HTTP/RPC. Providers implement `IElementProvider`. `ElementResolver` runs the fallback chain with retry until implicit wait expires. Action classes (Click, Type, Clear, Scroll, Window) operate on resolved `ElementHandle`s. `AutoMancer.Cli` wraps the engine for interactive developer testing.
+**Architecture:** `AutoMancer.Engine` is a pure class library with no HTTP/RPC. Providers implement `IElementProvider` (find-only). Separately, `IElementOperator` is an optional contract for providers that can interact with elements via native UIA patterns (InvokePattern, ValuePattern). UIA3 and UIA2 providers each ship a paired operator class; Win32 has none (SendInput covers it universally). `ElementResolver` runs the fallback chain with retry until implicit wait expires. Action classes (Click, Type, Clear, Scroll, Window) check `ElementHandle.Operator` first for native dispatch before falling back to SendInput. `AutoMancer.Cli` wraps the engine for interactive developer testing.
 
 **API stability note:** `ElementHandle` must remain opaque — only `Id` and `NativeHandle` exposed publicly. The Phase 2 daemon stores handles in an element registry keyed by `Id` between stateless HTTP requests; leaking implementation details here creates cleanup work later.
 
@@ -31,18 +31,22 @@ AutoMancer/
 │   │   ├── Core/
 │   │   │   ├── LocatorStrategy.cs        enum: Name, AutomationId, ClassName, ControlType, RuntimeId, AutoMancerPath, AutomancerXPath
 │   │   │   ├── Locator.cs                value object + factory methods (incl. ByRuntimeId, ByXPath)
-│   │   │   ├── ElementHandle.cs          resolved element + Rect struct
+│   │   │   ├── ElementHandle.cs          resolved element + Rect struct; holds Provider and Operator backrefs (internal)
 │   │   │   ├── ElementProviderOptions.cs timeouts, chain, DPI flag
 │   │   │   ├── AppSession.cs             connection to a running app
-│   │   │   ├── IElementProvider.cs       provider contract + ElementSnapshot
+│   │   │   ├── IElementProvider.cs       find-only provider contract + ElementSnapshot
+│   │   │   ├── IElementOperator.cs       optional native-interact contract (TryClickAsync, TrySetValueAsync)
 │   │   │   ├── ElementResolver.cs        fallback chain orchestrator
 │   │   │   ├── AutoMancerPathParser.cs   tree-path syntax parser
 │   │   │   └── XPathEvaluator.cs         UIA tree snapshot → XML → XPath → element IDs
 │   │   ├── Providers/
 │   │   │   ├── NativeMethods.cs          all P/Invoke declarations
-│   │   │   ├── Uia3Provider.cs           UIAutomation3 via COM
-│   │   │   ├── Uia2Provider.cs           System.Windows.Automation fallback
-│   │   │   └── Win32Provider.cs          EnumChildWindows last resort
+│   │   │   ├── Uia3Provider.cs           UIAutomation3 via COM (find only; injects Uia3Operator)
+│   │   │   ├── Uia2Provider.cs           System.Windows.Automation fallback (find only; injects Uia2Operator)
+│   │   │   └── Win32Provider.cs          EnumChildWindows last resort (find only; no operator — SendInput covers it)
+│   │   ├── Operators/
+│   │   │   ├── Uia3Operator.cs           IElementOperator via COM InvokePattern / ValuePattern
+│   │   │   └── Uia2Operator.cs           IElementOperator via managed InvokePattern / ValuePattern
 │   │   ├── Actions/
 │   │   │   ├── ClickAction.cs            InvokePattern → SendInput
 │   │   │   ├── TypeAction.cs             ValuePattern → SendInput (Unicode, layout-agnostic)
@@ -77,7 +81,10 @@ AutoMancer/
         ├── Dpi/DpiHelperTests.cs                    unit — DPI conversion theory
         ├── Core/AutoMancerPathParserTests.cs        unit — path segment parsing
         ├── Core/XPathEvaluatorTests.cs              unit — XPath against snapshot tree
-        └── Integration/NotepadIntegrationTests.cs  [Trait("Category","Integration")] — requires Windows + Notepad
+        └── Integration/
+│               ├── NotepadTestCollection.cs         [CollectionDefinition("Notepad")] — disables parallelism (WinUI3 is single-instance)
+│               ├── NotepadIntegrationTests.cs       [Collection("Notepad")] — launch, find, type, click
+│               └── NotepadWorkflowTests.cs          [Collection("Notepad")] — full chain, locators, snapshot, error handling
 ```
 
 ---
@@ -230,12 +237,13 @@ dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
 
 ---
 
-### Task 8: Uia3Provider
+### Task 8: Uia3Provider and Uia3Operator
 
-**What:** First and most capable provider. Uses the UIAutomation3 COM interface (`CUIAutomation8` via `Interop.UIAutomationClient`) to build property conditions and find elements. Returns `null` on not-found — never throws.
+**What:** First and most capable provider. Uses the UIAutomation3 COM interface (`CUIAutomation8` via `Interop.UIAutomationClient`) to build property conditions and find elements. Returns `null` on not-found — never throws. The matching operator handles InvokePattern and ValuePattern dispatch; it is a stateless singleton stored as a `private static readonly` field in the provider and injected into every `ElementHandle` at wrap time.
 
 **Creates:**
-- `src/AutoMancer.Engine/Providers/Uia3Provider.cs` — `FindElementAsync`, `FindElementsAsync`, `SnapshotTreeAsync`; `ControlTypeMap`; `BuildCondition`; `WalkTree` up to 20 levels
+- `src/AutoMancer.Engine/Providers/Uia3Provider.cs` — `FindElementAsync`, `FindElementsAsync`, `SnapshotTreeAsync`; `ControlTypeMap`; `BuildCondition`; `WalkTree` up to 20 levels; injects `Uia3Operator` singleton into each `ElementHandle` via the `Operator` backref
+- `src/AutoMancer.Engine/Operators/Uia3Operator.cs` — `IElementOperator` implementation; `TryClickAsync` via `InvokePattern`; `TrySetValueAsync` via `ValuePattern`; returns `false` when the pattern is not exposed
 
 
 - [ ] **Implement and build**
@@ -271,8 +279,11 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "ElementResolverTests"
 
 **What:** First end-to-end validation. Proves that `AppSession` + `Uia3Provider` + `ElementResolver` work together against a real Windows app. Also verifies that a typo in the element name produces an error that includes the closest match.
 
+**WinUI3 single-instance constraint:** Windows 11 Notepad (WinUI3) is single-instance — a second `notepad.exe` launch opens a new tab in the existing window rather than starting a fresh process. This means test classes that each launch Notepad must run **sequentially**, not in parallel. Enforce this with an xUnit `[CollectionDefinition]` on a marker class and `[Collection("Notepad")]` on every integration test class. Each test's `DisposeAsync` must also `await Task.Delay(800)` after `KillApp()` so the process fully exits before the next test's `LaunchAsync` runs.
+
 **Creates:**
-- `tests/AutoMancer.Engine.Tests/Integration/NotepadIntegrationTests.cs` — `[Trait("Category", "Integration")]`; launch+find Edit control, attach-by-title, typo → closest match
+- `tests/AutoMancer.Engine.Tests/Integration/NotepadTestCollection.cs` — `[CollectionDefinition("Notepad", DisableParallelization = true)]` marker
+- `tests/AutoMancer.Engine.Tests/Integration/NotepadIntegrationTests.cs` — `[Collection("Notepad")]`; launch+find Document control via UIA3, attach-by-title, typo → closest match, type text, click File menu
 
 
 - [ ] **Run integration tests**
@@ -281,17 +292,17 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "ElementResolverTests"
 dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration"
 ```
 
-**Done when:** 3 tests pass on a Windows machine with Notepad.
+**Done when:** 5 tests pass on a Windows machine with Notepad.
 
 ---
 
 ### Task 11: ClickAction and TypeAction
 
-**What:** The two primary interaction actions. `ClickAction` tries UIA `InvokePattern` first (no mouse movement), falls back to `SendInput` mouse events. `TypeAction` tries `ValuePattern.SetValue` first, falls back to Unicode keyboard events. Both use `DpiHelper` when `DpiNormalize` is enabled.
+**What:** The two primary interaction actions. Each action checks `element.Operator` first — if non-null, it delegates to the operator's native pattern (InvokePattern for click, ValuePattern for type). If the operator returns `false` (pattern not supported) or is `null` (Win32/Visual elements), the action falls back to synthesized `SendInput`. Both use `DpiHelper` when `DpiNormalize` is enabled.
 
 **Creates:**
-- `src/AutoMancer.Engine/Actions/ClickAction.cs` — `ClickType` enum; InvokePattern → SendInput; `GetCenter` via DpiHelper
-- `src/AutoMancer.Engine/Actions/TypeAction.cs` — ValuePattern → Unicode SendInput
+- `src/AutoMancer.Engine/Actions/ClickAction.cs` — `ClickType` enum; `element.Operator?.TryClickAsync` → SendInput mouse fallback; `GetCenter` via `BoundingRect`
+- `src/AutoMancer.Engine/Actions/TypeAction.cs` — `element.Operator?.TrySetValueAsync` → Unicode `SendInput` fallback (`KEYEVENTF_UNICODE`, never VK codes)
 
 Extends `NativeMethods.cs` with `GetSystemMetrics`.
 Extends `NotepadIntegrationTests.cs` with `TypeInEditor_TextAppears` and `ClickFileMenu_OpensMenu`.
@@ -308,12 +319,13 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration"
 
 ---
 
-### Task 12: Uia2Provider
+### Task 12: Uia2Provider and Uia2Operator
 
-**What:** Fallback using the older managed `System.Windows.Automation` API. Same strategy support as Uia3Provider, all calls wrapped in `Task.Run` because the managed UIA2 API is synchronous.
+**What:** Fallback using the older managed `System.Windows.Automation` API. Same strategy support as Uia3Provider, all calls wrapped in `Task.Run` because the managed UIA2 API is synchronous. Requires `<UseWPF>true</UseWPF>` in the engine `.csproj` to bring in the Windows Desktop Runtime that ships `UIAutomationClient.dll`. The matching operator handles InvokePattern and ValuePattern the same way as the UIA3 operator, wrapping `InvalidOperationException` (UIA2 throws when a pattern isn't supported, unlike UIA3 which returns null).
 
 **Creates:**
-- `src/AutoMancer.Engine/Providers/Uia2Provider.cs` — same interface; uses `PropertyCondition`, `TreeWalker.ControlViewWalker`; `TryGetControlType` maps strings to `ControlType` enum
+- `src/AutoMancer.Engine/Providers/Uia2Provider.cs` — same `IElementProvider` interface; uses `PropertyCondition`, `TreeWalker.ControlViewWalker`; `ControlTypeNames` reverse map; injects `Uia2Operator` singleton into each `ElementHandle` via the `Operator` backref
+- `src/AutoMancer.Engine/Operators/Uia2Operator.cs` — `IElementOperator` implementation; same `TryClickAsync`/`TrySetValueAsync` contract; catches `InvalidOperationException` instead of checking for null
 
 
 - [ ] **Implement and verify**
@@ -329,10 +341,10 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration"
 
 ### Task 13: Win32Provider
 
-**What:** Last-resort provider using only `EnumChildWindows` P/Invoke. Works on apps with no accessibility tree at all. Matches by window title text (Name strategy) or class name. Returns the HWND wrapped in `ElementHandle`.
+**What:** Last-resort provider using only `EnumChildWindows` P/Invoke. Works on apps with no accessibility tree at all. Matches by window title text (Name strategy, substring match) or class name (exact match). Returns the HWND wrapped in `ElementHandle`. No operator class — Win32 has no native automation patterns equivalent to InvokePattern/ValuePattern, and `SendInput` is more universal for modern apps. A `Win32Operator` will be added in Stage 6.1 for window management actions (`SetWindowPos`, `ShowWindow`).
 
 **Creates:**
-- `src/AutoMancer.Engine/Providers/Win32Provider.cs` — `EnumChildWindows` callback; `Matches`; `WrapHwnd`; text/class name helpers
+- `src/AutoMancer.Engine/Providers/Win32Provider.cs` — `EnumChildWindows` callback; `Matches`; `GetTitle`/`GetClass` helpers; `Operator = null` in wrapped handles (actions fall through to SendInput)
 
 
 - [ ] **Implement and run integration tests**
@@ -341,7 +353,30 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration"
 dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration"
 ```
 
-**Done when:** All integration tests pass including `Win32Fallback_FindsByWindowTitle`.
+**Done when:** All integration tests pass; Win32 snapshot returns child HWNDs with class names.
+
+---
+
+### Task 13b: NotepadWorkflowTests — comprehensive integration coverage
+
+**What:** A second integration test class that exercises the full three-provider chain, multiple locator strategies, snapshot behavior, and error handling in a single suite. Demonstrates what a real automation script looks like.
+
+**Key patterns established here:**
+- UIA3 warmup in `InitializeAsync`: use a UIA3-only resolver (with retry) to wait for the element tree to be ready before running tests. Without this, UIA3 sometimes returns null on its first COM query during WinUI3 initialization, causing UIA2 to intercept in the chain and making provider-order assertions fail.
+- Snapshot-discovered Win32 tests: rather than hardcoding WinUI3 internal class/title names (which vary across Windows builds), the tests call `SnapshotTreeAsync` first and use whatever child names/classes are actually present.
+- Inconclusive-safe tests: when a snapshot returns no named/classed children (valid on some Notepad builds), the test returns early rather than asserting on nothing.
+
+**Creates:**
+- `tests/AutoMancer.Engine.Tests/Integration/NotepadWorkflowTests.cs` — `[Collection("Notepad")]`; full workflow (type + menu + re-attach), provider chain assertions, Win32 locators, UIA3/Win32 snapshots, error hint tests (15 tests total)
+
+
+- [ ] **Run integration tests**
+
+```bash
+dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration"
+```
+
+**Done when:** All 15 integration tests pass (5 from `NotepadIntegrationTests` + 10 from `NotepadWorkflowTests`).
 
 ---
 

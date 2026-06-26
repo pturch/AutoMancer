@@ -120,7 +120,12 @@ internal static class NativeMethods
     internal const uint MouseEventRightUp = 0x0010;
     internal const uint MouseEventAbsolute = 0x8000;
 
+    internal const uint KeyEventExtendedKey = 0x0001;
     internal const uint KeyEventKeyUp = 0x0002;
     internal const uint KeyEventUnicode = 0x0004;
     internal const uint KeyEventScancode = 0x0008;
+
+    internal const ushort VirtualKeyControl = 0x11;
+    internal const ushort VirtualKeyA = 0x41;
+    internal const ushort VirtualKeyDelete = 0x2E;
 }

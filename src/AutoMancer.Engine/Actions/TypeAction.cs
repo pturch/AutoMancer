@@ -12,8 +12,8 @@ public static class TypeAction
     // Types the given text into the element; returns once all input is delivered.
     public static async Task ExecuteAsync(ElementHandle element, string text, CancellationToken ct = default)
     {
-        if (element.Provider is not null)
-            if (await element.Provider.TrySetValueAsync(element, text, ct).ConfigureAwait(false))
+        if (element.Operator is not null)
+            if (await element.Operator.TrySetValueAsync(element, text, ct).ConfigureAwait(false))
                 return;
 
         await Task.Run(() =>

@@ -17,8 +17,11 @@ public sealed class ElementHandle
     public string? ControlType { get; init; }
     public Rect BoundingRect { get; init; }
 
-    // The provider that resolved this element — used by actions to delegate native interactions back to the right backend.
+    // The provider that resolved this element — retained for re-finding and diagnostics.
     internal IElementProvider? Provider { get; init; }
+
+    // The operator for this element's native handle type — null for Win32 and Visual elements, which fall back to SendInput.
+    internal IElementOperator? Operator { get; init; }
 
     // Constructed by providers only — callers receive handles exclusively from the resolver.
     internal ElementHandle(string id, string resolvedVia, object nativeHandle)

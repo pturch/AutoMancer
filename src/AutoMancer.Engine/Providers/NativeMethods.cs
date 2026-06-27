@@ -131,7 +131,9 @@ internal static class NativeMethods
     internal const ushort VirtualKeyA       = 0x41;
     internal const ushort VirtualKeyDelete  = 0x2E;
 
-    // Sends a left-button click (move, down, up) at a physical screen coordinate.
+    // Sends a left-button click at a physical screen coordinate.
+    // The MOVE event is sent first so WinUI3 hit-testing registers the pointer over the target
+    // before LEFTDOWN arrives; without it the canvas never sees the click.
     internal static void SendMouseClick(int x, int y)
     {
         var w  = GetSystemMetrics(SmCxScreen);
@@ -140,11 +142,11 @@ internal static class NativeMethods
         var ny = (int)(y * 65536L / h);
         INPUT[] inputs =
         [
-            new() { Type = InputTypeMouse, Data = new InputUnion { Mouse = new MOUSEINPUT { Dx = nx, Dy = ny, Flags = MouseEventMove | MouseEventAbsolute } } },
+            new() { Type = InputTypeMouse, Data = new InputUnion { Mouse = new MOUSEINPUT { Dx = nx, Dy = ny, Flags = MouseEventMove     | MouseEventAbsolute } } },
             new() { Type = InputTypeMouse, Data = new InputUnion { Mouse = new MOUSEINPUT { Dx = nx, Dy = ny, Flags = MouseEventLeftDown | MouseEventAbsolute } } },
-            new() { Type = InputTypeMouse, Data = new InputUnion { Mouse = new MOUSEINPUT { Dx = nx, Dy = ny, Flags = MouseEventLeftUp | MouseEventAbsolute } } },
+            new() { Type = InputTypeMouse, Data = new InputUnion { Mouse = new MOUSEINPUT { Dx = nx, Dy = ny, Flags = MouseEventLeftUp   | MouseEventAbsolute } } },
         ];
-        SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+        _ = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
     }
 
     // Sends a virtual-key keydown followed by keyup to the current foreground window.

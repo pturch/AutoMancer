@@ -5,7 +5,8 @@ using Xunit.Abstractions;
 
 namespace AutoMancer.Engine.Tests.Integration;
 
-// End-to-end workflow: launch Paint, draw a colorful smiley face (black outlines, yellow face, blue eyes), save to a temp PNG.
+// End-to-end workflow: launch Paint, draw a colorful smiley face, add a text label, and save to a temp PNG.
+// Exercises: pencil drawing, fill-bucket coloring, text-tool TypeAsync, and the Save As dialog flow.
 [Collection("Paint")]
 [Trait("Category", "Integration")]
 public sealed class PaintSmileTests(ITestOutputHelper output) : IAsyncLifetime
@@ -33,7 +34,7 @@ public sealed class PaintSmileTests(ITestOutputHelper output) : IAsyncLifetime
         await Task.Delay(800);
     }
 
-    // Draws a colorful smiley face: black outlines filled with yellow skin and blue eyes.
+    // Draws a colorful smiley face, adds a text label, and saves the result as a PNG to %TEMP%.
     [Fact]
     public async Task DrawSmile_SavesToPng_CanBeViewedManually()
     {
@@ -45,7 +46,7 @@ public sealed class PaintSmileTests(ITestOutputHelper output) : IAsyncLifetime
         var er     = r / 7;   // eye radius
 
         // ── Outlines (pencil, black) ──────────────────────────────────────
-        await _app.ClickAsync(Locator.ByAutomationId("PencilTool"));
+        await _app.ClickAtAsync(Locator.ByAutomationId("PencilTool"));
         await _app.ClickAsync(Locator.ByName("Black"));
         await Task.Delay(200);
 
@@ -63,7 +64,9 @@ public sealed class PaintSmileTests(ITestOutputHelper output) : IAsyncLifetime
         await Task.Delay(100);
 
         // ── Fill with colours (fill bucket) ──────────────────────────────
-        await _app.ClickAsync(Locator.ByName("Fill"));
+        // ClickAtAsync — InvokePattern fires Paint's UIA event but not the pointer-event pipeline
+        // that actually switches the active tool; physical mouse input is required.
+        await _app.ClickAtAsync(Locator.ByName("Fill"));
         await Task.Delay(200);
 
         // Yellow face — click in the centre of the face, between the eyes and the smile.
@@ -79,8 +82,31 @@ public sealed class PaintSmileTests(ITestOutputHelper output) : IAsyncLifetime
         await _app.ClickAtAsync(rex, rey);
         await Task.Delay(300);
 
+        // ── Text label ────────────────────────────────────────────────────
+        // Selects the Text tool, places a cursor below the face, then types via TypeAsync.
+        // This exercises the full ValuePattern → Unicode-SendInput path against Paint's WinUI3 TextBox.
+        await _app.ClickAsync(Locator.ByName("Black"));
+        await _app.ClickAtAsync(Locator.ByName("Text"));
+        await Task.Delay(300);
+
+        await _app.ClickAtAsync(cx, cy + r + 24);    // place cursor just below the face
+        await Task.Delay(400);                        // give Paint time to open the text box and focus it
+
+        // TypeDirectAsync sends to whatever has focus — the text box after the click above.
+        // Avoids an element search (ByControlType("Edit") can't distinguish this from other Edit controls).
+        await _app.TypeDirectAsync("Hello :)");
+        await Task.Delay(300);
+
+        await _app.ClickAtAsync(cx, cy - r - 24);    // click outside the text box to commit
+        await Task.Delay(400);
+
+        // Switch away from the text tool before saving; leaving it active can interfere with the Save click.
+        await _app.ClickAtAsync(Locator.ByAutomationId("PencilTool"));
+        await Task.Delay(200);
+
         // ── Save ──────────────────────────────────────────────────────────
-        var savePath = Path.Combine(Path.GetTempPath(), "automancer-smile.png");
+        var stamp    = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+        var savePath = Path.Combine(Path.GetTempPath(), $"automancer-smile-{stamp}.png");
         await SaveAsync(savePath);
 
         Assert.True(File.Exists(savePath), $"File not found at {savePath}");
@@ -104,18 +130,27 @@ public sealed class PaintSmileTests(ITestOutputHelper output) : IAsyncLifetime
         var fileName = Path.GetFileName(savePath);
 
         await dialog.PressChordAsync(0x12, 0x44);   // Alt+D — focus address bar
-        await Task.Delay(300);
+        await Task.Delay(500);                       // wait for address bar to enter edit mode
         await dialog.TypeDirectAsync(dir);
         await dialog.PressKeyAsync(0x0D);            // Enter — navigate to folder
-        await Task.Delay(1_000);
+        await Task.Delay(1_200);
 
-        // AutomationId "1001" is the IFileDialog filename ComboBox; more reliable than ByControlType("Edit")
-        // which can accidentally match the search box or the file-list's inline rename edit.
-        await dialog.ClickAsync(Locator.ByAutomationId("1001"));
-        await Task.Delay(200);
+        // Physically click the filename ComboBox to give it keyboard focus, wipe the default "Untitled"
+        // with Ctrl+A, then type the filename so the dialog sees the keystroke-driven value on submit.
+        // ValuePattern.SetValue changes the COM value but the dialog reads the displayed text on Enter.
+        await dialog.ClickAtAsync(Locator.ByAutomationId("1001"));
+        await Task.Delay(150);
+        await dialog.PressChordAsync(0x11, 0x41);  // Ctrl+A — select all
+        await Task.Delay(100);
         await dialog.TypeDirectAsync(fileName);
-        await Task.Delay(200);
-        await dialog.ClickAsync(Locator.ByName("Save"));
+        await Task.Delay(300);
+        await dialog.PressKeyAsync(0x0D);           // Enter — submit the dialog
+
+        // On subsequent runs the file already exists; dismiss the Replace confirmation if it appears.
+        var confirm = await App.FindDialogAsync(_app.ProcessId, "Replace", timeoutMs: 1_500);
+        if (confirm is not null)
+            await confirm.ClickAsync(Locator.ByName("Replace"));
+
         await Task.Delay(1_000);
     }
 

@@ -118,6 +118,16 @@ public sealed class App : IAsyncDisposable
             NativeMethods.SendVkKey(vk);
         }, ct);
 
+    // Finds the element and clicks at its screen center via SendInput, bypassing InvokePattern.
+    // Use for WinUI3 tool-palette buttons where InvokePattern fires the UIA event but does not
+    // go through the pointer-event pipeline the app needs to switch active state.
+    public async Task ClickAtAsync(Locator locator, CancellationToken ct = default)
+    {
+        var element = await _resolver.FindAsync(locator, _session, ct);
+        var rect = element.BoundingRect;
+        await ClickAtAsync((int)(rect.X + rect.Width / 2), (int)(rect.Y + rect.Height / 2), ct);
+    }
+
     // Clicks at a physical screen coordinate without finding a UIA element; useful for tools like the
     // fill bucket where the target point has no accessible element.
     public async Task ClickAtAsync(int x, int y, CancellationToken ct = default)

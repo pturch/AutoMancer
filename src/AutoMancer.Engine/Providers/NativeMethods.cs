@@ -125,7 +125,77 @@ internal static class NativeMethods
     internal const uint KeyEventUnicode = 0x0004;
     internal const uint KeyEventScancode = 0x0008;
 
+    internal const ushort VirtualKeyReturn  = 0x0D;
+    internal const ushort VirtualKeyMenu    = 0x12;  // Alt
     internal const ushort VirtualKeyControl = 0x11;
-    internal const ushort VirtualKeyA = 0x41;
-    internal const ushort VirtualKeyDelete = 0x2E;
+    internal const ushort VirtualKeyA       = 0x41;
+    internal const ushort VirtualKeyDelete  = 0x2E;
+
+    // Sends a left-button click (move, down, up) at a physical screen coordinate.
+    internal static void SendMouseClick(int x, int y)
+    {
+        var w  = GetSystemMetrics(SmCxScreen);
+        var h  = GetSystemMetrics(SmCyScreen);
+        var nx = (int)(x * 65536L / w);
+        var ny = (int)(y * 65536L / h);
+        INPUT[] inputs =
+        [
+            new() { Type = InputTypeMouse, Data = new InputUnion { Mouse = new MOUSEINPUT { Dx = nx, Dy = ny, Flags = MouseEventMove | MouseEventAbsolute } } },
+            new() { Type = InputTypeMouse, Data = new InputUnion { Mouse = new MOUSEINPUT { Dx = nx, Dy = ny, Flags = MouseEventLeftDown | MouseEventAbsolute } } },
+            new() { Type = InputTypeMouse, Data = new InputUnion { Mouse = new MOUSEINPUT { Dx = nx, Dy = ny, Flags = MouseEventLeftUp | MouseEventAbsolute } } },
+        ];
+        SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+    }
+
+    // Sends a virtual-key keydown followed by keyup to the current foreground window.
+    internal static void SendVkKey(ushort vk)
+    {
+        INPUT[] inputs =
+        [
+            new() { Type = InputTypeKeyboard, Data = new InputUnion { Keyboard = new KEYBDINPUT { Vk = vk } } },
+            new() { Type = InputTypeKeyboard, Data = new InputUnion { Keyboard = new KEYBDINPUT { Vk = vk, Flags = KeyEventKeyUp } } },
+        ];
+        SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+    }
+
+    // Sends a chord: modifier down, key down+up, modifier up (e.g. Alt+D or Ctrl+A).
+    internal static void SendVkChord(ushort modifier, ushort key)
+    {
+        INPUT[] inputs =
+        [
+            new() { Type = InputTypeKeyboard, Data = new InputUnion { Keyboard = new KEYBDINPUT { Vk = modifier } } },
+            new() { Type = InputTypeKeyboard, Data = new InputUnion { Keyboard = new KEYBDINPUT { Vk = key } } },
+            new() { Type = InputTypeKeyboard, Data = new InputUnion { Keyboard = new KEYBDINPUT { Vk = key, Flags = KeyEventKeyUp } } },
+            new() { Type = InputTypeKeyboard, Data = new InputUnion { Keyboard = new KEYBDINPUT { Vk = modifier, Flags = KeyEventKeyUp } } },
+        ];
+        SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+    }
+
+    // Callback invoked by EnumWindows for each top-level window; return false to stop enumeration.
+    internal delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+    // Enumerates all top-level windows on the desktop, invoking lpEnumFunc for each.
+    [DllImport("user32.dll")]
+    internal static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+    // Returns the PID of the process that created hWnd.
+    [DllImport("user32.dll")]
+    internal static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+    // Moves, resizes, or repositions hWnd without changing its Z-order or foreground state.
+    [DllImport("user32.dll", SetLastError = true)]
+    internal static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+
+    // Changes the show state of hWnd (minimize, maximize, restore, etc.).
+    [DllImport("user32.dll")]
+    internal static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+    internal const uint SwpNoSize     = 0x0001;
+    internal const uint SwpNoMove     = 0x0002;
+    internal const uint SwpNoZOrder   = 0x0004;
+    internal const uint SwpNoActivate = 0x0010;
+
+    internal const int SwRestore  = 9;
+    internal const int SwMinimize = 2;
+    internal const int SwMaximize = 3;
 }

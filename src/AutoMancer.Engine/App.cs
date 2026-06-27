@@ -45,6 +45,22 @@ public sealed class App : IAsyncDisposable
         return new App(session, options ?? AppOptions.Default);
     }
 
+    // Polls all top-level windows for a dialog owned by ownerPid whose title contains titleContains; returns null on timeout.
+    // Use this instead of AttachByTitleAsync when a modal dialog opens within an already-running process — modal dialogs
+    // don't change Process.MainWindowTitle, so AttachByTitleAsync cannot find them.
+    public static async Task<App?> FindDialogAsync(int ownerPid, string titleContains, AppOptions? options = null, int timeoutMs = 3_000, CancellationToken ct = default)
+    {
+        var session = await AppSession.FindDialogAsync(ownerPid, titleContains, timeoutMs, ct);
+        return session is null ? null : new App(session, options ?? AppOptions.Default);
+    }
+
+    // Activates a UWP/MSIX packaged app by its Application User Model ID (AUMID) and waits for its window.
+    public static async Task<App> LaunchPackagedAsync(string aumid, AppOptions? options = null, CancellationToken ct = default)
+    {
+        var session = await AppSession.LaunchPackagedAsync(aumid, ct: ct);
+        return new App(session, options ?? AppOptions.Default);
+    }
+
     // Finds the first windowed process whose title contains the given string (case-insensitive).
     public static async Task<App> AttachByTitleAsync(string title, AppOptions? options = null, CancellationToken ct = default)
     {
@@ -94,6 +110,58 @@ public sealed class App : IAsyncDisposable
             await Task.Delay(_actionDelayMs, ct);
     }
 
+    // Presses and releases a virtual-key code against the root window; use for non-printable keys like Enter (0x0D), Escape (0x1B), Tab (0x09).
+    public Task PressKeyAsync(ushort vk, CancellationToken ct = default)
+        => Task.Run(() =>
+        {
+            NativeMethods.SetForegroundWindow(_session.RootWindowHandle);
+            NativeMethods.SendVkKey(vk);
+        }, ct);
+
+    // Clicks at a physical screen coordinate without finding a UIA element; useful for tools like the
+    // fill bucket where the target point has no accessible element.
+    public async Task ClickAtAsync(int x, int y, CancellationToken ct = default)
+    {
+        await Task.Run(() =>
+        {
+            NativeMethods.SetForegroundWindow(_session.RootWindowHandle);
+            NativeMethods.SendMouseClick(x, y);
+        }, ct);
+        if (_actionDelayMs > 0) await Task.Delay(_actionDelayMs, ct);
+    }
+
+    // Presses a modifier+key chord against the root window; e.g. (0x12, 0x44) for Alt+D, (0x11, 0x41) for Ctrl+A.
+    public Task PressChordAsync(ushort modifier, ushort key, CancellationToken ct = default)
+        => Task.Run(() =>
+        {
+            NativeMethods.SetForegroundWindow(_session.RootWindowHandle);
+            NativeMethods.SendVkChord(modifier, key);
+        }, ct);
+
+    // Sends text as Unicode keystrokes to whichever element currently has focus in this window; bypasses element search.
+    public Task TypeDirectAsync(string text, CancellationToken ct = default)
+        => Task.Run(() =>
+        {
+            NativeMethods.SetForegroundWindow(_session.RootWindowHandle);
+            TypeAction.SendUnicodeText(text);
+        }, ct);
+
+    // Drags in a straight line between two physical screen coordinates; waits ActionDelayMs after completion.
+    public async Task DragAsync(int fromX, int fromY, int toX, int toY, CancellationToken ct = default)
+    {
+        Providers.NativeMethods.SetForegroundWindow(_session.RootWindowHandle);
+        await DragAction.DragAsync(fromX, fromY, toX, toY, ct: ct);
+        if (_actionDelayMs > 0) await Task.Delay(_actionDelayMs, ct);
+    }
+
+    // Drags through a sequence of physical screen coordinates in one continuous press; waits ActionDelayMs after completion.
+    public async Task DragThroughAsync(IReadOnlyList<(int X, int Y)> waypoints, CancellationToken ct = default)
+    {
+        Providers.NativeMethods.SetForegroundWindow(_session.RootWindowHandle);
+        await DragAction.DragThroughAsync(waypoints, ct);
+        if (_actionDelayMs > 0) await Task.Delay(_actionDelayMs, ct);
+    }
+
     // Finds the element and scrolls it into view; waits ActionDelayMs after scrolling for the UI to settle.
     public async Task ScrollIntoViewAsync(Locator locator, CancellationToken ct = default)
     {
@@ -102,6 +170,22 @@ public sealed class App : IAsyncDisposable
         if (_actionDelayMs > 0)
             await Task.Delay(_actionDelayMs, ct);
     }
+
+    // Returns the window's current bounding rectangle in physical screen coordinates.
+    public Task<Rect> GetWindowSizeAsync(CancellationToken ct = default)
+        => WindowAction.GetSizeAsync(_session.RootWindowHandle, ct);
+
+    // Moves the window's top-left corner to (x, y) in physical screen coordinates; size is unchanged.
+    public Task MoveWindowAsync(int x, int y, CancellationToken ct = default)
+        => WindowAction.MoveAsync(_session.RootWindowHandle, x, y, ct);
+
+    // Resizes the window to (width × height) in physical pixels; position is unchanged.
+    public Task ResizeWindowAsync(int width, int height, CancellationToken ct = default)
+        => WindowAction.ResizeAsync(_session.RootWindowHandle, width, height, ct);
+
+    // Changes the window's visual state (Normal, Maximized, Minimized).
+    public Task SetWindowStateAsync(WindowState state, CancellationToken ct = default)
+        => WindowAction.SetVisualStateAsync(_session.RootWindowHandle, state, ct);
 
     // Terminates the target process immediately; no-op if it has already exited.
     public void Kill() => _session.KillApp();

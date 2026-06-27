@@ -201,17 +201,18 @@ All C# code (engine + daemon) is tested in C# with xunit + Moq. SDK client code 
 
 ### Stage 7 — Extended Interactions
 > **Unlocks:** The full range of mouse and keyboard interactions a real automation script needs.
-> **Estimated time:** 1.5–2 hours
-> **Done when:** Integration tests confirm double-click, right-click, hover, hotkey, and drag all work against Notepad.
+> **Estimated time:** 2–2.5 hours
+> **Done when:** Integration tests confirm double-click, right-click, hover, hotkey, drag, scroll wheel, Ctrl+click, and set-focus all work against Notepad.
 
 | Batch | Work |
 |---|---|
-| 7.1 | `DoubleClickAction`, `RightClickAction`, `HoverAction` — SendInput mouse event variants; extend `ClickAction` or add alongside it |
+| 7.1 | `DoubleClickAction`, `RightClickAction`, `HoverAction` — SendInput mouse event variants; extend `ClickAction` with `modifiers` (Shift/Ctrl/Alt/Win held during click) and `button` (left/middle/right/back/forward) parameters; add `CloseAsync` to `WindowAction` via `WindowPattern` → `WM_CLOSE` fallback |
 | 7.2 | `KeyboardAction` — `PressKeyAsync(Key)`, `HotkeyAsync(modifiers, key)`, `KeyDownAsync`/`KeyUpAsync`; VK codes for non-printable keys; `KEYEVENTF_KEYUP` for release |
 | 7.3 | `DragAction` — `DragAsync(from, to)` via SendInput mouse press + move + release |
-| 7.4 | Integration tests — double-click selects a word, Ctrl+A selects all text, right-click opens context menu |
+| 7.4 | `ScrollWheelAction` — `ScrollAsync(element, deltaX, deltaY)` via `SendInput` `MOUSEEVENTF_WHEEL` (vertical) / `MOUSEEVENTF_HWHEEL` (horizontal); `SetFocusAction` — `UIAutomationElement.SetFocus` |
+| 7.5 | Integration tests — double-click selects a word, Ctrl+A selects all text, right-click opens context menu, Ctrl+click, scroll wheel moves caret, SetFocus focuses element |
 
-**After 7.4:** All mouse and keyboard interaction types covered.
+**After 7.5:** All mouse and keyboard interaction types covered.
 
 ---
 
@@ -225,7 +226,7 @@ All C# code (engine + daemon) is tested in C# with xunit + Moq. SDK client code 
 |---|---|
 | 8.1 | `ScreenshotAction` — `CaptureAsync(hwnd)` → `byte[]` PNG via GDI+ `BitBlt`; no external dependencies |
 | 8.2 | `WaitUntilGoneAsync` in `ElementResolver` — retry until every provider returns null within the implicit wait window |
-| 8.3 | `App` facade enrichment — add `DoubleClickAsync`, `RightClickAsync`, `HoverAsync`, `HotkeyAsync`, `DragAsync`, `ScreenshotAsync`, `WaitUntilGoneAsync` |
+| 8.3 | `App` facade enrichment — add `DoubleClickAsync`, `RightClickAsync`, `HoverAsync`, `HotkeyAsync`, `DragAsync`, `ScrollWheelAsync`, `SetFocusAsync`, `CloseAsync`, `ScreenshotAsync`, `WaitUntilGoneAsync` |
 | 8.4 | Integration tests — screenshot returns non-empty bytes; wait-until-gone resolves after Notepad dialog is dismissed |
 
 **After 8.4:** Phase 2 complete. The C# API is production-ready and frozen. Phase 3 adds no engine changes.
@@ -262,14 +263,15 @@ All C# code (engine + daemon) is tested in C# with xunit + Moq. SDK client code 
 
 | Batch | Work | Plan ref |
 |---|---|---|
-| 10.1 | `InteractionEndpoints` — click, double-click, right-click, hover, value (type), clear, drag | Daemon Task 7 |
+| 10.1 | `InteractionEndpoints` — click (with `modifiers` and `button` params), double-click, right-click, hover, value (type), clear, drag, scroll wheel (deltaX/deltaY); coordinate-based click and hover without an element ID | Daemon Task 7 |
 | 10.2 | `PropertyEndpoints` — text, name, enabled, selected, displayed, rect, attribute | Daemon Task 8 |
 | 10.3 | `ScreenshotEndpoint` (base64 PNG), `TimeoutEndpoints` | Daemon Task 9 (partial) |
-| 10.4 | `WindowEndpoints` — size GET/POST, maximize, minimize | Daemon Task 9 (window) |
+| 10.4 | `WindowEndpoints` — size GET/POST, maximize, minimize, restore, close | Daemon Task 9 (window) |
 | 10.5 | `KeyboardEndpoints` — hotkey, key-down/up; `ExtensionEndpoints` — provider, scroll-to, app PID, kill, snapshot | Daemon Tasks 9–10 |
-| 10.6 | C# daemon integration tests — `DaemonIntegrationTests.cs`; 7 tests covering full HTTP surface | Daemon Task 11 |
+| 10.6 | `ClipboardEndpoints` — `GET /session/:id/clipboard` (text or image), `POST /session/:id/clipboard`; `PatternEndpoints` — expand, collapse, toggle, select, addToSelection, removeFromSelection, allSelectedItems, isMultiple, getValue, setFocus as `windows: *` extension commands | — |
+| 10.7 | C# daemon integration tests — `DaemonIntegrationTests.cs`; tests covering full HTTP surface including clipboard, pattern commands, and coordinate-based interactions | Daemon Task 11 |
 
-**After 10.6:** Complete daemon. All W3C + extension endpoints covered by C# tests. No Python/TypeScript toolchain needed to verify daemon correctness.
+**After 10.7:** Complete daemon. All W3C + extension endpoints covered by C# tests. No Python/TypeScript toolchain needed to verify daemon correctness.
 
 ---
 
@@ -398,10 +400,10 @@ All C# code (engine + daemon) is tested in C# with xunit + Moq. SDK client code 
 | 4 — Full Provider Chain | 2 h | 9 h | 1 |
 | 5 — Extended Locators | 2–3 h | 12 h | 1 |
 | 6 — Window + CLI | 2 h | **14 h ← Phase 1 done** | 1 |
-| 7 — Extended Interactions | 1.5–2 h | 16 h | 2 |
-| 8 — Screenshot + Wait + App | 1.5–2 h | **18 h ← Phase 2 done** | 2 |
-| 9 — Daemon Foundation | 3 h | 21 h | 3 |
-| 10 — Daemon Interactions + C# Tests | 3–4 h | 25 h | 3 |
+| 7 — Extended Interactions | 2–2.5 h | 16.5 h | 2 |
+| 8 — Screenshot + Wait + App | 1.5–2 h | **18.5 h ← Phase 2 done** | 2 |
+| 9 — Daemon Foundation | 3 h | 21.5 h | 3 |
+| 10 — Daemon Interactions + C# Tests | 4–5 h | 26.5 h | 3 |
 | 11 — Python SDK | 2–3 h | 28 h | 3 |
 | 12 — TypeScript SDK | 2–3 h | 31 h | 3 |
 | 13 — CI Session | 2–3 h | 34 h | 3 |

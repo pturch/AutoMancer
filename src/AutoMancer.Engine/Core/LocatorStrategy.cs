@@ -9,4 +9,6 @@ public enum LocatorStrategy
     ClassName,
     ControlType,
     AutoMancerPath,
+    RuntimeId,
+    AutomancerXPath,
 }

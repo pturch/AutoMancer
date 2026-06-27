@@ -18,4 +18,10 @@ public sealed record Locator(LocatorStrategy Strategy, string Value)
 
     // Matches via a tree-traversal path (e.g. "Window > Pane[2] > Button[\"OK\"]").
     public static Locator ByPath(string path) => new(LocatorStrategy.AutoMancerPath, path);
+
+    // Re-finds a specific element by its UIA RuntimeId (e.g. "42.333896.3.1") — the dotted string from ElementHandle.Id.
+    public static Locator ByRuntimeId(string runtimeId) => new(LocatorStrategy.RuntimeId, runtimeId);
+
+    // Finds elements via XPath evaluated against the UIA element tree (0-based indices; tags are control types, attrs are UIA properties).
+    public static Locator ByXPath(string xpath) => new(LocatorStrategy.AutomancerXPath, xpath);
 }

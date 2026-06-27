@@ -144,8 +144,18 @@ public sealed class Uia2Provider : IElementProvider
         LocatorStrategy.ControlType => ControlTypeMap.TryGetValue(locator.Value, out var controlType)
             ? new PropertyCondition(AutomationElement.ControlTypeProperty, controlType)
             : null,
+        LocatorStrategy.RuntimeId => ParseRuntimeId(locator.Value) is int[] id
+            ? new PropertyCondition(AutomationElement.RuntimeIdProperty, id)
+            : null,
         _ => null,
     };
+
+    // Parses a dotted RuntimeId string (e.g. "42.333896.3.1") back to int[] for use in a UIA2 property condition.
+    private static int[]? ParseRuntimeId(string value)
+    {
+        try { return value.Split('.').Select(int.Parse).ToArray(); }
+        catch { return null; }
+    }
 
     private static readonly Uia2Operator _op = new();
 

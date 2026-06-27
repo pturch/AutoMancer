@@ -69,6 +69,9 @@ public sealed class Uia3Provider : IElementProvider
     {
         return Task.Run(() =>
         {
+            if (locator.Strategy == LocatorStrategy.AutomancerXPath)
+                return FindByXPath(locator.Value, session);
+
             var condition = BuildCondition(locator);
             if (condition is null)
                 return (ElementHandle?)null;
@@ -84,6 +87,9 @@ public sealed class Uia3Provider : IElementProvider
     {
         return Task.Run(() =>
         {
+            if (locator.Strategy == LocatorStrategy.AutomancerXPath)
+                return (IReadOnlyList<ElementHandle>)FindAllByXPath(locator.Value, session);
+
             var condition = BuildCondition(locator);
             var root = condition is null ? null : Automation.ElementFromHandle(session.RootWindowHandle);
             if (root is null || condition is null)
@@ -96,6 +102,54 @@ public sealed class Uia3Provider : IElementProvider
 
             return (IReadOnlyList<ElementHandle>)results;
         }, ct);
+    }
+
+    // Snapshots the tree, evaluates the XPath expression, then re-walks the live tree to find the first matching element.
+    private ElementHandle? FindByXPath(string xpath, AppSession session)
+    {
+        var root = Automation.ElementFromHandle(session.RootWindowHandle);
+        if (root is null) return null;
+        var snapshot = WalkTree(root, Automation.ControlViewWalker, 0);
+        var indices = XPathEvaluator.Evaluate(xpath, [snapshot]);
+        if (indices.Count == 0) return null;
+        var matched = CollectElements(root, [.. indices]);
+        return matched.Count > 0 ? Wrap(matched[0]) : null;
+    }
+
+    // Snapshots the tree, evaluates the XPath expression, then re-walks the live tree to find all matching elements.
+    private List<ElementHandle> FindAllByXPath(string xpath, AppSession session)
+    {
+        var root = Automation.ElementFromHandle(session.RootWindowHandle);
+        if (root is null) return [];
+        var snapshot = WalkTree(root, Automation.ControlViewWalker, 0);
+        var indices = XPathEvaluator.Evaluate(xpath, [snapshot]);
+        if (indices.Count == 0) return [];
+        return CollectElements(root, [.. indices]).Select(Wrap).ToList();
+    }
+
+    // Walks the live UIA tree depth-first and returns the elements whose flat indices are in targetIndices.
+    private static List<IUIAutomationElement> CollectElements(IUIAutomationElement root, HashSet<int> targetIndices)
+    {
+        var results = new List<IUIAutomationElement>();
+        int idx = 0;
+        CollectWalk(root, Automation.ControlViewWalker, targetIndices, results, ref idx, 0);
+        return results;
+    }
+
+    // Recursive depth-first walk matching the snapshot order in WalkTree; adds elements whose flat index is a target.
+    private static void CollectWalk(IUIAutomationElement element, IUIAutomationTreeWalker walker,
+        HashSet<int> targets, List<IUIAutomationElement> results, ref int idx, int depth)
+    {
+        if (targets.Contains(idx))
+            results.Add(element);
+        idx++;
+        if (depth >= MaxTreeDepth) return;
+        var child = walker.GetFirstChildElement(element);
+        while (child is not null)
+        {
+            CollectWalk(child, walker, targets, results, ref idx, depth + 1);
+            child = walker.GetNextSiblingElement(child);
+        }
     }
 
     // Snapshots the element tree rooted at the session's window, walking up to MaxTreeDepth levels deep.
@@ -112,26 +166,45 @@ public sealed class Uia3Provider : IElementProvider
     }
 
     // Recursively builds a snapshot of an element and its children, stopping once MaxTreeDepth is reached.
+    // Properties are read defensively because dynamic apps (e.g. Task Manager) can invalidate elements mid-walk.
     private static ElementSnapshot WalkTree(IUIAutomationElement element, IUIAutomationTreeWalker walker, int depth)
     {
         var children = new List<ElementSnapshot>();
         if (depth < MaxTreeDepth)
         {
-            var child = walker.GetFirstChildElement(element);
+            IUIAutomationElement? child = null;
+            try { child = walker.GetFirstChildElement(element); } catch { }
             while (child is not null)
             {
-                children.Add(WalkTree(child, walker, depth + 1));
-                child = walker.GetNextSiblingElement(child);
+                try { children.Add(WalkTree(child, walker, depth + 1)); } catch { }
+                IUIAutomationElement? next = null;
+                try { next = walker.GetNextSiblingElement(child); } catch { }
+                child = next;
             }
         }
 
+        // Read all properties in one block; if the element goes stale partway through, use whatever was captured.
+        string id = "", name = "", automationId = "", className = "";
+        int controlTypeId = 0;
+        tagRECT rect = default;
+        try
+        {
+            id = GetRuntimeId(element);
+            name = element.CurrentName;
+            automationId = element.CurrentAutomationId;
+            className = element.CurrentClassName;
+            controlTypeId = element.CurrentControlType;
+            rect = element.CurrentBoundingRectangle;
+        }
+        catch { }
+
         return new ElementSnapshot(
-            GetRuntimeId(element),
-            element.CurrentName,
-            element.CurrentAutomationId,
-            element.CurrentClassName,
-            ControlTypeNames.GetValueOrDefault(element.CurrentControlType, "Unknown"),
-            ToRect(element.CurrentBoundingRectangle),
+            id,
+            name,
+            automationId,
+            className,
+            ControlTypeNames.GetValueOrDefault(controlTypeId, "Unknown"),
+            ToRect(rect),
             children);
     }
 
@@ -144,8 +217,18 @@ public sealed class Uia3Provider : IElementProvider
         LocatorStrategy.ControlType => ControlTypeMap.TryGetValue(locator.Value, out var controlTypeId)
             ? Automation.CreatePropertyCondition(UIA_PropertyIds.UIA_ControlTypePropertyId, controlTypeId)
             : null,
+        LocatorStrategy.RuntimeId => ParseRuntimeId(locator.Value) is int[] id
+            ? Automation.CreatePropertyCondition(UIA_PropertyIds.UIA_RuntimeIdPropertyId, id)
+            : null,
         _ => null,
     };
+
+    // Parses a dotted RuntimeId string (e.g. "42.333896.3.1") back to int[] for use in a UIA property condition.
+    private static int[]? ParseRuntimeId(string value)
+    {
+        try { return value.Split('.').Select(int.Parse).ToArray(); }
+        catch { return null; }
+    }
 
     private static readonly Uia3Operator _op = new();
 

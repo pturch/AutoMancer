@@ -98,6 +98,8 @@ All C# code (engine + daemon) is tested in C# with xunit + Moq. SDK client code 
 | 1.1 | Solution scaffold — `AutoMancer.slnx`, three `.csproj` files, NuGet refs, delete stubs | Engine Task 1 |
 | 1.2 | `LocatorStrategy`, `Locator`, `ElementHandle`, `Rect`, `ElementProviderOptions` | Engine Task 2 |
 | 1.3 | `IElementProvider` + `ElementSnapshot`; `AppSession` (`LaunchAsync`, `AttachByPid`, `AttachByTitle`) | Engine Task 3 |
+
+**UWP / packaged app launch:** `LaunchAsync` identifies a session by watching the launched PID for a window. UWP and MSIX-packaged apps (Calculator, Windows Terminal, new Paint, etc.) work differently — `calc.exe` is a thin activator that exits immediately; the real window appears under a different PID managed by the Windows app model. `LaunchAsync` will throw `AppLaunchError` for these apps. Workaround until Stage 6: use `Process.Start` with `UseShellExecute = true` and then call `AttachByTitleAsync`. Addressed properly in batch 6.6.
 | 1.4 | `EngineLogger` + error types (`ElementNotFoundError`, `ElementNotInteractableError`, `AppLaunchError`) | Engine Task 4 |
 | 1.5 | `ClosestMatchFinder` + Levenshtein; `DpiHelper` testable overloads | Engine Tasks 5–6 |
 
@@ -160,7 +162,7 @@ All C# code (engine + daemon) is tested in C# with xunit + Moq. SDK client code 
 ### Stage 5 — Extended Locator Strategies
 > **Unlocks:** Complex element addressing — positional paths, re-finding by ID, XPath queries.
 > **Estimated time:** 2–3 hours
-> **Done when:** All three new strategies find correct elements in Notepad.
+> **Done when:** `RuntimeId` and `AutomancerXPath` find correct elements in Notepad end-to-end. `AutoMancerPath` parser is complete; provider wiring (segment-by-segment tree traversal) is deferred to Stage 6.
 
 | Batch | Work | Plan ref |
 |---|---|---|
@@ -169,7 +171,7 @@ All C# code (engine + daemon) is tested in C# with xunit + Moq. SDK client code 
 | 5.3 | `XPathEvaluator` — UIA tree snapshot → `XDocument` → XPath → element indices; unit tests | Engine Task 18 |
 | 5.4 | Wire `AutomancerXPath` into `Uia3Provider.FindElementAsync`; add `CollectElements` helper for index→element mapping | Engine Task 18 |
 
-**After 5.4:** `Locator.ByXPath("//Button[@Name='File']")` finds the File menu in Notepad.
+**After 5.4:** `Locator.ByXPath("//MenuItem[@Name='File']")` finds the File menu in Notepad. (File is a `MenuItem` in WinUI3 Notepad, not a `Button`.)
 
 ---
 
@@ -186,8 +188,9 @@ All C# code (engine + daemon) is tested in C# with xunit + Moq. SDK client code 
 | 6.3 | CLI commands — `launch`, `find`, `tree` (first three) | Engine Task 16 |
 | 6.4 | CLI commands — `click`, `type` | Engine Task 16 |
 | 6.5 | Full unit test pass | Engine Task 20 |
+| 6.6 | `App.LaunchPackagedAsync(string aumid)` — uses `IApplicationActivationManager.ActivateApplication(aumid)` (COM, no extra package) to activate a UWP/MSIX app by its Application User Model ID; returns the real host PID so the existing window-wait logic works unchanged. Integration test: launch Calculator by AUMID, find the display element. |
 
-**After 6.5:** Phase 1 complete. The engine library handles basic automation from C#. Every unit and integration test is green.
+**After 6.6:** Phase 1 complete. The engine library handles basic automation from C#. Every unit and integration test is green.
 
 ---
 

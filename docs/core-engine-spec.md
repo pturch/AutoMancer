@@ -401,7 +401,7 @@ dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
 
 ### Task 15: AutoMancerPathParser
 
-**What:** Parses tree-traversal path strings like `"Window > Pane[2] > Button[\"Submit\"]"` into typed `PathSegment` records. Supports control type, quoted name, 0-based index, and wildcard `*`. Used by providers when the `AutoMancerPath` strategy is requested.
+**What:** Parses tree-traversal path strings like `"Window > Pane[2] > Button[\"Submit\"]"` into typed `PathSegment` records. Supports control type, quoted name, 0-based index, and wildcard `*`. Provider wiring (segment-by-segment tree traversal) is a separate concern handled in Stage 6; this task produces only the parser.
 
 **Creates:**
 - `src/AutoMancer.Engine/Core/AutoMancerPathParser.cs` — `Parse(string)` → `IReadOnlyList<PathSegment>`; regex-based
@@ -492,7 +492,7 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "XPathEvaluatorTests"
 dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration"
 ```
 
-**Done when:** `Locator.ByXPath("//Button[@Name='File']")` finds the File menu in Notepad.
+**Done when:** `Locator.ByXPath("//MenuItem[@Name='File']")` finds the File menu in Notepad. (File is a `MenuItem` in WinUI3 Notepad, not a `Button`.)
 
 ---
 

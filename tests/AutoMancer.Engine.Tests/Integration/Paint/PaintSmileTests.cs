@@ -25,6 +25,10 @@ public sealed class PaintSmileTests(ITestOutputHelper output) : IAsyncLifetime
         catch { }
 
         await Task.Delay(300);
+
+        // Paint remembers the canvas size from the last session (or a manual resize done by a developer
+        // testing the app), which would silently break the radii/offsets computed below. Force a known size.
+        await SetCanvasSizeAsync(800);
     }
 
     // Kills Paint without triggering the save dialog.
@@ -32,6 +36,24 @@ public sealed class PaintSmileTests(ITestOutputHelper output) : IAsyncLifetime
     {
         _app.Kill();
         await Task.Delay(800);
+    }
+
+    // Opens the Resize and Skew flyout and sets the canvas to an exact square pixel size. Using a square
+    // avoids the "Maintain aspect ratio" toggle mattering — width and height end up equal either way.
+    private async Task SetCanvasSizeAsync(int size)
+    {
+        await _app.ClickAtAsync(Locator.ByName("Resize and skew"));
+        await Task.Delay(300);
+
+        await _app.ClickAsync(Locator.ByName("Pixels"));
+        await Task.Delay(100);
+
+        await _app.TypeAsync(Locator.ByAutomationId("HorizontalResizeTextBox"), size.ToString());
+        await _app.TypeAsync(Locator.ByAutomationId("VerticalResizeTextBox"), size.ToString());
+        await Task.Delay(100);
+
+        await _app.ClickAsync(Locator.ByAutomationId("PrimaryButton"));
+        await Task.Delay(400);
     }
 
     // Draws a colorful smiley face, adds a text label, and saves the result as a PNG to %TEMP%.

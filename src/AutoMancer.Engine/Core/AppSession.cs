@@ -1,7 +1,10 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
 using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Text;
 using AutoMancer.Engine.Dpi;
 using AutoMancer.Engine.Errors;
+using AutoMancer.Engine.Providers;
 
 namespace AutoMancer.Engine.Core;
 
@@ -129,7 +132,103 @@ public sealed class AppSession : IAsyncDisposable
     private static AppSession FromProcess(Process process) =>
         new(Guid.NewGuid().ToString("N"), process, process.MainWindowHandle);
 
+    // Polls all top-level windows for one owned by ownerPid whose title contains titleContains; returns null on timeout.
+    public static async Task<AppSession?> FindDialogAsync(
+        int ownerPid,
+        string titleContains,
+        int timeoutMs = 3_000,
+        CancellationToken ct = default)
+    {
+        var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
+        while (DateTime.UtcNow < deadline)
+        {
+            var hwnd = FindWindowByPidAndTitle(ownerPid, titleContains);
+            if (hwnd != IntPtr.Zero)
+            {
+                NativeMethods.GetWindowThreadProcessId(hwnd, out var pid);
+                return new AppSession(Guid.NewGuid().ToString("N"), Process.GetProcessById((int)pid), hwnd);
+            }
+            await Task.Delay(200, ct).ConfigureAwait(false);
+        }
+        return null;
+    }
+
+    // Enumerates top-level windows to find one belonging to targetPid whose title contains the search string.
+    private static IntPtr FindWindowByPidAndTitle(int targetPid, string titleContains)
+    {
+        IntPtr found = IntPtr.Zero;
+        NativeMethods.EnumWindows((hwnd, _) =>
+        {
+            NativeMethods.GetWindowThreadProcessId(hwnd, out var pid);
+            if (pid == (uint)targetPid && NativeMethods.IsWindowVisible(hwnd))
+            {
+                var sb = new StringBuilder(512);
+                NativeMethods.GetWindowText(hwnd, sb, sb.Capacity);
+                if (sb.ToString().Contains(titleContains, StringComparison.OrdinalIgnoreCase))
+                {
+                    found = hwnd;
+                    return false;
+                }
+            }
+            return true;
+        }, IntPtr.Zero);
+        return found;
+    }
+
+    // Activates a UWP/MSIX packaged app by AUMID and waits until its host process shows a window.
+    public static async Task<AppSession> LaunchPackagedAsync(
+        string aumid,
+        int timeoutMs = 10_000,
+        CancellationToken ct = default)
+    {
+        var managerType = Type.GetTypeFromCLSID(new Guid("45BA127D-10A8-46EA-8AB7-56EA9078943C"))
+            ?? throw new AppLaunchError($"ApplicationActivationManager COM class not registered on this system.");
+        var manager = (IApplicationActivationManager)Activator.CreateInstance(managerType)!;
+
+        var hr = manager.ActivateApplication(aumid, null, 0, out var pid);
+        if (hr < 0)
+            throw new AppLaunchError($"ActivateApplication failed for AUMID '{aumid}' (HRESULT 0x{hr:X8}).");
+
+        var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
+        while (DateTime.UtcNow < deadline)
+        {
+            try
+            {
+                var process = Process.GetProcessById((int)pid);
+                process.Refresh();
+                if (process.MainWindowHandle != IntPtr.Zero)
+                    return FromProcess(process);
+            }
+            catch (ArgumentException) { /* process not yet visible */ }
+
+            await Task.Delay(200, ct).ConfigureAwait(false);
+        }
+
+        throw new AppLaunchError($"Packaged app '{aumid}' (PID {pid}) did not show a window within {timeoutMs} ms.");
+    }
+
     // Bypasses launch/attach validation to build a session for unit tests that mock providers and never touch a real window.
     internal static AppSession CreateForTesting(Process process, IntPtr rootWindowHandle) =>
         new(Guid.NewGuid().ToString("N"), process, rootWindowHandle);
+
+    // COM interface for activating packaged (UWP/MSIX) apps by Application User Model ID.
+    // The Guid is the IID — COM's only way to name an interface at runtime; QueryInterface uses it to return the correct vtable.
+    [ComImport, Guid("2e941141-7f97-4756-ba1d-9decde894a3d"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IApplicationActivationManager
+    {
+        [PreserveSig] int ActivateApplication(
+            [MarshalAs(UnmanagedType.LPWStr)] string appUserModelId,
+            [MarshalAs(UnmanagedType.LPWStr)] string? arguments,
+            uint options,
+            out uint processId);
+        [PreserveSig] int ActivateForFile(
+            [MarshalAs(UnmanagedType.LPWStr)] string appUserModelId,
+            IntPtr itemArray,
+            [MarshalAs(UnmanagedType.LPWStr)] string? verb,
+            out uint processId);
+        [PreserveSig] int ActivateForProtocol(
+            [MarshalAs(UnmanagedType.LPWStr)] string appUserModelId,
+            IntPtr itemArray,
+            out uint processId);
+    }
 }

@@ -26,7 +26,7 @@ public static class TypeAction
     }
 
     // Sends each UTF-16 code unit as a Unicode keyboard event pair; KEYEVENTF_UNICODE with wScan=codeunit is layout-agnostic.
-    private static void SendUnicodeText(string text)
+    internal static void SendUnicodeText(string text)
     {
         var inputs = new NativeMethods.INPUT[text.Length * 2];
         for (var i = 0; i < text.Length; i++)

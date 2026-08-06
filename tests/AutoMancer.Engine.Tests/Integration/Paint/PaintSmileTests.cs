@@ -1,12 +1,12 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
 using AutoMancer.Engine;
+using AutoMancer.Engine.Actions;
 using AutoMancer.Engine.Core;
 using Xunit.Abstractions;
 
 namespace AutoMancer.Engine.Tests.Integration;
 
-// End-to-end workflow: launch Paint, draw a colorful smiley face, add a text label, and save to a temp PNG.
-// Exercises: pencil drawing, fill-bucket coloring, text-tool TypeAsync, and the Save As dialog flow.
+// End-to-end workflow exercising pencil drawing, fill-bucket coloring, text-tool TypeAsync, and the Save As dialog flow.
 [Collection("Paint")]
 [Trait("Category", "Integration")]
 public sealed class PaintSmileTests(ITestOutputHelper output) : IAsyncLifetime
@@ -26,8 +26,7 @@ public sealed class PaintSmileTests(ITestOutputHelper output) : IAsyncLifetime
 
         await Task.Delay(300);
 
-        // Paint remembers the canvas size from the last session (or a manual resize done by a developer
-        // testing the app), which would silently break the radii/offsets computed below. Force a known size.
+        // Paint remembers canvas size from the last session, which would silently break the radii/offsets computed below — force a known size.
         await SetCanvasSizeAsync(800);
     }
 
@@ -38,8 +37,7 @@ public sealed class PaintSmileTests(ITestOutputHelper output) : IAsyncLifetime
         await Task.Delay(800);
     }
 
-    // Opens the Resize and Skew flyout and sets the canvas to an exact square pixel size. Using a square
-    // avoids the "Maintain aspect ratio" toggle mattering — width and height end up equal either way.
+    // Opens the Resize and Skew flyout and sets the canvas to an exact square pixel size, so "Maintain aspect ratio" can't matter.
     private async Task SetCanvasSizeAsync(int size)
     {
         await _app.ClickAtAsync(Locator.ByName("Resize and skew"));
@@ -85,9 +83,7 @@ public sealed class PaintSmileTests(ITestOutputHelper output) : IAsyncLifetime
         await _app.DragThroughAsync(SmilePoints(cx, cy, r, steps: 40));
         await Task.Delay(100);
 
-        // ── Fill with colours (fill bucket) ──────────────────────────────
-        // ClickAtAsync — InvokePattern fires Paint's UIA event but not the pointer-event pipeline
-        // that actually switches the active tool; physical mouse input is required.
+        // ── Fill with colours (fill bucket); ClickAtAsync is required since InvokePattern skips the pointer-event pipeline that switches the active tool.
         await _app.ClickAtAsync(Locator.ByName("Fill"));
         await Task.Delay(200);
 
@@ -96,17 +92,14 @@ public sealed class PaintSmileTests(ITestOutputHelper output) : IAsyncLifetime
         await _app.ClickAtAsync(cx, cy);
         await Task.Delay(300);
 
-        // Turquoise eyes — click inside each eye outline; the yellow fill does not cross the eye border,
-        // so the interiors are still white and will accept the colour cleanly.
+        // Turquoise eyes — click inside each eye outline, where the yellow fill hasn't crossed and the interior is still white.
         await _app.ClickAsync(Locator.ByName("Turquoise"));
         await _app.ClickAtAsync(lex, ley);
         await Task.Delay(200);
         await _app.ClickAtAsync(rex, rey);
         await Task.Delay(300);
 
-        // ── Text label ────────────────────────────────────────────────────
-        // Selects the Text tool, places a cursor below the face, then types via TypeAsync.
-        // This exercises the full ValuePattern → Unicode-SendInput path against Paint's WinUI3 TextBox.
+        // ── Text label: selects the Text tool, places a cursor below the face, then types via TypeAsync against Paint's WinUI3 TextBox.
         await _app.ClickAsync(Locator.ByName("Black"));
         await _app.ClickAtAsync(Locator.ByName("Text"));
         await Task.Delay(300);
@@ -114,8 +107,7 @@ public sealed class PaintSmileTests(ITestOutputHelper output) : IAsyncLifetime
         await _app.ClickAtAsync(cx, cy + r + 24);    // place cursor just below the face
         await Task.Delay(400);                        // give Paint time to open the text box and focus it
 
-        // TypeDirectAsync sends to whatever has focus — the text box after the click above.
-        // Avoids an element search (ByControlType("Edit") can't distinguish this from other Edit controls).
+        // TypeDirectAsync sends to whatever has focus, avoiding an element search that couldn't distinguish this Edit control from others.
         await _app.TypeDirectAsync("Hello :)");
         await Task.Delay(300);
 
@@ -140,33 +132,28 @@ public sealed class PaintSmileTests(ITestOutputHelper output) : IAsyncLifetime
     {
         await _app.ClickAsync(Locator.ByName("Save"));
 
-        // FindDialogAsync enumerates all top-level windows to find the dialog by PID + title,
-        // which works even though modal dialogs don't change Process.MainWindowTitle.
+        // FindDialogAsync enumerates top-level windows by PID + title, which works even though modal dialogs don't change Process.MainWindowTitle.
         var dialog = await App.FindDialogAsync(_app.ProcessId, "Save", timeoutMs: 4_000);
         if (dialog is null) throw new InvalidOperationException("Save As dialog did not appear within 4 s.");
 
-        // Navigate to the target directory via the address bar (Alt+D), then type just the filename.
-        // Typing a full path into the filename ComboBox triggers "file name cannot contain special
-        // characters" validation; typing only the filename after navigating to the folder avoids this.
+        // Navigate to the target directory via the address bar (Alt+D) then type just the filename — a full path in the filename ComboBox triggers validation errors.
         var dir      = Path.GetDirectoryName(savePath)!;
         var fileName = Path.GetFileName(savePath);
 
-        await dialog.PressChordAsync(0x12, 0x44);   // Alt+D — focus address bar
+        await dialog.PressKeyAsync(Key.D, new KeyModifiers(Alt: true));   // Alt+D — focus address bar
         await Task.Delay(500);                       // wait for address bar to enter edit mode
         await dialog.TypeDirectAsync(dir);
-        await dialog.PressKeyAsync(0x0D);            // Enter — navigate to folder
+        await dialog.PressKeyAsync(Key.Enter);            // Enter — navigate to folder
         await Task.Delay(1_200);
 
-        // Physically click the filename ComboBox to give it keyboard focus, wipe the default "Untitled"
-        // with Ctrl+A, then type the filename so the dialog sees the keystroke-driven value on submit.
-        // ValuePattern.SetValue changes the COM value but the dialog reads the displayed text on Enter.
+        // Physically click the filename ComboBox, wipe "Untitled" with Ctrl+A, then type the filename, since the dialog reads the displayed text on Enter, not the ValuePattern COM value.
         await dialog.ClickAtAsync(Locator.ByAutomationId("1001"));
         await Task.Delay(150);
-        await dialog.PressChordAsync(0x11, 0x41);  // Ctrl+A — select all
+        await dialog.PressKeyAsync(Key.A, new KeyModifiers(Control: true));  // Ctrl+A — select all
         await Task.Delay(100);
         await dialog.TypeDirectAsync(fileName);
         await Task.Delay(300);
-        await dialog.PressKeyAsync(0x0D);           // Enter — submit the dialog
+        await dialog.PressKeyAsync(Key.Enter);           // Enter — submit the dialog
 
         // On subsequent runs the file already exists; dismiss the Replace confirmation if it appears.
         var confirm = await App.FindDialogAsync(_app.ProcessId, "Replace", timeoutMs: 1_500);

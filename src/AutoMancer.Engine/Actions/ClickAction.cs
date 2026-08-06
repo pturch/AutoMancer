@@ -1,81 +1,119 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
-using System.Runtime.InteropServices;
 using AutoMancer.Engine.Core;
 using AutoMancer.Engine.Providers;
 using Interop.UIAutomationClient;
 
 namespace AutoMancer.Engine.Actions;
 
-// Which mouse button(s)/sequence ClickAction synthesizes.
-public enum ClickType { Left, Right, Double }
+// Physical mouse buttons ClickAction can synthesize via SendInput.
+public enum MouseButton { Left, Right, Middle, Back, Forward }
 
-// Clicks a resolved element: delegates to the provider's native click first (e.g. InvokePattern), falling back to a
-// synthesized SendInput click at the element's center. Bounding rects are already true physical pixels (see DpiAwareness).
+// Clicks a resolved element: delegates to the provider's native click first, falling back to a synthesized SendInput click.
 public static class ClickAction
 {
-    // Performs the click; tries the element's provider first, then falls through to synthesized mouse input.
-    public static async Task ExecuteAsync(ElementHandle element, ClickType clickType = ClickType.Left, CancellationToken ct = default)
+    // Performs the click; tries the element's provider first (plain left click only), then falls through to synthesized mouse input.
+    public static async Task ExecuteAsync(ElementHandle element, MouseButton button = MouseButton.Left, KeyModifiers modifiers = default, CancellationToken ct = default)
     {
-        if (clickType == ClickType.Left && element.Operator is not null)
+        if (button == MouseButton.Left && modifiers == KeyModifiers.None && element.Operator is not null)
             if (await element.Operator.TryClickAsync(element, ct).ConfigureAwait(false))
                 return;
 
         await Task.Run(() =>
         {
-            if (element.NativeHandle is IUIAutomationElement uiaElement && uiaElement.CurrentNativeWindowHandle != IntPtr.Zero)
-                NativeMethods.SetForegroundWindow(uiaElement.CurrentNativeWindowHandle);
+            EnsureForeground(element);
 
+            // modifiers, if any, are held down for the duration of the synthesized click.
             var (x, y) = GetCenter(element);
-            SendClick(x, y, clickType);
+            SendModifiedClick(x, y, button, modifiers);
         }, ct).ConfigureAwait(false);
     }
 
-    // Computes the absolute physical-screen point at the center of the element's bounding rect.
-    private static (int X, int Y) GetCenter(ElementHandle element)
+    // Brings the element's owning window to the foreground so synthesized input reaches it; no-op for non-UIA handles.
+    internal static void EnsureForeground(ElementHandle element)
+    {
+        if (element.NativeHandle is IUIAutomationElement uiaElement && uiaElement.CurrentNativeWindowHandle != IntPtr.Zero)
+            NativeMethods.SetForegroundWindow(uiaElement.CurrentNativeWindowHandle);
+    }
+
+    // Computes the absolute physical-screen point at the center of the element's bounding rect (already physical pixels; see DpiAwareness).
+    internal static (int X, int Y) GetCenter(ElementHandle element)
     {
         var rect = element.BoundingRect;
         return ((int)(rect.X + rect.Width / 2), (int)(rect.Y + rect.Height / 2));
     }
 
-    // Synthesizes a click at the given physical screen point via SendInput; Double sends two down/up pairs.
-    private static void SendClick(int x, int y, ClickType clickType)
-    {
-        var (downFlag, upFlag) = clickType == ClickType.Right
-            ? (NativeMethods.MouseEventRightDown, NativeMethods.MouseEventRightUp)
-            : (NativeMethods.MouseEventLeftDown, NativeMethods.MouseEventLeftUp);
-
-        var clicks = clickType == ClickType.Double ? 2 : 1;
-        var inputs = new NativeMethods.INPUT[clicks * 2];
-        for (var i = 0; i < clicks; i++)
-        {
-            inputs[i * 2] = MouseInput(x, y, downFlag);
-            inputs[i * 2 + 1] = MouseInput(x, y, upFlag);
-        }
-
-        NativeMethods.SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<NativeMethods.INPUT>());
-    }
-
-    // Builds a single absolute-positioned mouse INPUT event at the given physical screen point.
-    private static NativeMethods.INPUT MouseInput(int x, int y, uint flags)
+    // Sends a leading move, then modifier-down, the button click, then modifier-up (reverse order), all as one SendInput batch.
+    private static void SendModifiedClick(int x, int y, MouseButton button, KeyModifiers modifiers)
     {
         var (normX, normY) = Normalize(x, y);
+        var modifierKeys = modifiers.ToVirtualKeys().ToList();
+        // Leading move required — see NativeMethods.SendMouseClick's comment on WinUI3 hit-testing.
+        var inputs = new List<NativeMethods.INPUT> { MouseInputAt(normX, normY, NativeMethods.MouseEventMove) };
+
+        foreach (var vk in modifierKeys)
+            inputs.Add(VkInput(vk, isKeyUp: false));
+
+        var (downFlag, upFlag, mouseData) = ButtonFlags(button);
+        inputs.Add(MouseInputAt(normX, normY, downFlag, mouseData));
+        inputs.Add(MouseInputAt(normX, normY, upFlag, mouseData));
+
+        for (var i = modifierKeys.Count - 1; i >= 0; i--)
+            inputs.Add(VkInput(modifierKeys[i], isKeyUp: true));
+
+        NativeMethods.SendInputs(inputs.ToArray());
+    }
+
+    // Maps a MouseButton to its SendInput down/up flags and mouseData (nonzero only for Back/Forward).
+    internal static (uint Down, uint Up, uint MouseData) ButtonFlags(MouseButton button) => button switch
+    {
+        MouseButton.Left => (NativeMethods.MouseEventLeftDown, NativeMethods.MouseEventLeftUp, 0u),
+        MouseButton.Right => (NativeMethods.MouseEventRightDown, NativeMethods.MouseEventRightUp, 0u),
+        MouseButton.Middle => (NativeMethods.MouseEventMiddleDown, NativeMethods.MouseEventMiddleUp, 0u),
+        MouseButton.Back => (NativeMethods.MouseEventXDown, NativeMethods.MouseEventXUp, NativeMethods.XButton1),
+        MouseButton.Forward => (NativeMethods.MouseEventXDown, NativeMethods.MouseEventXUp, NativeMethods.XButton2),
+        _ => throw new ArgumentOutOfRangeException(nameof(button), button, "Unhandled mouse button."),
+    };
+
+    // Builds a single absolute-positioned mouse INPUT event at the given physical screen point; normalizes once.
+    internal static NativeMethods.INPUT MouseInput(int x, int y, uint flags, uint mouseData = 0)
+    {
+        var (normX, normY) = Normalize(x, y);
+        return MouseInputAt(normX, normY, flags, mouseData);
+    }
+
+    // Builds a mouse INPUT event from an already-normalized coordinate; prefer over MouseInput to avoid renormalizing per event.
+    internal static NativeMethods.INPUT MouseInputAt(int normX, int normY, uint flags, uint mouseData = 0) => new()
+    {
+        Type = NativeMethods.InputTypeMouse,
+        Data = new NativeMethods.InputUnion
+        {
+            Mouse = new NativeMethods.MOUSEINPUT
+            {
+                Dx = normX,
+                Dy = normY,
+                MouseData = mouseData,
+                Flags = flags | NativeMethods.MouseEventAbsolute,
+            },
+        },
+    };
+
+    // Builds a single virtual-key keyboard INPUT event; shared with KeyboardAction, which has the same need.
+    internal static NativeMethods.INPUT VkInput(VirtualKey vk, bool isKeyUp)
+    {
+        var flags = isKeyUp ? NativeMethods.KeyEventKeyUp : 0u;
+        if (vk.Extended) flags |= NativeMethods.KeyEventExtendedKey;
         return new NativeMethods.INPUT
         {
-            Type = NativeMethods.InputTypeMouse,
+            Type = NativeMethods.InputTypeKeyboard,
             Data = new NativeMethods.InputUnion
             {
-                Mouse = new NativeMethods.MOUSEINPUT
-                {
-                    Dx = normX,
-                    Dy = normY,
-                    Flags = flags | NativeMethods.MouseEventAbsolute,
-                },
+                Keyboard = new NativeMethods.KEYBDINPUT { Vk = vk.Code, Flags = flags },
             },
         };
     }
 
     // Normalizes a physical screen point to SendInput's 0-65535 absolute coordinate space (primary monitor).
-    private static (int X, int Y) Normalize(int x, int y)
+    internal static (int X, int Y) Normalize(int x, int y)
     {
         var screenWidth = NativeMethods.GetSystemMetrics(NativeMethods.SmCxScreen);
         var screenHeight = NativeMethods.GetSystemMetrics(NativeMethods.SmCyScreen);

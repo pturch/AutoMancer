@@ -40,13 +40,14 @@ internal static class ClickCommand
                 return;
             }
 
-            var clickType = isDouble ? ClickType.Double : isRight ? ClickType.Right : ClickType.Left;
-
             try
             {
                 var locator = FindCommand.ParseLocator(by, value);
                 await using var app = await App.AttachByPidAsync(entry.ProcessId, ct: ctx.GetCancellationToken());
-                await app.ClickAsync(locator, clickType, ctx.GetCancellationToken());
+                if (isDouble)
+                    await app.DoubleClickAsync(locator, ctx.GetCancellationToken());
+                else
+                    await app.ClickAsync(locator, isRight ? MouseButton.Right : MouseButton.Left, ct: ctx.GetCancellationToken());
                 Console.WriteLine("Clicked.");
             }
             catch (ArgumentException ex) { Console.Error.WriteLine(ex.Message); ctx.ExitCode = 1; }

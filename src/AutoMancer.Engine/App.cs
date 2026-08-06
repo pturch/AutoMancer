@@ -5,13 +5,13 @@ using AutoMancer.Engine.Providers;
 
 namespace AutoMancer.Engine;
 
-// High-level automation façade: holds a session and provider chain, exposes action-first methods
-// that read like manual test steps rather than raw engine API calls.
+// High-level automation façade: holds a session and provider chain, exposes action-first methods that read like manual test steps.
 public sealed class App : IAsyncDisposable
 {
     private readonly AppSession _session;
     private readonly ElementResolver _resolver;
     private readonly int _actionDelayMs;
+    private readonly HeldKeyTracker _heldKeys = new();
 
     // The PID of the target process — useful for re-attaching after a session change.
     public int ProcessId => _session.ProcessId;
@@ -45,9 +45,7 @@ public sealed class App : IAsyncDisposable
         return new App(session, options ?? AppOptions.Default);
     }
 
-    // Polls all top-level windows for a dialog owned by ownerPid whose title contains titleContains; returns null on timeout.
-    // Use this instead of AttachByTitleAsync when a modal dialog opens within an already-running process — modal dialogs
-    // don't change Process.MainWindowTitle, so AttachByTitleAsync cannot find them.
+    // Polls for a dialog owned by ownerPid whose title contains titleContains; use for modal dialogs, which don't change Process.MainWindowTitle.
     public static async Task<App?> FindDialogAsync(int ownerPid, string titleContains, AppOptions? options = null, int timeoutMs = 3_000, CancellationToken ct = default)
     {
         var session = await AppSession.FindDialogAsync(ownerPid, titleContains, timeoutMs, ct);
@@ -84,10 +82,32 @@ public sealed class App : IAsyncDisposable
         => _resolver.TrySnapshotAsync(_session, ct);
 
     // Finds the element and clicks it; waits ActionDelayMs after the click for the UI to settle.
-    public async Task ClickAsync(Locator locator, ClickType clickType = ClickType.Left, CancellationToken ct = default)
+    public async Task ClickAsync(Locator locator, MouseButton button = MouseButton.Left, KeyModifiers modifiers = default, CancellationToken ct = default)
     {
         var element = await _resolver.FindAsync(locator, _session, ct);
-        await ClickAction.ExecuteAsync(element, clickType, ct);
+        await ClickAction.ExecuteAsync(element, button, modifiers, ct);
+        if (_actionDelayMs > 0)
+            await Task.Delay(_actionDelayMs, ct);
+    }
+
+    // Finds the element and right-clicks it; waits ActionDelayMs after the click for the UI to settle.
+    public Task RightClickAsync(Locator locator, CancellationToken ct = default)
+        => ClickAsync(locator, MouseButton.Right, ct: ct);
+
+    // Finds the element and double-clicks it; waits ActionDelayMs after the click for the UI to settle.
+    public async Task DoubleClickAsync(Locator locator, CancellationToken ct = default)
+    {
+        var element = await _resolver.FindAsync(locator, _session, ct);
+        await DoubleClickAction.ExecuteAsync(element, ct);
+        if (_actionDelayMs > 0)
+            await Task.Delay(_actionDelayMs, ct);
+    }
+
+    // Finds the element and moves the mouse to its center without clicking, to trigger hover states/tooltips.
+    public async Task HoverAsync(Locator locator, CancellationToken ct = default)
+    {
+        var element = await _resolver.FindAsync(locator, _session, ct);
+        await HoverAction.ExecuteAsync(element, ct);
         if (_actionDelayMs > 0)
             await Task.Delay(_actionDelayMs, ct);
     }
@@ -110,17 +130,7 @@ public sealed class App : IAsyncDisposable
             await Task.Delay(_actionDelayMs, ct);
     }
 
-    // Presses and releases a virtual-key code against the root window; use for non-printable keys like Enter (0x0D), Escape (0x1B), Tab (0x09).
-    public Task PressKeyAsync(ushort vk, CancellationToken ct = default)
-        => Task.Run(() =>
-        {
-            NativeMethods.SetForegroundWindow(_session.RootWindowHandle);
-            NativeMethods.SendVkKey(vk);
-        }, ct);
-
-    // Finds the element and clicks at its screen center via SendInput, bypassing InvokePattern.
-    // Use for WinUI3 tool-palette buttons where InvokePattern fires the UIA event but does not
-    // go through the pointer-event pipeline the app needs to switch active state.
+    // Finds the element and clicks its screen center via SendInput; use for WinUI3 buttons where InvokePattern skips the pointer-event pipeline.
     public async Task ClickAtAsync(Locator locator, CancellationToken ct = default)
     {
         var element = await _resolver.FindAsync(locator, _session, ct);
@@ -128,8 +138,7 @@ public sealed class App : IAsyncDisposable
         await ClickAtAsync((int)(rect.X + rect.Width / 2), (int)(rect.Y + rect.Height / 2), ct);
     }
 
-    // Clicks at a physical screen coordinate without finding a UIA element; useful for tools like the
-    // fill bucket where the target point has no accessible element.
+    // Clicks at a physical screen coordinate without finding a UIA element; useful for tools like the fill bucket that have no accessible target.
     public async Task ClickAtAsync(int x, int y, CancellationToken ct = default)
     {
         await Task.Run(() =>
@@ -140,14 +149,6 @@ public sealed class App : IAsyncDisposable
         if (_actionDelayMs > 0) await Task.Delay(_actionDelayMs, ct);
     }
 
-    // Presses a modifier+key chord against the root window; e.g. (0x12, 0x44) for Alt+D, (0x11, 0x41) for Ctrl+A.
-    public Task PressChordAsync(ushort modifier, ushort key, CancellationToken ct = default)
-        => Task.Run(() =>
-        {
-            NativeMethods.SetForegroundWindow(_session.RootWindowHandle);
-            NativeMethods.SendVkChord(modifier, key);
-        }, ct);
-
     // Sends text as Unicode keystrokes to whichever element currently has focus in this window; bypasses element search.
     public Task TypeDirectAsync(string text, CancellationToken ct = default)
         => Task.Run(() =>
@@ -155,6 +156,45 @@ public sealed class App : IAsyncDisposable
             NativeMethods.SetForegroundWindow(_session.RootWindowHandle);
             TypeAction.SendUnicodeText(text);
         }, ct);
+
+    // Presses a named key against the root window, optionally with modifiers held down (e.g. Ctrl+A).
+    public async Task PressKeyAsync(Key key, KeyModifiers modifiers = default, CancellationToken ct = default)
+    {
+        NativeMethods.SetForegroundWindow(_session.RootWindowHandle);
+        await KeyboardAction.PressKeyAsync(key, modifiers, ct);
+    }
+
+    // Presses modifiers plus every key in keys simultaneously against the root window — for chords needing more than one non-modifier key (e.g. Ctrl+A+K).
+    public async Task HotkeyAsync(KeyModifiers modifiers, IReadOnlyList<Key> keys, CancellationToken ct = default)
+    {
+        NativeMethods.SetForegroundWindow(_session.RootWindowHandle);
+        await KeyboardAction.HotkeyAsync(modifiers, keys, ct);
+    }
+
+    // Presses a key down without releasing it; tracked so Kill/Dispose can release it even if KeyUpAsync is never called. The send and the tracking happen in the same synchronous unit — no async-continuation gap where Kill/Dispose could drain an untracked-but-already-physically-down key.
+    public Task KeyDownAsync(Key key, CancellationToken ct = default)
+    {
+        NativeMethods.SetForegroundWindow(_session.RootWindowHandle);
+        return Task.Run(() =>
+        {
+            KeyboardAction.KeyDownNow(key);
+            _heldKeys.Add(key);
+        }, ct);
+    }
+
+    // Releases a previously held key; untracks it only once the release actually lands, so a cancelled/failed send leaves it tracked rather than silently forgotten.
+    public async Task KeyUpAsync(Key key, CancellationToken ct = default)
+    {
+        await KeyboardAction.KeyUpAsync(key, ct);
+        _heldKeys.Remove(key);
+    }
+
+    // Moves the mouse by a relative (dx, dy) pixel offset against the root window — for camera-look style input rather than absolute positioning.
+    public async Task MoveMouseRelativeAsync(int dx, int dy, CancellationToken ct = default)
+    {
+        NativeMethods.SetForegroundWindow(_session.RootWindowHandle);
+        await MouseMoveAction.MoveRelativeAsync(dx, dy, ct);
+    }
 
     // Drags in a straight line between two physical screen coordinates; waits ActionDelayMs after completion.
     public async Task DragAsync(int fromX, int fromY, int toX, int toY, CancellationToken ct = default)
@@ -181,6 +221,24 @@ public sealed class App : IAsyncDisposable
             await Task.Delay(_actionDelayMs, ct);
     }
 
+    // Finds the element and scrolls under it via mouse wheel; deltaY/deltaX are in wheel notches (positive deltaY scrolls up).
+    public async Task ScrollWheelAsync(Locator locator, int deltaX, int deltaY, CancellationToken ct = default)
+    {
+        var element = await _resolver.FindAsync(locator, _session, ct);
+        await ScrollWheelAction.ExecuteAsync(element, deltaX, deltaY, ct);
+        if (_actionDelayMs > 0)
+            await Task.Delay(_actionDelayMs, ct);
+    }
+
+    // Finds the element and sets keyboard focus to it.
+    public async Task SetFocusAsync(Locator locator, CancellationToken ct = default)
+    {
+        var element = await _resolver.FindAsync(locator, _session, ct);
+        await SetFocusAction.ExecuteAsync(element, ct);
+        if (_actionDelayMs > 0)
+            await Task.Delay(_actionDelayMs, ct);
+    }
+
     // Returns the window's current bounding rectangle in physical screen coordinates.
     public Task<Rect> GetWindowSizeAsync(CancellationToken ct = default)
         => WindowAction.GetSizeAsync(_session.RootWindowHandle, ct);
@@ -197,15 +255,27 @@ public sealed class App : IAsyncDisposable
     public Task SetWindowStateAsync(WindowState state, CancellationToken ct = default)
         => WindowAction.SetVisualStateAsync(_session.RootWindowHandle, state, ct);
 
+    // Closes the root window; tries WindowPattern.Close() first, falls back to posting WM_CLOSE.
+    public Task CloseWindowAsync(CancellationToken ct = default)
+        => WindowAction.CloseAsync(_session.RootWindowHandle, ct);
+
     // Terminates the target process immediately; no-op if it has already exited.
-    public void Kill() => _session.KillApp();
+    public void Kill()
+    {
+        ReleaseHeldKeys();
+        _session.KillApp();
+    }
 
     // Kills the app (if still running) and releases the underlying process handle.
     public ValueTask DisposeAsync()
     {
+        ReleaseHeldKeys();
         _session.KillApp();
         return _session.DisposeAsync();
     }
+
+    // Sends KeyUp for every key still recorded as held, in one synchronous batched SendInput call, so a crash or early Kill/Dispose never leaves a key stuck down at the OS level — killing the target process does not do this on its own, since held-key state lives in the OS, not the process.
+    private void ReleaseHeldKeys() => KeyboardAction.ReleaseKeysNow(_heldKeys.DrainHeld());
 
     // Instantiates one provider per name in the chain; unknown names are silently dropped.
     private static IReadOnlyList<IElementProvider> BuildProviders(IReadOnlyList<string> chain)

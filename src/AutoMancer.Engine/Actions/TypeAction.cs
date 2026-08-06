@@ -1,8 +1,6 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
-using System.Runtime.InteropServices;
 using AutoMancer.Engine.Core;
 using AutoMancer.Engine.Providers;
-using Interop.UIAutomationClient;
 
 namespace AutoMancer.Engine.Actions;
 
@@ -18,9 +16,7 @@ public static class TypeAction
 
         await Task.Run(() =>
         {
-            if (element.NativeHandle is IUIAutomationElement uiaElement && uiaElement.CurrentNativeWindowHandle != IntPtr.Zero)
-                NativeMethods.SetForegroundWindow(uiaElement.CurrentNativeWindowHandle);
-
+            ClickAction.EnsureForeground(element);
             SendUnicodeText(text);
         }, ct).ConfigureAwait(false);
     }
@@ -35,7 +31,7 @@ public static class TypeAction
             inputs[i * 2 + 1] = UnicodeKeyInput((ushort)text[i], isKeyUp: true);
         }
 
-        NativeMethods.SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<NativeMethods.INPUT>());
+        NativeMethods.SendInputs(inputs);
     }
 
     // Builds a single KEYBDINPUT event; Vk=0, Scan=codeUnit per the KEYEVENTF_UNICODE contract.

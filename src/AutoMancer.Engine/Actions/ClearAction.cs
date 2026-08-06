@@ -1,8 +1,6 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
-using System.Runtime.InteropServices;
 using AutoMancer.Engine.Core;
 using AutoMancer.Engine.Providers;
-using Interop.UIAutomationClient;
 
 namespace AutoMancer.Engine.Actions;
 
@@ -18,9 +16,7 @@ public static class ClearAction
 
         await Task.Run(() =>
         {
-            if (element.NativeHandle is IUIAutomationElement uiaElement && uiaElement.CurrentNativeWindowHandle != IntPtr.Zero)
-                NativeMethods.SetForegroundWindow(uiaElement.CurrentNativeWindowHandle);
-
+            ClickAction.EnsureForeground(element);
             SendCtrlADelete();
         }, ct).ConfigureAwait(false);
     }
@@ -35,7 +31,7 @@ public static class ClearAction
         inputs[3] = VkInput(NativeMethods.VirtualKeyControl, isKeyUp: true, extended: false);
         inputs[4] = VkInput(NativeMethods.VirtualKeyDelete, isKeyUp: false, extended: true);
         inputs[5] = VkInput(NativeMethods.VirtualKeyDelete, isKeyUp: true, extended: true);
-        NativeMethods.SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<NativeMethods.INPUT>());
+        NativeMethods.SendInputs(inputs);
     }
 
     // Builds a virtual-key keyboard INPUT event; extended=true is required for the non-numpad Delete key.

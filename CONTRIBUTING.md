@@ -19,11 +19,12 @@ CI runs the build and the non-integration suite on every push and pull request t
 
 - Write the minimum code that satisfies the requirement — no speculative abstractions, no helper methods for single call sites.
 - `System.Text.Json` only, no Newtonsoft.Json.
-- Comments only when the *why* is non-obvious.
+- Every function/method and every class/struct/enum gets a one-line topline comment directly above it explaining its purpose — constructors and private helpers included.
+- Beyond that, inline comments only when the *why* is non-obvious.
 - Every `.cs` file starts with:
 
   ```csharp
-  // Copyright (c) AutoMancer Contributors. Licensed under the MIT License.
+  // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
   ```
 
 ## Pull requests

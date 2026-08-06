@@ -4,6 +4,7 @@
     <Project Path="src/AutoMancer.Engine/AutoMancer.Engine.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/AutoMancer.Cli.Tests/AutoMancer.Cli.Tests.csproj" />
     <Project Path="tests/AutoMancer.Engine.Tests/AutoMancer.Engine.Tests.csproj" />
   </Folder>
 </Solution>

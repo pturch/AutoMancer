@@ -4,8 +4,7 @@ using System.Text;
 
 namespace AutoMancer.Engine.Providers;
 
-// Centralizes every Win32 P/Invoke declaration used by providers and actions.
-// These magic numbers are defined by the Win32 ABI contract
+// Centralizes every Win32 P/Invoke declaration used by providers and actions; magic numbers here are the Win32 ABI contract.
 internal static class NativeMethods
 {
     // Callback invoked by EnumChildWindows for each child window; return false to stop enumeration.
@@ -26,6 +25,14 @@ internal static class NativeMethods
     // Reports whether hWnd is currently visible.
     [DllImport("user32.dll")]
     internal static extern bool IsWindowVisible(IntPtr hWnd);
+
+    // Reports whether hWnd is currently minimized.
+    [DllImport("user32.dll")]
+    internal static extern bool IsIconic(IntPtr hWnd);
+
+    // Reports whether hWnd is currently maximized.
+    [DllImport("user32.dll")]
+    internal static extern bool IsZoomed(IntPtr hWnd);
 
     // Brings hWnd to the foreground so synthesized input is delivered to it.
     [DllImport("user32.dll", SetLastError = true)]
@@ -48,6 +55,17 @@ internal static class NativeMethods
         public int Bottom;
     }
 
+    // Reads the current physical-screen position of the mouse cursor.
+    [DllImport("user32.dll", SetLastError = true)]
+    internal static extern bool GetCursorPos(out POINT lpPoint);
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct POINT
+    {
+        public int X;
+        public int Y;
+    }
+
     // Reads a system display metric (e.g. primary screen width/height in physical pixels).
     [DllImport("user32.dll")]
     internal static extern int GetSystemMetrics(int nIndex);
@@ -64,6 +82,13 @@ internal static class NativeMethods
     // Synthesizes mouse and keyboard input events via the system input queue.
     [DllImport("user32.dll", SetLastError = true)]
     internal static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
+
+    // Submits one or more INPUT events to SendInput as a single batch; every action funnels through here instead of computing cbSize itself.
+    internal static void SendInputs(params INPUT[] inputs) => SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+
+    // Reports whether vKey is currently down (high bit of the return value) — global OS state, independent of which window has focus.
+    [DllImport("user32.dll")]
+    internal static extern short GetAsyncKeyState(int vKey);
 
     [StructLayout(LayoutKind.Sequential)]
     internal struct INPUT
@@ -118,22 +143,48 @@ internal static class NativeMethods
     internal const uint MouseEventLeftUp = 0x0004;
     internal const uint MouseEventRightDown = 0x0008;
     internal const uint MouseEventRightUp = 0x0010;
+    internal const uint MouseEventMiddleDown = 0x0020;
+    internal const uint MouseEventMiddleUp = 0x0040;
+    internal const uint MouseEventXDown = 0x0080;
+    internal const uint MouseEventXUp = 0x0100;
+    internal const uint MouseEventWheel = 0x0800;
+    internal const uint MouseEventHWheel = 0x01000;
     internal const uint MouseEventAbsolute = 0x8000;
+
+    // mouseData values for MouseEventXDown/XUp — identifies which X button (Back/Forward).
+    internal const uint XButton1 = 0x0001;
+    internal const uint XButton2 = 0x0002;
+
+    // One notch of a standard mouse wheel, per the Win32 WHEEL_DELTA contract.
+    internal const int WheelDelta = 120;
 
     internal const uint KeyEventExtendedKey = 0x0001;
     internal const uint KeyEventKeyUp = 0x0002;
     internal const uint KeyEventUnicode = 0x0004;
     internal const uint KeyEventScancode = 0x0008;
 
-    internal const ushort VirtualKeyReturn  = 0x0D;
-    internal const ushort VirtualKeyMenu    = 0x12;  // Alt
-    internal const ushort VirtualKeyControl = 0x11;
-    internal const ushort VirtualKeyA       = 0x41;
-    internal const ushort VirtualKeyDelete  = 0x2E;
+    internal const ushort VirtualKeyBackspace = 0x08;
+    internal const ushort VirtualKeyTab       = 0x09;
+    internal const ushort VirtualKeyReturn    = 0x0D;
+    internal const ushort VirtualKeyShift     = 0x10;
+    internal const ushort VirtualKeyControl   = 0x11;
+    internal const ushort VirtualKeyMenu      = 0x12;  // Alt
+    internal const ushort VirtualKeyEscape    = 0x1B;
+    internal const ushort VirtualKeySpace     = 0x20;
+    internal const ushort VirtualKeyPageUp    = 0x21;  // Win32 name: VK_PRIOR
+    internal const ushort VirtualKeyPageDown  = 0x22;  // Win32 name: VK_NEXT
+    internal const ushort VirtualKeyEnd       = 0x23;
+    internal const ushort VirtualKeyHome      = 0x24;
+    internal const ushort VirtualKeyLeft      = 0x25;
+    internal const ushort VirtualKeyUp        = 0x26;
+    internal const ushort VirtualKeyRight     = 0x27;
+    internal const ushort VirtualKeyDown      = 0x28;
+    internal const ushort VirtualKeyInsert    = 0x2D;
+    internal const ushort VirtualKeyDelete    = 0x2E;
+    internal const ushort VirtualKeyA         = 0x41;
+    internal const ushort VirtualKeyLWin      = 0x5B;
 
     // Sends a left-button click at a physical screen coordinate.
-    // The MOVE event is sent first so WinUI3 hit-testing registers the pointer over the target
-    // before LEFTDOWN arrives; without it the canvas never sees the click.
     internal static void SendMouseClick(int x, int y)
     {
         var w  = GetSystemMetrics(SmCxScreen);
@@ -142,35 +193,12 @@ internal static class NativeMethods
         var ny = (int)(y * 65536L / h);
         INPUT[] inputs =
         [
+            // MOVE first — WinUI3 hit-testing needs the pointer over the target before LEFTDOWN, or the click is swallowed.
             new() { Type = InputTypeMouse, Data = new InputUnion { Mouse = new MOUSEINPUT { Dx = nx, Dy = ny, Flags = MouseEventMove     | MouseEventAbsolute } } },
             new() { Type = InputTypeMouse, Data = new InputUnion { Mouse = new MOUSEINPUT { Dx = nx, Dy = ny, Flags = MouseEventLeftDown | MouseEventAbsolute } } },
             new() { Type = InputTypeMouse, Data = new InputUnion { Mouse = new MOUSEINPUT { Dx = nx, Dy = ny, Flags = MouseEventLeftUp   | MouseEventAbsolute } } },
         ];
-        _ = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
-    }
-
-    // Sends a virtual-key keydown followed by keyup to the current foreground window.
-    internal static void SendVkKey(ushort vk)
-    {
-        INPUT[] inputs =
-        [
-            new() { Type = InputTypeKeyboard, Data = new InputUnion { Keyboard = new KEYBDINPUT { Vk = vk } } },
-            new() { Type = InputTypeKeyboard, Data = new InputUnion { Keyboard = new KEYBDINPUT { Vk = vk, Flags = KeyEventKeyUp } } },
-        ];
-        SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
-    }
-
-    // Sends a chord: modifier down, key down+up, modifier up (e.g. Alt+D or Ctrl+A).
-    internal static void SendVkChord(ushort modifier, ushort key)
-    {
-        INPUT[] inputs =
-        [
-            new() { Type = InputTypeKeyboard, Data = new InputUnion { Keyboard = new KEYBDINPUT { Vk = modifier } } },
-            new() { Type = InputTypeKeyboard, Data = new InputUnion { Keyboard = new KEYBDINPUT { Vk = key } } },
-            new() { Type = InputTypeKeyboard, Data = new InputUnion { Keyboard = new KEYBDINPUT { Vk = key, Flags = KeyEventKeyUp } } },
-            new() { Type = InputTypeKeyboard, Data = new InputUnion { Keyboard = new KEYBDINPUT { Vk = modifier, Flags = KeyEventKeyUp } } },
-        ];
-        SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+        SendInputs(inputs);
     }
 
     // Callback invoked by EnumWindows for each top-level window; return false to stop enumeration.
@@ -191,6 +219,12 @@ internal static class NativeMethods
     // Changes the show state of hWnd (minimize, maximize, restore, etc.).
     [DllImport("user32.dll")]
     internal static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+    // Posts a message to hWnd's message queue without waiting for it to be processed; used for WM_CLOSE.
+    [DllImport("user32.dll", SetLastError = true)]
+    internal static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+    internal const uint WmClose = 0x0010;
 
     internal const uint SwpNoSize     = 0x0001;
     internal const uint SwpNoMove     = 0x0002;

@@ -18,8 +18,7 @@ public sealed class PaintFixture : IAsyncLifetime
         var warmup = App.WithOptions(new AppOptions { ProviderChain = ["uia3"], ImplicitWaitMs = 10_000 });
         await warmup.FindAsync(Locator.ByAutomationId("PencilTool"));
 
-        // The welcome popup's Close button is targeted via XPath to avoid matching the title-bar Close button
-        // (which carries AutomationId="Close" and would kill the app).
+        // The welcome popup's Close button is targeted via XPath to avoid matching the title-bar Close button, which shares AutomationId="Close".
         var quick = App.WithOptions(new AppOptions { ProviderChain = ["uia3"], ImplicitWaitMs = 2_000 });
         try { await quick.ClickAsync(Locator.ByXPath("//Window[@Name='Popup']//Button[@Name='Close']")); }
         catch { /* popup absent — already dismissed on this Windows install */ }
@@ -115,15 +114,15 @@ public sealed class PaintIntegrationTests(PaintFixture fixture) : IClassFixture<
     public async Task ClickEraserTool_Succeeds()
         => await App.ClickAsync(Locator.ByAutomationId("EraserTool"));
 
-    // Verifies that clicking the Save button does not throw (Paint opens the save dialog on first save;
-    // the test kills the process in teardown so the dialog never blocks cleanup).
+    // Save opens a Save As dialog on its own top-level window; dismissed via Escape sent to that dialog (via FindDialogAsync) since it would otherwise block later window-management tests.
     [Fact]
     public async Task ClickSaveButton_Succeeds()
     {
         await App.ClickAsync(Locator.ByName("Save"));
-        // Dismiss the save dialog if it appeared (discard changes, we're killing Paint anyway).
-        var quick = App.WithOptions(new AppOptions { ImplicitWaitMs = 1_500 });
-        try { await quick.ClickAsync(Locator.ByName("Don't save")); } catch { }
+
+        var dialog = await AutoMancer.Engine.App.FindDialogAsync(App.ProcessId, "Save", timeoutMs: 2_000);
+        if (dialog is not null)
+            await dialog.PressKeyAsync(Key.Escape);
     }
 
     // ── Window management ────────────────────────────────────────────────────────

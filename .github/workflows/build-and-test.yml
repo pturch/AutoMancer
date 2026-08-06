@@ -5,16 +5,26 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-and-test:
     runs-on: windows-latest
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v7
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: "10.0.x"
 
@@ -25,7 +35,14 @@ jobs:
         run: dotnet build AutoMancer.slnx --no-restore --configuration Release
 
       - name: Test Engine
-        run: dotnet test tests/AutoMancer.Engine.Tests/ --no-build --configuration Release --filter "Category!=Integration"
+        run: dotnet test tests/AutoMancer.Engine.Tests/ --no-build --configuration Release --filter "Category!=Integration" --logger "trx;LogFileName=engine-tests.trx" --results-directory TestResults
 
       - name: Test Cli
-        run: dotnet test tests/AutoMancer.Cli.Tests/ --no-build --configuration Release
+        run: dotnet test tests/AutoMancer.Cli.Tests/ --no-build --configuration Release --logger "trx;LogFileName=cli-tests.trx" --results-directory TestResults
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results
+          path: TestResults/*.trx

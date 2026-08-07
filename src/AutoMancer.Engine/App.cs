@@ -89,6 +89,10 @@ public sealed class App : IAsyncDisposable
     public Task WaitUntilGoneAsync(Locator locator, CancellationToken ct = default)
         => _resolver.WaitUntilGoneAsync(locator, _session, ct);
 
+    // Waits until the located element satisfies condition; throws ElementConditionTimeoutError if it never does within ImplicitWaitMs.
+    public Task<ElementHandle> WaitForAsync(Locator locator, Func<ElementHandle, bool> condition, CancellationToken ct = default)
+        => _resolver.WaitForAsync(locator, condition, _session, ct);
+
     // Finds the element and clicks it; waits ActionDelayMs after the click for the UI to settle.
     public async Task ClickAsync(Locator locator, MouseButton button = MouseButton.Left, KeyModifiers modifiers = default, CancellationToken ct = default)
     {

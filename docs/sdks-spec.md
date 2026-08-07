@@ -260,7 +260,7 @@ npm run typecheck
 
 ## Constraints
 
-- MIT license header in every source file
+- Apache-2.0 license header in every source file
 - Python minimum: 3.10 — use `str | None` union syntax, not `Optional`
 - TypeScript target: ES2020, Node 18+; `strict: true`
 - Python SDK passes `mypy --strict` with zero errors

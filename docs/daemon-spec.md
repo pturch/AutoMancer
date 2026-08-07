@@ -258,11 +258,11 @@ curl -X POST http://127.0.0.1:27272/session/$SESSION_ID/window/current/maximize
 
 ### Task 10: Screenshot, timeout, and extension endpoints
 
-**What:** Completes the daemon's surface area. Screenshot captures the app window as a base64 PNG. Timeout endpoints read/acknowledge (timeouts are baked into `ElementProviderOptions` at session creation). Extension endpoints expose AutoMancer-specific capabilities: provider info, scroll-to, PID, kill app, and annotated snapshot.
+**What:** Completes the daemon's surface area. Screenshot captures the app window as a base64 PNG. Timeout endpoints read the session's current wait settings and let a client change them mid-session — `DaemonSession` holds `ImplicitWaitMs`/`PollIntervalMs` as mutable fields rather than baking them into an immutable resolver at creation, so `ToAppSession()` (Task 3) always builds the resolver from whatever the session's settings are *right now*. This matches Appium's `/session/:id/appium/settings`, which actually mutates live session config, instead of silently discarding the write. Extension endpoints expose AutoMancer-specific capabilities: provider info, scroll-to, PID, kill app, and annotated snapshot.
 
 **Creates:**
 - `src/AutoMancer.Daemon/Endpoints/ScreenshotEndpoint.cs` — `GDI+ CopyFromScreen` → base64 PNG; `CaptureBase64Internal` for extension endpoint reuse
-- `src/AutoMancer.Daemon/Endpoints/TimeoutEndpoints.cs` — GET returns `ImplicitWaitMs`; POST is a no-op
+- `src/AutoMancer.Daemon/Endpoints/TimeoutEndpoints.cs` — GET returns `{ implicitWaitMs, pollIntervalMs }` from the live `DaemonSession`; POST updates those fields on the session so subsequent finds in that session pick up the new values immediately
 - `src/AutoMancer.Daemon/Endpoints/ExtensionEndpoints.cs` — `/automancer/element/:id/provider`, `/automancer/element/:id/scroll-to`, `/automancer/app/pid`, `/automancer/app` (DELETE = kill), `/automancer/snapshot`
 
 Extends `AutoMancer.Daemon.csproj` with `System.Drawing.Common`.
@@ -276,10 +276,12 @@ dotnet build src/AutoMancer.Daemon/AutoMancer.Daemon.csproj
 curl http://127.0.0.1:27272/session/$SESSION_ID/screenshot | \
   python -c "import sys,json,base64; d=json.load(sys.stdin); open('screen.png','wb').write(base64.b64decode(d['value']))"
 curl http://127.0.0.1:27272/session/$SESSION_ID/automancer/element/$ELEMENT_ID/provider
+curl -X POST http://127.0.0.1:27272/session/$SESSION_ID/timeouts -d '{"implicit":10000}'
+curl http://127.0.0.1:27272/session/$SESSION_ID/timeouts   # should now return the updated value
 dotnet test tests/AutoMancer.Daemon.Tests/ -v
 ```
 
-**Done when:** All daemon tests pass; screenshot saves a valid PNG.
+**Done when:** All daemon tests pass; screenshot saves a valid PNG; a `POST /timeouts` followed by `GET /timeouts` shows the new value took effect, not the value from session creation.
 
 ---
 

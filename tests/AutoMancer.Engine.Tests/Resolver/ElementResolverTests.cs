@@ -115,4 +115,58 @@ public sealed class ElementResolverTests
 
         stillPresentProvider.Verify(p => p.FindElementAsync(TestLocator, Session, It.IsAny<CancellationToken>()), Times.AtLeastOnce);
     }
+
+    [Fact]
+    public async Task WaitForAsync_ConditionAlreadyTrue_ReturnsImmediately()
+    {
+        var handle = Handle("1");
+        var provider = MockProvider("uia3", handle);
+        var resolver = new ElementResolver([provider.Object], new ElementProviderOptions { ProviderChain = ["uia3"] });
+
+        var result = await resolver.WaitForAsync(TestLocator, e => e.Id == "1", Session);
+
+        Assert.Same(handle, result);
+        provider.Verify(p => p.FindElementAsync(TestLocator, Session, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task WaitForAsync_ConditionBecomesTrueOnSecondPoll_ResolvesAfterRetry()
+    {
+        var stale = Handle("stale");
+        var fresh = Handle("fresh");
+        var provider = new Mock<IElementProvider>();
+        provider.SetupGet(p => p.ProviderName).Returns("uia3");
+        provider.SetupSequence(p => p.FindElementAsync(TestLocator, Session, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(stale)
+            .ReturnsAsync(fresh);
+        var options = new ElementProviderOptions { ProviderChain = ["uia3"], ImplicitWaitMs = 5000, PollIntervalMs = 10 };
+        var resolver = new ElementResolver([provider.Object], options);
+
+        var result = await resolver.WaitForAsync(TestLocator, e => e.Id == "fresh", Session);
+
+        Assert.Same(fresh, result);
+        provider.Verify(p => p.FindElementAsync(TestLocator, Session, It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task WaitForAsync_ConditionNeverTrue_ThrowsElementConditionTimeoutError()
+    {
+        var provider = MockProvider("uia3", Handle("1"));
+        var options = new ElementProviderOptions { ProviderChain = ["uia3"], ImplicitWaitMs = 50, PollIntervalMs = 10 };
+        var resolver = new ElementResolver([provider.Object], options);
+
+        var ex = await Assert.ThrowsAsync<ElementConditionTimeoutError>(() => resolver.WaitForAsync(TestLocator, e => e.Id == "never", Session));
+
+        Assert.Equal(TestLocator, ex.Locator);
+    }
+
+    [Fact]
+    public async Task WaitForAsync_ElementNeverFound_ThrowsElementConditionTimeoutError()
+    {
+        var provider = MockProvider("uia3", null);
+        var options = new ElementProviderOptions { ProviderChain = ["uia3"], ImplicitWaitMs = 50, PollIntervalMs = 10 };
+        var resolver = new ElementResolver([provider.Object], options);
+
+        await Assert.ThrowsAsync<ElementConditionTimeoutError>(() => resolver.WaitForAsync(TestLocator, _ => true, Session));
+    }
 }

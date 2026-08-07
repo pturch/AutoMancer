@@ -87,6 +87,30 @@ public sealed class ElementResolver
         }
     }
 
+    // Polls the provider chain every PollIntervalMs until the located element satisfies condition, or ImplicitWaitMs elapses; throws ElementConditionTimeoutError on timeout. The primitive Stage 9's Expect() assertions poll on.
+    public async Task<ElementHandle> WaitForAsync(Locator locator, Func<ElementHandle, bool> condition, AppSession session, CancellationToken ct = default)
+    {
+        var stopwatch = Stopwatch.StartNew();
+
+        while (true)
+        {
+            foreach (var provider in _providers)
+            {
+                var found = await provider.FindElementAsync(locator, session, ct).ConfigureAwait(false);
+                if (found is not null && condition(found))
+                {
+                    _logger?.Info("Wait condition met", new { provider = provider.ProviderName, locator.Strategy, locator.Value, elapsedMs = stopwatch.ElapsedMilliseconds });
+                    return found;
+                }
+            }
+
+            if (stopwatch.ElapsedMilliseconds >= _options.ImplicitWaitMs)
+                throw new ElementConditionTimeoutError(locator, (int)stopwatch.ElapsedMilliseconds);
+
+            await Task.Delay(_options.PollIntervalMs, ct).ConfigureAwait(false);
+        }
+    }
+
     // Single pass across the provider chain (no retry) — returns the first provider's non-empty match list.
     public async Task<IReadOnlyList<ElementHandle>> FindAllAsync(Locator locator, AppSession session, CancellationToken ct = default)
     {

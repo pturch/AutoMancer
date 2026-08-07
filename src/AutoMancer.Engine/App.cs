@@ -81,6 +81,14 @@ public sealed class App : IAsyncDisposable
     public Task<IReadOnlyList<ElementSnapshot>?> SnapshotAsync(CancellationToken ct = default)
         => _resolver.TrySnapshotAsync(_session, ct);
 
+    // Captures the root window's current on-screen pixels as a PNG.
+    public Task<byte[]> ScreenshotAsync(CancellationToken ct = default)
+        => ScreenshotAction.CaptureAsync(_session.RootWindowHandle, ct);
+
+    // Waits until every provider in the chain returns null for the locator; throws ElementStillPresentError if it's still found after ImplicitWaitMs.
+    public Task WaitUntilGoneAsync(Locator locator, CancellationToken ct = default)
+        => _resolver.WaitUntilGoneAsync(locator, _session, ct);
+
     // Finds the element and clicks it; waits ActionDelayMs after the click for the UI to settle.
     public async Task ClickAsync(Locator locator, MouseButton button = MouseButton.Left, KeyModifiers modifiers = default, CancellationToken ct = default)
     {

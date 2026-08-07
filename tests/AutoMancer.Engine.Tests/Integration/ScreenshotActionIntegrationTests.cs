@@ -12,6 +12,7 @@ namespace AutoMancer.Engine.Tests.Integration;
 [Trait("Category", "Integration")]
 public sealed class ScreenshotActionIntegrationTests
 {
+    // Every PNG file starts with this fixed 8-byte magic number; matching it confirms the captured bytes are a real PNG, not just non-empty.
     private static readonly byte[] PngSignature = [137, 80, 78, 71, 13, 10, 26, 10];
 
     [Fact]
@@ -33,6 +34,24 @@ public sealed class ScreenshotActionIntegrationTests
             var frame = decoder.Frames[0];
             Assert.Equal(rect.Right - rect.Left, frame.PixelWidth);
             Assert.Equal(rect.Bottom - rect.Top, frame.PixelHeight);
+        }
+        finally
+        {
+            app.Kill();
+            await Task.Delay(500);
+        }
+    }
+
+    [Fact]
+    public async Task AppScreenshotAsync_ReturnsNonEmptyPng()
+    {
+        var app = await App.LaunchAsync("notepad.exe");
+        try
+        {
+            var png = await app.ScreenshotAsync();
+
+            Assert.NotEmpty(png);
+            Assert.Equal(PngSignature, png.Take(8).ToArray());
         }
         finally
         {

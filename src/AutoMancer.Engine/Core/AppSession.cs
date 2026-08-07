@@ -142,11 +142,11 @@ public sealed class AppSession : IAsyncDisposable
         var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
         while (DateTime.UtcNow < deadline)
         {
-            var hwnd = FindWindowByPidAndTitle(ownerPid, titleContains);
-            if (hwnd != IntPtr.Zero)
+            var windowHandle = FindWindowByPidAndTitle(ownerPid, titleContains);
+            if (windowHandle != IntPtr.Zero)
             {
-                NativeMethods.GetWindowThreadProcessId(hwnd, out var pid);
-                return new AppSession(Guid.NewGuid().ToString("N"), Process.GetProcessById((int)pid), hwnd);
+                NativeMethods.GetWindowThreadProcessId(windowHandle, out var pid);
+                return new AppSession(Guid.NewGuid().ToString("N"), Process.GetProcessById((int)pid), windowHandle);
             }
             await Task.Delay(200, ct).ConfigureAwait(false);
         }
@@ -157,16 +157,16 @@ public sealed class AppSession : IAsyncDisposable
     private static IntPtr FindWindowByPidAndTitle(int targetPid, string titleContains)
     {
         IntPtr found = IntPtr.Zero;
-        NativeMethods.EnumWindows((hwnd, _) =>
+        NativeMethods.EnumWindows((windowHandle, _) =>
         {
-            NativeMethods.GetWindowThreadProcessId(hwnd, out var pid);
-            if (pid == (uint)targetPid && NativeMethods.IsWindowVisible(hwnd))
+            NativeMethods.GetWindowThreadProcessId(windowHandle, out var pid);
+            if (pid == (uint)targetPid && NativeMethods.IsWindowVisible(windowHandle))
             {
                 var sb = new StringBuilder(512);
-                NativeMethods.GetWindowText(hwnd, sb, sb.Capacity);
+                NativeMethods.GetWindowText(windowHandle, sb, sb.Capacity);
                 if (sb.ToString().Contains(titleContains, StringComparison.OrdinalIgnoreCase))
                 {
-                    found = hwnd;
+                    found = windowHandle;
                     return false;
                 }
             }

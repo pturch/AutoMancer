@@ -15,11 +15,11 @@ public sealed class Win32Provider : IElementProvider
         return Task.Run(() =>
         {
             ElementHandle? result = null;
-            NativeMethods.EnumChildWindows(session.RootWindowHandle, (hwnd, _) =>
+            NativeMethods.EnumChildWindows(session.RootWindowHandle, (windowHandle, _) =>
             {
-                if (!Matches(hwnd, locator))
+                if (!Matches(windowHandle, locator))
                     return true;
-                result = WrapHwnd(hwnd);
+                result = WrapWindowHandle(windowHandle);
                 return false;
             }, IntPtr.Zero);
             return result;
@@ -32,10 +32,10 @@ public sealed class Win32Provider : IElementProvider
         return Task.Run(() =>
         {
             var results = new List<ElementHandle>();
-            NativeMethods.EnumChildWindows(session.RootWindowHandle, (hwnd, _) =>
+            NativeMethods.EnumChildWindows(session.RootWindowHandle, (windowHandle, _) =>
             {
-                if (Matches(hwnd, locator))
-                    results.Add(WrapHwnd(hwnd));
+                if (Matches(windowHandle, locator))
+                    results.Add(WrapWindowHandle(windowHandle));
                 return true;
             }, IntPtr.Zero);
             return (IReadOnlyList<ElementHandle>)results;
@@ -48,9 +48,9 @@ public sealed class Win32Provider : IElementProvider
         return Task.Run(() =>
         {
             var children = new List<ElementSnapshot>();
-            NativeMethods.EnumChildWindows(session.RootWindowHandle, (hwnd, _) =>
+            NativeMethods.EnumChildWindows(session.RootWindowHandle, (windowHandle, _) =>
             {
-                children.Add(BuildSnapshot(hwnd, []));
+                children.Add(BuildSnapshot(windowHandle, []));
                 return true;
             }, IntPtr.Zero);
 
@@ -59,39 +59,39 @@ public sealed class Win32Provider : IElementProvider
         }, ct);
     }
 
-    // Returns true when the hwnd's title (Name strategy) or class name (ClassName strategy) matches the locator value.
-    private static bool Matches(IntPtr hwnd, Locator locator) => locator.Strategy switch
+    // Returns true when the windowHandle's title (Name strategy) or class name (ClassName strategy) matches the locator value.
+    private static bool Matches(IntPtr windowHandle, Locator locator) => locator.Strategy switch
     {
-        LocatorStrategy.Name => GetTitle(hwnd).Contains(locator.Value, StringComparison.OrdinalIgnoreCase),
-        LocatorStrategy.ClassName => GetClass(hwnd).Equals(locator.Value, StringComparison.OrdinalIgnoreCase),
+        LocatorStrategy.Name => GetTitle(windowHandle).Contains(locator.Value, StringComparison.OrdinalIgnoreCase),
+        LocatorStrategy.ClassName => GetClass(windowHandle).Equals(locator.Value, StringComparison.OrdinalIgnoreCase),
         _ => false,
     };
 
     // Wraps an HWND as an opaque ElementHandle with Win32-derived metadata.
-    private ElementHandle WrapHwnd(IntPtr hwnd) => new($"hwnd:{hwnd}", "win32", hwnd)
+    private ElementHandle WrapWindowHandle(IntPtr windowHandle) => new($"hwnd:{windowHandle}", "win32", windowHandle)
     {
-        Name = GetTitle(hwnd),
-        ClassName = GetClass(hwnd),
+        Name = GetTitle(windowHandle),
+        ClassName = GetClass(windowHandle),
         Provider = this,
     };
 
-    // Builds an ElementSnapshot for hwnd with the given children list.
-    private static ElementSnapshot BuildSnapshot(IntPtr hwnd, IReadOnlyList<ElementSnapshot> children) =>
-        new($"hwnd:{hwnd}", GetTitle(hwnd), null, GetClass(hwnd), null, default, children);
+    // Builds an ElementSnapshot for windowHandle with the given children list.
+    private static ElementSnapshot BuildSnapshot(IntPtr windowHandle, IReadOnlyList<ElementSnapshot> children) =>
+        new($"hwnd:{windowHandle}", GetTitle(windowHandle), null, GetClass(windowHandle), null, default, children);
 
     // Returns the window title text via GetWindowText.
-    private static string GetTitle(IntPtr hwnd)
+    private static string GetTitle(IntPtr windowHandle)
     {
         var sb = new StringBuilder(512);
-        NativeMethods.GetWindowText(hwnd, sb, sb.Capacity);
+        NativeMethods.GetWindowText(windowHandle, sb, sb.Capacity);
         return sb.ToString();
     }
 
     // Returns the window class name via GetClassName.
-    private static string GetClass(IntPtr hwnd)
+    private static string GetClass(IntPtr windowHandle)
     {
         var sb = new StringBuilder(256);
-        NativeMethods.GetClassName(hwnd, sb, sb.Capacity);
+        NativeMethods.GetClassName(windowHandle, sb, sb.Capacity);
         return sb.ToString();
     }
 }

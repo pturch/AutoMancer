@@ -63,4 +63,56 @@ public sealed class ElementResolverTests
         failingProvider.Verify(p => p.FindElementAsync(TestLocator, Session, It.IsAny<CancellationToken>()), Times.Once);
         succeedingProvider.Verify(p => p.FindElementAsync(TestLocator, Session, It.IsAny<CancellationToken>()), Times.Once);
     }
+
+    [Fact]
+    public async Task WaitUntilGoneAsync_AllProvidersReturnNull_ResolvesImmediately()
+    {
+        var provider = MockProvider("uia3", null);
+        var resolver = new ElementResolver([provider.Object], new ElementProviderOptions { ProviderChain = ["uia3"] });
+
+        await resolver.WaitUntilGoneAsync(TestLocator, Session);
+
+        provider.Verify(p => p.FindElementAsync(TestLocator, Session, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task WaitUntilGoneAsync_ElementDisappearsOnSecondPoll_ResolvesAfterRetry()
+    {
+        var provider = new Mock<IElementProvider>();
+        provider.SetupGet(p => p.ProviderName).Returns("uia3");
+        provider.SetupSequence(p => p.FindElementAsync(TestLocator, Session, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Handle("1"))
+            .ReturnsAsync((ElementHandle?)null);
+        var options = new ElementProviderOptions { ProviderChain = ["uia3"], ImplicitWaitMs = 5000, PollIntervalMs = 10 };
+        var resolver = new ElementResolver([provider.Object], options);
+
+        await resolver.WaitUntilGoneAsync(TestLocator, Session);
+
+        provider.Verify(p => p.FindElementAsync(TestLocator, Session, It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task WaitUntilGoneAsync_ElementStillFoundAfterTimeout_ThrowsElementStillPresentError()
+    {
+        var provider = MockProvider("uia3", Handle("1"));
+        var options = new ElementProviderOptions { ProviderChain = ["uia3"], ImplicitWaitMs = 50, PollIntervalMs = 10 };
+        var resolver = new ElementResolver([provider.Object], options);
+
+        var ex = await Assert.ThrowsAsync<ElementStillPresentError>(() => resolver.WaitUntilGoneAsync(TestLocator, Session));
+
+        Assert.Equal(TestLocator, ex.Locator);
+    }
+
+    [Fact]
+    public async Task WaitUntilGoneAsync_OneProviderStillFindsElement_KeepsWaiting()
+    {
+        var goneProvider = MockProvider("uia3", null);
+        var stillPresentProvider = MockProvider("uia2", Handle("1"));
+        var options = new ElementProviderOptions { ProviderChain = ["uia3", "uia2"], ImplicitWaitMs = 30, PollIntervalMs = 10 };
+        var resolver = new ElementResolver([goneProvider.Object, stillPresentProvider.Object], options);
+
+        await Assert.ThrowsAsync<ElementStillPresentError>(() => resolver.WaitUntilGoneAsync(TestLocator, Session));
+
+        stillPresentProvider.Verify(p => p.FindElementAsync(TestLocator, Session, It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+    }
 }

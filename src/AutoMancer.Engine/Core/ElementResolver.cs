@@ -57,6 +57,36 @@ public sealed class ElementResolver
         throw new ElementNotFoundError(locator, attempted.ToArray(), (int)stopwatch.ElapsedMilliseconds, closestMatch);
     }
 
+    // Polls the provider chain every PollIntervalMs until every provider returns null for the locator, or ImplicitWaitMs elapses; throws ElementStillPresentError on timeout.
+    public async Task WaitUntilGoneAsync(Locator locator, AppSession session, CancellationToken ct = default)
+    {
+        var stopwatch = Stopwatch.StartNew();
+
+        while (true)
+        {
+            var stillPresent = false;
+            foreach (var provider in _providers)
+            {
+                if (await provider.FindElementAsync(locator, session, ct).ConfigureAwait(false) is not null)
+                {
+                    stillPresent = true;
+                    break;
+                }
+            }
+
+            if (!stillPresent)
+            {
+                _logger?.Info("Element gone", new { locator.Strategy, locator.Value, elapsedMs = stopwatch.ElapsedMilliseconds });
+                return;
+            }
+
+            if (stopwatch.ElapsedMilliseconds >= _options.ImplicitWaitMs)
+                throw new ElementStillPresentError(locator, (int)stopwatch.ElapsedMilliseconds);
+
+            await Task.Delay(_options.PollIntervalMs, ct).ConfigureAwait(false);
+        }
+    }
+
     // Single pass across the provider chain (no retry) — returns the first provider's non-empty match list.
     public async Task<IReadOnlyList<ElementHandle>> FindAllAsync(Locator locator, AppSession session, CancellationToken ct = default)
     {

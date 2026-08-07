@@ -19,4 +19,7 @@ public sealed class AppOptions
 
     // Sensible defaults for most automation scenarios.
     public static AppOptions Default { get; } = new();
+
+    // Tuned for CI/test-runner use: a longer implicit wait tolerates slower CI machines, and a shorter action delay is safe because tests retry-assert via WaitForAsync/Expect() instead of relying on a fixed settle pause.
+    public static AppOptions TestDefaults { get; } = new() { ImplicitWaitMs = 10_000, ActionDelayMs = 50 };
 }

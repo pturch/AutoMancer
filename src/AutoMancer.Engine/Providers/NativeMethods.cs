@@ -8,43 +8,43 @@ namespace AutoMancer.Engine.Providers;
 internal static class NativeMethods
 {
     // Callback invoked by EnumChildWindows for each child window; return false to stop enumeration.
-    internal delegate bool EnumChildProc(IntPtr hWnd, IntPtr lParam);
+    internal delegate bool EnumChildProc(IntPtr windowHandle, IntPtr lParam);
 
-    // Enumerates the immediate and nested child windows of hWndParent, invoking lpEnumFunc for each.
+    // Enumerates the immediate and nested child windows of parentWindowHandle, invoking lpEnumFunc for each.
     [DllImport("user32.dll", SetLastError = true)]
-    internal static extern bool EnumChildWindows(IntPtr hWndParent, EnumChildProc lpEnumFunc, IntPtr lParam);
+    internal static extern bool EnumChildWindows(IntPtr parentWindowHandle, EnumChildProc lpEnumFunc, IntPtr lParam);
 
-    // Reads the window title text of hWnd into lpString.
+    // Reads the window title text of windowHandle into lpString.
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    internal static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+    internal static extern int GetWindowText(IntPtr windowHandle, StringBuilder lpString, int nMaxCount);
 
-    // Reads the window class name of hWnd into lpClassName.
+    // Reads the window class name of windowHandle into lpClassName.
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    internal static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
+    internal static extern int GetClassName(IntPtr windowHandle, StringBuilder lpClassName, int nMaxCount);
 
-    // Reports whether hWnd is currently visible.
+    // Reports whether windowHandle is currently visible.
     [DllImport("user32.dll")]
-    internal static extern bool IsWindowVisible(IntPtr hWnd);
+    internal static extern bool IsWindowVisible(IntPtr windowHandle);
 
-    // Reports whether hWnd is currently minimized.
+    // Reports whether windowHandle is currently minimized.
     [DllImport("user32.dll")]
-    internal static extern bool IsIconic(IntPtr hWnd);
+    internal static extern bool IsIconic(IntPtr windowHandle);
 
-    // Reports whether hWnd is currently maximized.
+    // Reports whether windowHandle is currently maximized.
     [DllImport("user32.dll")]
-    internal static extern bool IsZoomed(IntPtr hWnd);
+    internal static extern bool IsZoomed(IntPtr windowHandle);
 
-    // Brings hWnd to the foreground so synthesized input is delivered to it.
+    // Brings windowHandle to the foreground so synthesized input is delivered to it.
     [DllImport("user32.dll", SetLastError = true)]
-    internal static extern bool SetForegroundWindow(IntPtr hWnd);
+    internal static extern bool SetForegroundWindow(IntPtr windowHandle);
 
-    // Returns the DPI associated with hWnd's monitor (Windows 10 1607+); 96 means 100% scaling.
+    // Returns the DPI associated with windowHandle's monitor (Windows 10 1607+); 96 means 100% scaling.
     [DllImport("user32.dll")]
-    internal static extern uint GetDpiForWindow(IntPtr hWnd);
+    internal static extern uint GetDpiForWindow(IntPtr windowHandle);
 
-    // Reads hWnd's bounding rectangle in physical screen coordinates.
+    // Reads windowHandle's bounding rectangle in physical screen coordinates.
     [DllImport("user32.dll", SetLastError = true)]
-    internal static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+    internal static extern bool GetWindowRect(IntPtr windowHandle, out RECT lpRect);
 
     [StructLayout(LayoutKind.Sequential)]
     internal struct RECT
@@ -202,27 +202,27 @@ internal static class NativeMethods
     }
 
     // Callback invoked by EnumWindows for each top-level window; return false to stop enumeration.
-    internal delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+    internal delegate bool EnumWindowsProc(IntPtr windowHandle, IntPtr lParam);
 
     // Enumerates all top-level windows on the desktop, invoking lpEnumFunc for each.
     [DllImport("user32.dll")]
     internal static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
 
-    // Returns the PID of the process that created hWnd.
+    // Returns the PID of the process that created windowHandle.
     [DllImport("user32.dll")]
-    internal static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+    internal static extern uint GetWindowThreadProcessId(IntPtr windowHandle, out uint lpdwProcessId);
 
-    // Moves, resizes, or repositions hWnd without changing its Z-order or foreground state.
+    // Moves, resizes, or repositions windowHandle without changing its Z-order or foreground state.
     [DllImport("user32.dll", SetLastError = true)]
-    internal static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+    internal static extern bool SetWindowPos(IntPtr windowHandle, IntPtr insertAfterWindowHandle, int X, int Y, int cx, int cy, uint uFlags);
 
-    // Changes the show state of hWnd (minimize, maximize, restore, etc.).
+    // Changes the show state of windowHandle (minimize, maximize, restore, etc.).
     [DllImport("user32.dll")]
-    internal static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    internal static extern bool ShowWindow(IntPtr windowHandle, int nCmdShow);
 
-    // Posts a message to hWnd's message queue without waiting for it to be processed; used for WM_CLOSE.
+    // Posts a message to windowHandle's message queue without waiting for it to be processed; used for WM_CLOSE.
     [DllImport("user32.dll", SetLastError = true)]
-    internal static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+    internal static extern bool PostMessage(IntPtr windowHandle, uint msg, IntPtr wParam, IntPtr lParam);
 
     internal const uint WmClose = 0x0010;
 
@@ -234,4 +234,39 @@ internal static class NativeMethods
     internal const int SwRestore  = 9;
     internal const int SwMinimize = 2;
     internal const int SwMaximize = 3;
+
+    // Returns a device context for windowHandle (or the whole screen when windowHandle is IntPtr.Zero); pair with ReleaseDeviceContext.
+    [DllImport("user32.dll", EntryPoint = "GetDC")]
+    internal static extern IntPtr GetDeviceContext(IntPtr windowHandle);
+
+    // Releases a device context obtained from GetDeviceContext.
+    [DllImport("user32.dll", EntryPoint = "ReleaseDC")]
+    internal static extern int ReleaseDeviceContext(IntPtr windowHandle, IntPtr deviceContext);
+
+    // Creates an in-memory device context compatible with deviceContext; pair with DeleteDeviceContext.
+    [DllImport("gdi32.dll", EntryPoint = "CreateCompatibleDC")]
+    internal static extern IntPtr CreateCompatibleDeviceContext(IntPtr deviceContext);
+
+    // Creates a bitmap compatible with deviceContext, sized (width x height); pair with DeleteObject.
+    [DllImport("gdi32.dll")]
+    internal static extern IntPtr CreateCompatibleBitmap(IntPtr deviceContext, int width, int height);
+
+    // Selects a GDI object (bitmap, pen, brush) into deviceContext, returning the previously selected object.
+    [DllImport("gdi32.dll")]
+    internal static extern IntPtr SelectObject(IntPtr deviceContext, IntPtr gdiObject);
+
+    // Copies a block of pixels from sourceDeviceContext to destDeviceContext — the core of a GDI screenshot.
+    [DllImport("gdi32.dll", EntryPoint = "BitBlt", SetLastError = true)]
+    internal static extern bool BitBlockTransfer(IntPtr destDeviceContext, int destX, int destY, int width, int height, IntPtr sourceDeviceContext, int sourceX, int sourceY, uint rasterOperation);
+
+    // Deletes a device context created by CreateCompatibleDeviceContext.
+    [DllImport("gdi32.dll", EntryPoint = "DeleteDC")]
+    internal static extern bool DeleteDeviceContext(IntPtr deviceContext);
+
+    // Deletes a GDI object (bitmap, pen, brush) created by CreateCompatible*.
+    [DllImport("gdi32.dll")]
+    internal static extern bool DeleteObject(IntPtr hObject);
+
+    // BitBlt raster-operation code for a direct copy (no blending), per the Win32 SRCCOPY contract.
+    internal const uint SrcCopy = 0x00CC0020;
 }

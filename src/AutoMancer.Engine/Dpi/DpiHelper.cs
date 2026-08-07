@@ -23,18 +23,18 @@ public static class DpiHelper
         return ((physicalX - windowRect.X) / scale, (physicalY - windowRect.Y) / scale);
     }
 
-    // Converts logical coordinates relative to hWnd into physical screen coordinates, reading hWnd's live DPI and rect.
-    public static (double X, double Y) LogicalToPhysical(double logicalX, double logicalY, IntPtr hWnd) =>
-        LogicalToPhysical(logicalX, logicalY, (int)NativeMethods.GetDpiForWindow(hWnd), GetWindowRect(hWnd));
+    // Converts logical coordinates relative to windowHandle into physical screen coordinates, reading windowHandle's live DPI and rect.
+    public static (double X, double Y) LogicalToPhysical(double logicalX, double logicalY, IntPtr windowHandle) =>
+        LogicalToPhysical(logicalX, logicalY, (int)NativeMethods.GetDpiForWindow(windowHandle), GetWindowRect(windowHandle));
 
-    // Converts physical screen coordinates into logical coordinates relative to hWnd, reading hWnd's live DPI and rect.
-    public static (double X, double Y) PhysicalToLogical(double physicalX, double physicalY, IntPtr hWnd) =>
-        PhysicalToLogical(physicalX, physicalY, (int)NativeMethods.GetDpiForWindow(hWnd), GetWindowRect(hWnd));
+    // Converts physical screen coordinates into logical coordinates relative to windowHandle, reading windowHandle's live DPI and rect.
+    public static (double X, double Y) PhysicalToLogical(double physicalX, double physicalY, IntPtr windowHandle) =>
+        PhysicalToLogical(physicalX, physicalY, (int)NativeMethods.GetDpiForWindow(windowHandle), GetWindowRect(windowHandle));
 
-    // Reads hWnd's current screen-space bounding rectangle as AutoMancer's Rect struct.
-    private static Rect GetWindowRect(IntPtr hWnd)
+    // Reads windowHandle's current screen-space bounding rectangle as AutoMancer's Rect struct.
+    private static Rect GetWindowRect(IntPtr windowHandle)
     {
-        NativeMethods.GetWindowRect(hWnd, out var rect);
+        NativeMethods.GetWindowRect(windowHandle, out var rect);
         return new Rect(rect.Left, rect.Top, rect.Right - rect.Left, rect.Bottom - rect.Top);
     }
 }

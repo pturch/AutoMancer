@@ -16,10 +16,10 @@ public sealed class WindowCloseIntegrationTests
     public async Task CloseWindowAsync_ClosesTheWindow()
     {
         var app = await App.LaunchPackagedAsync(CalculatorAumid);
-        var hwnd = Process.GetProcessById(app.ProcessId).MainWindowHandle;
+        var windowHandle = Process.GetProcessById(app.ProcessId).MainWindowHandle;
 
         // Calculator has no WindowPattern support, so this hits the WM_CLOSE fallback, whose UWP teardown can exceed 30s under load; retries across a generous budget rather than a single short wait.
-        bool IsStillOpen() => NativeMethods.IsWindowVisible(hwnd) && !NativeMethods.IsIconic(hwnd);
+        bool IsStillOpen() => NativeMethods.IsWindowVisible(windowHandle) && !NativeMethods.IsIconic(windowHandle);
 
         for (var attempt = 0; attempt < 3 && IsStillOpen(); attempt++)
         {

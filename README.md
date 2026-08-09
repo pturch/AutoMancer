@@ -96,6 +96,31 @@ public class CalculatorTests
 
 `App.LaunchPackagedAsync` activates the app by AUMID (needed for UWP/MSIX apps like Calculator); `ClickAsync`/`FindAsync` await the same retry-driven resolver the CLI uses under the hood, and `app` disposes the session automatically at the end of the `using` block.
 
+## Logging
+
+`AppOptions.Logger` takes an `IEngineLogger` that traces element resolution and action execution. It defaults to a plain-text `EngineLogger` writing JSON lines to `Console.Error` — stderr so it never mixes into a CLI command's stdout — so every `App` logs out of the box with no setup. Pass `Logger = null` to disable it, or your own logger to redirect it:
+
+```csharp
+var logger = new EngineLogger(new StreamWriter("automancer.log") { AutoFlush = true }, LogLevel.Debug);
+await using var app = await App.LaunchAsync("notepad.exe", new AppOptions { Logger = logger });
+```
+
+`IEngineLogger` is a small interface (`Debug`/`Info`/`Warn`/`Error`, each taking a message and optional structured data) — `EngineLogger` is just the basic default implementation, writing JSON lines to a `TextWriter` (`Console.Error`, a file, a `StringWriter` for tests, filtered by a minimum `LogLevel`). If you're embedding AutoMancer in a larger engine, implement `IEngineLogger` directly against your own logging stack (`ILogger`, Serilog, xUnit's `ITestOutputHelper`, …) instead of adapting a `TextWriter`:
+
+```csharp
+public sealed class HostLogger(ILogger inner) : IEngineLogger
+{
+    public void Debug(string message, object? data = null) => inner.LogDebug("{Message} {@Data}", message, data);
+    public void Info(string message, object? data = null) => inner.LogInformation("{Message} {@Data}", message, data);
+    public void Warn(string message, object? data = null) => inner.LogWarning("{Message} {@Data}", message, data);
+    public void Error(string message, object? data = null) => inner.LogError("{Message} {@Data}", message, data);
+}
+```
+
+Once configured on `App`, the logger rides along automatically: `ElementResolver` stamps it onto every `ElementHandle` it resolves, so actions like `ClickAsync`/`TypeAsync` log through it without you passing a logger to each call.
+
+See [`samples/ConsumerNotepadTests/EngineLoggerDemoTests.cs`](samples/ConsumerNotepadTests/EngineLoggerDemoTests.cs) for a working example against a live app, including a custom `IEngineLogger` whose captured entries are asserted against the actual resolve/click/clear/type sequence.
+
 ## Tests
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for running the test suite and code style guidelines.

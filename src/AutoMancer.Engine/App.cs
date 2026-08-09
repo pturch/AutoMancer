@@ -1,6 +1,7 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
 using AutoMancer.Engine.Actions;
 using AutoMancer.Engine.Core;
+using AutoMancer.Engine.Diagnostics;
 using AutoMancer.Engine.Providers;
 
 namespace AutoMancer.Engine;
@@ -12,15 +13,28 @@ public sealed class App : IAsyncDisposable
     private readonly ElementResolver _resolver;
     private readonly int _actionDelayMs;
     private readonly HeldKeyTracker _heldKeys = new();
+    private readonly IEngineLogger? _logger;
 
     // The PID of the target process — useful for re-attaching after a session change.
     public int ProcessId => _session.ProcessId;
+
+    // The logger this App was configured with (via AppOptions.Logger), if any — lets a test bridge it into its own output/DI logging.
+    public IEngineLogger? Logger => _logger;
+
+    // The implicit wait this App was configured with (via AppOptions.ImplicitWaitMs) — the default timeout callers can reuse for their own polling loops.
+    public int ImplicitWaitMs { get; }
+
+    // The poll interval this App was configured with (via AppOptions.PollIntervalMs) — the default cadence callers can reuse for their own polling loops.
+    public int PollIntervalMs { get; }
 
     // Private — callers use the static factory methods.
     private App(AppSession session, AppOptions options)
     {
         _session = session;
         _actionDelayMs = options.ActionDelayMs;
+        _logger = options.Logger;
+        ImplicitWaitMs = options.ImplicitWaitMs;
+        PollIntervalMs = options.PollIntervalMs;
         _resolver = new ElementResolver(
             BuildProviders(options.ProviderChain),
             new ElementProviderOptions
@@ -28,42 +42,48 @@ public sealed class App : IAsyncDisposable
                 ProviderChain = [.. options.ProviderChain],
                 ImplicitWaitMs = options.ImplicitWaitMs,
                 PollIntervalMs = options.PollIntervalMs,
-            });
+            },
+            logger: options.Logger);
     }
 
     // Starts the target executable and waits until its main window is visible.
     public static async Task<App> LaunchAsync(string executablePath, AppOptions? options = null, CancellationToken ct = default)
     {
-        var session = await AppSession.LaunchAsync(executablePath, ct: ct);
-        return new App(session, options ?? AppOptions.Default);
+        options ??= AppOptions.Default;
+        var session = await AppSession.LaunchAsync(executablePath, logger: options.Logger, ct: ct);
+        return new App(session, options);
     }
 
     // Wraps an already-running process identified by PID.
     public static async Task<App> AttachByPidAsync(int pid, AppOptions? options = null, CancellationToken ct = default)
     {
-        var session = await AppSession.AttachByPidAsync(pid, ct);
-        return new App(session, options ?? AppOptions.Default);
+        options ??= AppOptions.Default;
+        var session = await AppSession.AttachByPidAsync(pid, options.Logger, ct);
+        return new App(session, options);
     }
 
     // Polls for a dialog owned by ownerPid whose title contains titleContains; use for modal dialogs, which don't change Process.MainWindowTitle.
     public static async Task<App?> FindDialogAsync(int ownerPid, string titleContains, AppOptions? options = null, int timeoutMs = 3_000, CancellationToken ct = default)
     {
-        var session = await AppSession.FindDialogAsync(ownerPid, titleContains, timeoutMs, ct);
-        return session is null ? null : new App(session, options ?? AppOptions.Default);
+        options ??= AppOptions.Default;
+        var session = await AppSession.FindDialogAsync(ownerPid, titleContains, timeoutMs, options.Logger, ct);
+        return session is null ? null : new App(session, options);
     }
 
     // Activates a UWP/MSIX packaged app by its Application User Model ID (AUMID) and waits for its window.
     public static async Task<App> LaunchPackagedAsync(string aumid, AppOptions? options = null, CancellationToken ct = default)
     {
-        var session = await AppSession.LaunchPackagedAsync(aumid, ct: ct);
-        return new App(session, options ?? AppOptions.Default);
+        options ??= AppOptions.Default;
+        var session = await AppSession.LaunchPackagedAsync(aumid, logger: options.Logger, ct: ct);
+        return new App(session, options);
     }
 
     // Finds the first windowed process whose title contains the given string (case-insensitive).
     public static async Task<App> AttachByTitleAsync(string title, AppOptions? options = null, CancellationToken ct = default)
     {
-        var session = await AppSession.AttachByTitleAsync(title, ct);
-        return new App(session, options ?? AppOptions.Default);
+        options ??= AppOptions.Default;
+        var session = await AppSession.AttachByTitleAsync(title, options.Logger, ct);
+        return new App(session, options);
     }
 
     // Returns a new App bound to the same session but with different options — useful for warmup or provider-specific operations without creating a new process.
@@ -76,6 +96,13 @@ public sealed class App : IAsyncDisposable
     // Finds all elements matching the locator in a single pass; returns empty if none match.
     public Task<IReadOnlyList<ElementHandle>> FindAllAsync(Locator locator, CancellationToken ct = default)
         => _resolver.FindAllAsync(locator, _session, ct);
+
+    // Finds the element and reads its current value via ValuePattern or TextPattern; returns null when the resolved provider has no operator (e.g. Win32) or neither pattern is supported.
+    public async Task<string?> GetValueAsync(Locator locator, CancellationToken ct = default)
+    {
+        var element = await _resolver.FindAsync(locator, _session, ct);
+        return element.Operator is null ? null : await element.Operator.TryGetValueAsync(element, ct);
+    }
 
     // Snapshots the element tree from the first provider in the chain that returns a non-empty result; null if all providers return empty.
     public Task<IReadOnlyList<ElementSnapshot>?> SnapshotAsync(CancellationToken ct = default)
@@ -98,6 +125,7 @@ public sealed class App : IAsyncDisposable
     {
         var element = await _resolver.FindAsync(locator, _session, ct);
         await ClickAction.ExecuteAsync(element, button, modifiers, ct);
+        _logger?.Info("Clicked", new { locator.Strategy, locator.Value });
         if (_actionDelayMs > 0)
             await Task.Delay(_actionDelayMs, ct);
     }
@@ -111,6 +139,7 @@ public sealed class App : IAsyncDisposable
     {
         var element = await _resolver.FindAsync(locator, _session, ct);
         await DoubleClickAction.ExecuteAsync(element, ct);
+        _logger?.Info("Double-clicked", new { locator.Strategy, locator.Value });
         if (_actionDelayMs > 0)
             await Task.Delay(_actionDelayMs, ct);
     }
@@ -120,15 +149,17 @@ public sealed class App : IAsyncDisposable
     {
         var element = await _resolver.FindAsync(locator, _session, ct);
         await HoverAction.ExecuteAsync(element, ct);
+        _logger?.Info("Hovered", new { locator.Strategy, locator.Value });
         if (_actionDelayMs > 0)
             await Task.Delay(_actionDelayMs, ct);
     }
 
-    // Finds the element and types the given text into it; waits ActionDelayMs after typing for the UI to settle.
+    // Finds the element and types the given text into it, replacing its whole value if the provider supports native set-value rather than typing at the caret or over a selection — see TypeDirectAsync for real keystroke behavior; waits ActionDelayMs after for the UI to settle.
     public async Task TypeAsync(Locator locator, string text, CancellationToken ct = default)
     {
         var element = await _resolver.FindAsync(locator, _session, ct);
         await TypeAction.ExecuteAsync(element, text, ct);
+        _logger?.Info("Typed", new { locator.Strategy, locator.Value });
         if (_actionDelayMs > 0)
             await Task.Delay(_actionDelayMs, ct);
     }
@@ -138,6 +169,7 @@ public sealed class App : IAsyncDisposable
     {
         var element = await _resolver.FindAsync(locator, _session, ct);
         await ClearAction.ExecuteAsync(element, ct);
+        _logger?.Info("Cleared", new { locator.Strategy, locator.Value });
         if (_actionDelayMs > 0)
             await Task.Delay(_actionDelayMs, ct);
     }
@@ -148,6 +180,7 @@ public sealed class App : IAsyncDisposable
         var element = await _resolver.FindAsync(locator, _session, ct);
         var rect = element.BoundingRect;
         await ClickAtAsync((int)(rect.X + rect.Width / 2), (int)(rect.Y + rect.Height / 2), ct);
+        _logger?.Info("Clicked at element center", new { locator.Strategy, locator.Value });
     }
 
     // Clicks at a physical screen coordinate without finding a UIA element; useful for tools like the fill bucket that have no accessible target.
@@ -156,7 +189,7 @@ public sealed class App : IAsyncDisposable
         await Task.Run(() =>
         {
             NativeMethods.SetForegroundWindow(_session.RootWindowHandle);
-            NativeMethods.SendMouseClick(x, y);
+            NativeMethods.SendMouseClick(x, y, _logger);
         }, ct);
         if (_actionDelayMs > 0) await Task.Delay(_actionDelayMs, ct);
     }
@@ -166,21 +199,21 @@ public sealed class App : IAsyncDisposable
         => Task.Run(() =>
         {
             NativeMethods.SetForegroundWindow(_session.RootWindowHandle);
-            TypeAction.SendUnicodeText(text);
+            TypeAction.SendUnicodeText(text, _logger);
         }, ct);
 
     // Presses a named key against the root window, optionally with modifiers held down (e.g. Ctrl+A).
     public async Task PressKeyAsync(Key key, KeyModifiers modifiers = default, CancellationToken ct = default)
     {
         NativeMethods.SetForegroundWindow(_session.RootWindowHandle);
-        await KeyboardAction.PressKeyAsync(key, modifiers, ct);
+        await KeyboardAction.PressKeyCoreAsync(key, modifiers, _logger, ct);
     }
 
     // Presses modifiers plus every key in keys simultaneously against the root window — for chords needing more than one non-modifier key (e.g. Ctrl+A+K).
     public async Task HotkeyAsync(KeyModifiers modifiers, IReadOnlyList<Key> keys, CancellationToken ct = default)
     {
         NativeMethods.SetForegroundWindow(_session.RootWindowHandle);
-        await KeyboardAction.HotkeyAsync(modifiers, keys, ct);
+        await KeyboardAction.HotkeyCoreAsync(modifiers, keys, _logger, ct);
     }
 
     // Presses a key down without releasing it; tracked so Kill/Dispose can release it even if KeyUpAsync is never called. The send and the tracking happen in the same synchronous unit — no async-continuation gap where Kill/Dispose could drain an untracked-but-already-physically-down key.
@@ -189,7 +222,7 @@ public sealed class App : IAsyncDisposable
         NativeMethods.SetForegroundWindow(_session.RootWindowHandle);
         return Task.Run(() =>
         {
-            KeyboardAction.KeyDownNow(key);
+            KeyboardAction.KeyDownNow(key, _logger);
             _heldKeys.Add(key);
         }, ct);
     }
@@ -197,7 +230,7 @@ public sealed class App : IAsyncDisposable
     // Releases a previously held key; untracks it only once the release actually lands, so a cancelled/failed send leaves it tracked rather than silently forgotten.
     public async Task KeyUpAsync(Key key, CancellationToken ct = default)
     {
-        await KeyboardAction.KeyUpAsync(key, ct);
+        await KeyboardAction.KeyUpCoreAsync(key, _logger, ct);
         _heldKeys.Remove(key);
     }
 
@@ -205,14 +238,14 @@ public sealed class App : IAsyncDisposable
     public async Task MoveMouseRelativeAsync(int dx, int dy, CancellationToken ct = default)
     {
         NativeMethods.SetForegroundWindow(_session.RootWindowHandle);
-        await MouseMoveAction.MoveRelativeAsync(dx, dy, ct);
+        await MouseMoveAction.MoveRelativeCoreAsync(dx, dy, _logger, ct);
     }
 
     // Drags in a straight line between two physical screen coordinates; waits ActionDelayMs after completion.
     public async Task DragAsync(int fromX, int fromY, int toX, int toY, CancellationToken ct = default)
     {
         Providers.NativeMethods.SetForegroundWindow(_session.RootWindowHandle);
-        await DragAction.DragAsync(fromX, fromY, toX, toY, ct: ct);
+        await DragAction.DragCoreAsync(fromX, fromY, toX, toY, 20, _logger, ct);
         if (_actionDelayMs > 0) await Task.Delay(_actionDelayMs, ct);
     }
 
@@ -220,7 +253,7 @@ public sealed class App : IAsyncDisposable
     public async Task DragThroughAsync(IReadOnlyList<(int X, int Y)> waypoints, CancellationToken ct = default)
     {
         Providers.NativeMethods.SetForegroundWindow(_session.RootWindowHandle);
-        await DragAction.DragThroughAsync(waypoints, ct);
+        await DragAction.DragThroughCoreAsync(waypoints, _logger, ct);
         if (_actionDelayMs > 0) await Task.Delay(_actionDelayMs, ct);
     }
 
@@ -229,6 +262,7 @@ public sealed class App : IAsyncDisposable
     {
         var element = await _resolver.FindAsync(locator, _session, ct);
         await ScrollAction.ExecuteAsync(element, ct);
+        _logger?.Info("Scrolled into view", new { locator.Strategy, locator.Value });
         if (_actionDelayMs > 0)
             await Task.Delay(_actionDelayMs, ct);
     }
@@ -238,6 +272,7 @@ public sealed class App : IAsyncDisposable
     {
         var element = await _resolver.FindAsync(locator, _session, ct);
         await ScrollWheelAction.ExecuteAsync(element, deltaX, deltaY, ct);
+        _logger?.Info("Scrolled", new { locator.Strategy, locator.Value, deltaX, deltaY });
         if (_actionDelayMs > 0)
             await Task.Delay(_actionDelayMs, ct);
     }
@@ -247,6 +282,7 @@ public sealed class App : IAsyncDisposable
     {
         var element = await _resolver.FindAsync(locator, _session, ct);
         await SetFocusAction.ExecuteAsync(element, ct);
+        _logger?.Info("Focused", new { locator.Strategy, locator.Value });
         if (_actionDelayMs > 0)
             await Task.Delay(_actionDelayMs, ct);
     }
@@ -257,19 +293,19 @@ public sealed class App : IAsyncDisposable
 
     // Moves the window's top-left corner to (x, y) in physical screen coordinates; size is unchanged.
     public Task MoveWindowAsync(int x, int y, CancellationToken ct = default)
-        => WindowAction.MoveAsync(_session.RootWindowHandle, x, y, ct);
+        => WindowAction.MoveCoreAsync(_session.RootWindowHandle, x, y, _logger, ct);
 
     // Resizes the window to (width × height) in physical pixels; position is unchanged.
     public Task ResizeWindowAsync(int width, int height, CancellationToken ct = default)
-        => WindowAction.ResizeAsync(_session.RootWindowHandle, width, height, ct);
+        => WindowAction.ResizeCoreAsync(_session.RootWindowHandle, width, height, _logger, ct);
 
     // Changes the window's visual state (Normal, Maximized, Minimized).
     public Task SetWindowStateAsync(WindowState state, CancellationToken ct = default)
-        => WindowAction.SetVisualStateAsync(_session.RootWindowHandle, state, ct);
+        => WindowAction.SetVisualStateCoreAsync(_session.RootWindowHandle, state, _logger, ct);
 
     // Closes the root window; tries WindowPattern.Close() first, falls back to posting WM_CLOSE.
     public Task CloseWindowAsync(CancellationToken ct = default)
-        => WindowAction.CloseAsync(_session.RootWindowHandle, ct);
+        => WindowAction.CloseCoreAsync(_session.RootWindowHandle, _logger, ct);
 
     // Terminates the target process immediately; no-op if it has already exited.
     public void Kill()
@@ -287,7 +323,7 @@ public sealed class App : IAsyncDisposable
     }
 
     // Sends KeyUp for every key still recorded as held, in one synchronous batched SendInput call, so a crash or early Kill/Dispose never leaves a key stuck down at the OS level — killing the target process does not do this on its own, since held-key state lives in the OS, not the process.
-    private void ReleaseHeldKeys() => KeyboardAction.ReleaseKeysNow(_heldKeys.DrainHeld());
+    private void ReleaseHeldKeys() => KeyboardAction.ReleaseKeysNow(_heldKeys.DrainHeld(), _logger);
 
     // Instantiates one provider per name in the chain; unknown names are silently dropped.
     private static IReadOnlyList<IElementProvider> BuildProviders(IReadOnlyList<string> chain)

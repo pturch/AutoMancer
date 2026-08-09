@@ -127,7 +127,7 @@ All C# code (engine + daemon) is tested in C# with xunit + Moq. SDK client code 
 | 1.1.3 | `IElementProvider` + `ElementSnapshot`; `AppSession` (`LaunchAsync`, `AttachByPid`, `AttachByTitle`) | Engine Task 3 |
 
 **UWP / packaged app launch:** `LaunchAsync` identifies a session by watching the launched PID for a window. UWP and MSIX-packaged apps (Calculator, Windows Terminal, new Paint, etc.) work differently — `calc.exe` is a thin activator that exits immediately; the real window appears under a different PID managed by the Windows app model. `LaunchAsync` will throw `AppLaunchError` for these apps. Workaround until Stage 1.6: use `Process.Start` with `UseShellExecute = true` and then call `AttachByTitleAsync`. Addressed properly in batch 1.6.6.
-| 1.1.4 | `EngineLogger` + error types (`ElementNotFoundError`, `ElementNotInteractableError`, `AppLaunchError`) | Engine Task 4 |
+| 1.1.4 | `EngineLogger` — opt-in structured trace of AutoMancer's own process (off by default, no-op when unset); wired into `ElementResolver`'s retry loops and exposed via `AppOptions.Logger` + error types (`ElementNotFoundError`, `ElementNotInteractableError`, `AppLaunchError`) | Engine Task 4 |
 | 1.1.5 | `ClosestMatchFinder` + Levenshtein; `DpiHelper` testable overloads | Engine Tasks 5–6 |
 
 **Commit at end of each batch.** After 1.1.5: run `dotnet test --filter "Category!=Integration"` — all unit tests green.
@@ -267,9 +267,9 @@ All C# code (engine + daemon) is tested in C# with xunit + Moq. SDK client code 
 |---|---|
 | 1.9.1 | `AutoMancer.Testing` project scaffold — references only `AutoMancer.Engine`, no test-framework dependency |
 | 1.9.2 | `Expect(ElementHandle)` / `Expect(App, Locator)` assertion API — `ToHaveName`, `ToBeVisible`, `ToHaveText`, wrapping `App.WaitForAsync` from batch 1.8.5 so assertions poll instead of racing |
-| 1.9.3 | On-failure diagnostics — tree dump (`SnapshotAsync`) + screenshot capture on a failed `Expect`, framework-agnostic, sourced through `EngineLogger` |
+| 1.9.3 | On-failure diagnostics — a single-pass `FindAllAsync` lookup folds what was actually found into `ExpectFailedError`'s message; screenshot capture (opt-in) saves to `%TEMP%` and folds the path into the same message. Self-contained, no logger object — matches Playwright's model of a rich failure message over a managed logger |
 | 1.9.4 | `AutoMancer.Testing.XUnit` project scaffold — `AppFixture` (`IAsyncLifetime`, one `App` per xUnit collection) and `AutoMancerTest` base class exposing `App` and `Expect` to derived test classes |
-| 1.9.5 | Route `EngineLogger` output through the xUnit adapter to `ITestOutputHelper` |
+| 1.9.5 | `AutoMancerTestOptions.CaptureScreenshotsOnFailure` — one process-wide policy switch (set once, e.g. via `[ModuleInitializer]`) instead of a per-test logger; `AutoMancerTest` exposes it as an overridable default |
 | 1.9.6 | Unit tests for `AutoMancer.Testing` (assertion pass/fail timing, retry behavior against a fake provider) + an integration test rewriting one `NotepadWorkflowTests` scenario on `AutoMancerTest`/`Expect()` |
 
 **Scope boundary — what this stage does *not* provide**, left to whichever test project consumes it: which test framework to use (xUnit, NUnit, MSTest — only xUnit gets a first-party adapter here), test parallelism decisions (one `App` per collection vs. per class), what to assert about business logic (this stage provides "does this element exist / have this value," not "did the save succeed"), and test data setup (launching the right app in the right initial state).
@@ -418,8 +418,9 @@ All C# code (engine + daemon) is tested in C# with xunit + Moq. SDK client code 
 | 3.1.4 | `StatusEndpoint` + `Program.cs` entry point; smoke test `GET /status` | Daemon Task 4 |
 | 3.1.5 | `SessionEndpoints` — `POST /session` (parse capabilities, launch/attach, return sessionId), `DELETE /session/:id` | Daemon Task 5 |
 | 3.1.6 | `FindEndpoints` — 4 W3C find endpoints; routes all strategies including `id` and `automancer:xpath` | Daemon Task 6 |
+| 3.1.7 | Route `AppOptions.Logger` (owned by `App` since batch 1.1.4) into daemon session construction — attach an `EngineLogger` sink (file or stdout `TextWriter`, configurable via `DaemonConfig`) when building each session's `AppOptions`, so the engine's existing structured operational trace (`ElementResolver` + `AppSession` launch/attach) reaches daemon request handling. Daemon-side only, no engine source changes needed. Unrelated to Stage 1.9's `Expect()` diagnostics, which stay self-contained | Engine spec Task 4 |
 
-**After 3.1.6:** Full element-finding stack reachable via HTTP. Selenium client can locate elements.
+**After 3.1.7:** Full element-finding stack reachable via HTTP, with structured operational logging wired end-to-end. Selenium client can locate elements.
 
 ---
 

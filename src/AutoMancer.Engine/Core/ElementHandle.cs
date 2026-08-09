@@ -1,4 +1,6 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
+using AutoMancer.Engine.Diagnostics;
+
 namespace AutoMancer.Engine.Core;
 
 // A logical-pixel bounding box, used for element rects and window geometry.
@@ -22,6 +24,9 @@ public sealed class ElementHandle
 
     // The operator for this element's native handle type — null for Win32 and Visual elements, which fall back to SendInput.
     internal IElementOperator? Operator { get; init; }
+
+    // The logger this element was resolved with, if any — stamped by ElementResolver so actions can log without taking a separate logger parameter.
+    internal IEngineLogger? Logger { get; set; }
 
     // Constructed by providers only — callers receive handles exclusively from the resolver.
     internal ElementHandle(string id, string resolvedVia, object nativeHandle)

@@ -10,4 +10,7 @@ public interface IElementOperator
 
     // Attempts to set the element's value via ValuePattern; returns false when the element does not expose the pattern or is read-only.
     Task<bool> TrySetValueAsync(ElementHandle element, string value, CancellationToken ct = default);
+
+    // Reads the element's current value via ValuePattern, falling back to TextPattern's full document text; returns null when neither pattern is supported.
+    Task<string?> TryGetValueAsync(ElementHandle element, CancellationToken ct = default);
 }

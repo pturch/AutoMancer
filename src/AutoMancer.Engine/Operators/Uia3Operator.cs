@@ -30,4 +30,16 @@ public sealed class Uia3Operator : IElementOperator
         valuePattern.SetValue(value);
         return true;
     }, ct);
+
+    // Reads the element's value via ValuePattern if supported, falling back to TextPattern's full document text; returns null when neither pattern is available.
+    public Task<string?> TryGetValueAsync(ElementHandle element, CancellationToken ct = default) => Task.Run(() =>
+    {
+        if (element.NativeHandle is not IUIAutomationElement uiaElement)
+            return (string?)null;
+        if (uiaElement.GetCurrentPattern(UIA_PatternIds.UIA_ValuePatternId) is IUIAutomationValuePattern valuePattern)
+            return valuePattern.CurrentValue;
+        if (uiaElement.GetCurrentPattern(UIA_PatternIds.UIA_TextPatternId) is IUIAutomationTextPattern textPattern)
+            return textPattern.DocumentRange.GetText(-1); // -1 means no limit, the entire text
+        return null;
+    }, ct);
 }

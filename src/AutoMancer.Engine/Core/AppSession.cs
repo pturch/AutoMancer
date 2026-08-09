@@ -2,6 +2,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
+using AutoMancer.Engine.Diagnostics;
 using AutoMancer.Engine.Dpi;
 using AutoMancer.Engine.Errors;
 using AutoMancer.Engine.Providers;
@@ -33,6 +34,7 @@ public sealed class AppSession : IAsyncDisposable
         string executablePath,
         string? arguments = null,
         int timeoutMs = 10_000,
+        IEngineLogger? logger = null,
         CancellationToken ct = default)
     {
         var startInfo = new ProcessStartInfo(executablePath, arguments ?? string.Empty)
@@ -54,6 +56,7 @@ public sealed class AppSession : IAsyncDisposable
             throw new AppLaunchError($"Failed to start process: {executablePath}");
 
         var processName = process.ProcessName;
+        var stopwatch = Stopwatch.StartNew();
         var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
         while (DateTime.UtcNow < deadline)
         {
@@ -61,15 +64,20 @@ public sealed class AppSession : IAsyncDisposable
             {
                 process.Refresh();
                 if (process.MainWindowHandle != IntPtr.Zero)
+                {
+                    logger?.Info("App launched", new { executablePath, pid = process.Id, elapsedMs = stopwatch.ElapsedMilliseconds });
                     return FromProcess(process);
+                }
             }
             else
             {
-                // Packaged apps (e.g. Windows 11's Notepad) exit their launcher stub once activation has been handed
-                // off to the real windowed host process — which may be a pre-existing instance reused as a new tab.
+                // Packaged apps (e.g. Windows 11's Notepad) exit their launcher stub once activation hands off to the real windowed host process, which may be a pre-existing instance reused as a new tab.
                 var windowed = Process.GetProcessesByName(processName).FirstOrDefault(p => p.MainWindowHandle != IntPtr.Zero);
                 if (windowed is not null)
+                {
+                    logger?.Info("App launched (reused existing window)", new { executablePath, pid = windowed.Id, elapsedMs = stopwatch.ElapsedMilliseconds });
                     return FromProcess(windowed);
+                }
             }
 
             await Task.Delay(200, ct).ConfigureAwait(false);
@@ -80,7 +88,7 @@ public sealed class AppSession : IAsyncDisposable
     }
 
     // Wraps an already-running process identified by PID.
-    public static Task<AppSession> AttachByPidAsync(int pid, CancellationToken ct = default)
+    public static Task<AppSession> AttachByPidAsync(int pid, IEngineLogger? logger = null, CancellationToken ct = default)
     {
         Process process;
         try
@@ -97,11 +105,12 @@ public sealed class AppSession : IAsyncDisposable
         if (process.MainWindowHandle == IntPtr.Zero)
             throw new AppLaunchError($"Process {pid} ({process.ProcessName}) has no main window handle.");
 
+        logger?.Info("Attached to process", new { pid = process.Id, processName = process.ProcessName });
         return Task.FromResult(FromProcess(process));
     }
 
     // Finds the first windowed process whose title contains the given string (case-insensitive).
-    public static Task<AppSession> AttachByTitleAsync(string title, CancellationToken ct = default)
+    public static Task<AppSession> AttachByTitleAsync(string title, IEngineLogger? logger = null, CancellationToken ct = default)
     {
         var match = Process.GetProcesses()
             .FirstOrDefault(p =>
@@ -111,6 +120,7 @@ public sealed class AppSession : IAsyncDisposable
         if (match is null)
             throw new AppLaunchError($"No process with a window title containing '{title}' found.");
 
+        logger?.Info("Attached to process", new { pid = match.Id, processName = match.ProcessName });
         return Task.FromResult(FromProcess(match));
     }
 
@@ -137,8 +147,10 @@ public sealed class AppSession : IAsyncDisposable
         int ownerPid,
         string titleContains,
         int timeoutMs = 3_000,
+        IEngineLogger? logger = null,
         CancellationToken ct = default)
     {
+        var stopwatch = Stopwatch.StartNew();
         var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
         while (DateTime.UtcNow < deadline)
         {
@@ -146,6 +158,7 @@ public sealed class AppSession : IAsyncDisposable
             if (windowHandle != IntPtr.Zero)
             {
                 NativeMethods.GetWindowThreadProcessId(windowHandle, out var pid);
+                logger?.Info("Dialog found", new { ownerPid, titleContains, elapsedMs = stopwatch.ElapsedMilliseconds });
                 return new AppSession(Guid.NewGuid().ToString("N"), Process.GetProcessById((int)pid), windowHandle);
             }
             await Task.Delay(200, ct).ConfigureAwait(false);
@@ -179,6 +192,7 @@ public sealed class AppSession : IAsyncDisposable
     public static async Task<AppSession> LaunchPackagedAsync(
         string aumid,
         int timeoutMs = 10_000,
+        IEngineLogger? logger = null,
         CancellationToken ct = default)
     {
         var managerType = Type.GetTypeFromCLSID(new Guid("45BA127D-10A8-46EA-8AB7-56EA9078943C"))
@@ -189,6 +203,7 @@ public sealed class AppSession : IAsyncDisposable
         if (hr < 0)
             throw new AppLaunchError($"ActivateApplication failed for AUMID '{aumid}' (HRESULT 0x{hr:X8}).");
 
+        var stopwatch = Stopwatch.StartNew();
         var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
         while (DateTime.UtcNow < deadline)
         {
@@ -197,7 +212,10 @@ public sealed class AppSession : IAsyncDisposable
                 var process = Process.GetProcessById((int)pid);
                 process.Refresh();
                 if (process.MainWindowHandle != IntPtr.Zero)
+                {
+                    logger?.Info("Packaged app launched", new { aumid, pid, elapsedMs = stopwatch.ElapsedMilliseconds });
                     return FromProcess(process);
+                }
             }
             catch (ArgumentException) { /* process not yet visible */ }
 
@@ -211,8 +229,7 @@ public sealed class AppSession : IAsyncDisposable
     internal static AppSession CreateForTesting(Process process, IntPtr rootWindowHandle) =>
         new(Guid.NewGuid().ToString("N"), process, rootWindowHandle);
 
-    // COM interface for activating packaged (UWP/MSIX) apps by Application User Model ID.
-    // The Guid is the IID — COM's only way to name an interface at runtime; QueryInterface uses it to return the correct vtable.
+    // COM interface for activating packaged (UWP/MSIX) apps by Application User Model ID; the Guid below is the IID QueryInterface resolves.
     [ComImport, Guid("2e941141-7f97-4756-ba1d-9decde894a3d"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     private interface IApplicationActivationManager
     {

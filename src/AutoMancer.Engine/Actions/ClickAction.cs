@@ -1,5 +1,6 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
 using AutoMancer.Engine.Core;
+using AutoMancer.Engine.Diagnostics;
 using AutoMancer.Engine.Providers;
 using Interop.UIAutomationClient;
 
@@ -11,12 +12,19 @@ public enum MouseButton { Left, Right, Middle, Back, Forward }
 // Clicks a resolved element: delegates to the provider's native click first, falling back to a synthesized SendInput click.
 public static class ClickAction
 {
-    // Performs the click; tries the element's provider first (plain left click only), then falls through to synthesized mouse input.
-    public static async Task ExecuteAsync(ElementHandle element, MouseButton button = MouseButton.Left, KeyModifiers modifiers = default, CancellationToken ct = default)
+    // Performs the click; logs via whatever logger the element was resolved with (see ElementHandle.Logger).
+    public static Task ExecuteAsync(ElementHandle element, MouseButton button = MouseButton.Left, KeyModifiers modifiers = default, CancellationToken ct = default)
+        => ExecuteCoreAsync(element, button, modifiers, element.Logger, ct);
+
+    // Same as ExecuteAsync, with an explicit logger override — for the test suite to inject/inspect logging without a full resolver.
+    internal static async Task ExecuteCoreAsync(ElementHandle element, MouseButton button, KeyModifiers modifiers, IEngineLogger? logger, CancellationToken ct)
     {
         if (button == MouseButton.Left && modifiers == KeyModifiers.None && element.Operator is not null)
             if (await element.Operator.TryClickAsync(element, ct).ConfigureAwait(false))
+            {
+                logger?.Info("Clicked via native pattern", new { elementId = element.Id });
                 return;
+            }
 
         await Task.Run(() =>
         {
@@ -24,8 +32,9 @@ public static class ClickAction
 
             // modifiers, if any, are held down for the duration of the synthesized click.
             var (x, y) = GetCenter(element);
-            SendModifiedClick(x, y, button, modifiers);
+            SendModifiedClick(x, y, button, modifiers, logger);
         }, ct).ConfigureAwait(false);
+        logger?.Info("Clicked via synthesized input", new { elementId = element.Id, button });
     }
 
     // Brings the element's owning window to the foreground so synthesized input reaches it; no-op for non-UIA handles.
@@ -43,7 +52,7 @@ public static class ClickAction
     }
 
     // Sends a leading move, then modifier-down, the button click, then modifier-up (reverse order), all as one SendInput batch.
-    private static void SendModifiedClick(int x, int y, MouseButton button, KeyModifiers modifiers)
+    private static void SendModifiedClick(int x, int y, MouseButton button, KeyModifiers modifiers, IEngineLogger? logger)
     {
         var (normX, normY) = Normalize(x, y);
         var modifierKeys = modifiers.ToVirtualKeys().ToList();
@@ -60,7 +69,7 @@ public static class ClickAction
         for (var i = modifierKeys.Count - 1; i >= 0; i--)
             inputs.Add(VkInput(modifierKeys[i], isKeyUp: true));
 
-        NativeMethods.SendInputs(inputs.ToArray());
+        NativeMethods.SendInputs(inputs.ToArray(), logger);
     }
 
     // Maps a MouseButton to its SendInput down/up flags and mouseData (nonzero only for Back/Forward).

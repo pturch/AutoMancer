@@ -8,8 +8,8 @@ namespace AutoMancer.Engine.Diagnostics;
 // Severity of an EngineLogger entry, also used as the minimum-level filter.
 public enum LogLevel { Debug = 0, Info = 1, Warn = 2, Error = 3 }
 
-// Writes structured JSON-line log entries to an injectable TextWriter, filtered by minimum severity.
-public sealed class EngineLogger
+// Default IEngineLogger: writes structured JSON-line log entries to an injectable TextWriter, filtered by minimum severity.
+public sealed class EngineLogger : IEngineLogger
 {
     private readonly TextWriter _writer;
     private readonly LogLevel _minimumLevel;

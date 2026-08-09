@@ -22,6 +22,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\AutoMancer.Engine\AutoMancer.Engine.csproj" />
+    <ProjectReference Include="..\..\src\AutoMancer.Testing\AutoMancer.Testing.csproj" />
+    <ProjectReference Include="..\..\src\AutoMancer.Testing.XUnit\AutoMancer.Testing.XUnit.csproj" />
   </ItemGroup>
 
 </Project>

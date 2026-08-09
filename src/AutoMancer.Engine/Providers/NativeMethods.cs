@@ -1,6 +1,7 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
 using System.Runtime.InteropServices;
 using System.Text;
+using AutoMancer.Engine.Diagnostics;
 
 namespace AutoMancer.Engine.Providers;
 
@@ -83,8 +84,13 @@ internal static class NativeMethods
     [DllImport("user32.dll", SetLastError = true)]
     internal static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
 
-    // Submits one or more INPUT events to SendInput as a single batch; every action funnels through here instead of computing cbSize itself.
-    internal static void SendInputs(params INPUT[] inputs) => SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+    // Submits one or more INPUT events to SendInput as a single batch, warning if the OS delivers fewer than requested (e.g. blocked by UIPI).
+    internal static void SendInputs(INPUT[] inputs, IEngineLogger? logger = null)
+    {
+        var sent = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+        if (sent != inputs.Length)
+            logger?.Warn("SendInput delivered fewer events than requested", new { requested = inputs.Length, sent, win32Error = Marshal.GetLastWin32Error() });
+    }
 
     // Reports whether vKey is currently down (high bit of the return value) — global OS state, independent of which window has focus.
     [DllImport("user32.dll")]
@@ -185,7 +191,7 @@ internal static class NativeMethods
     internal const ushort VirtualKeyLWin      = 0x5B;
 
     // Sends a left-button click at a physical screen coordinate.
-    internal static void SendMouseClick(int x, int y)
+    internal static void SendMouseClick(int x, int y, IEngineLogger? logger = null)
     {
         var w  = GetSystemMetrics(SmCxScreen);
         var h  = GetSystemMetrics(SmCyScreen);
@@ -198,7 +204,7 @@ internal static class NativeMethods
             new() { Type = InputTypeMouse, Data = new InputUnion { Mouse = new MOUSEINPUT { Dx = nx, Dy = ny, Flags = MouseEventLeftDown | MouseEventAbsolute } } },
             new() { Type = InputTypeMouse, Data = new InputUnion { Mouse = new MOUSEINPUT { Dx = nx, Dy = ny, Flags = MouseEventLeftUp   | MouseEventAbsolute } } },
         ];
-        SendInputs(inputs);
+        SendInputs(inputs, logger);
     }
 
     // Callback invoked by EnumWindows for each top-level window; return false to stop enumeration.

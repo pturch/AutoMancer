@@ -1,4 +1,6 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
+using AutoMancer.Engine.Diagnostics;
+
 namespace AutoMancer.Engine;
 
 // Configures the App façade: which providers to use, how long to wait for elements, and how long to pause after each action.
@@ -16,6 +18,9 @@ public sealed class AppOptions
     // Milliseconds to pause after each ClickAsync / TypeAsync call so the UI can settle.
     // Covers SendInput key-queue latency (~10 ms/key) and UI render time. Set to 0 to disable.
     public int ActionDelayMs { get; init; } = 150;
+
+    // Trace of the engine's own retry/resolve process, e.g. for debugging flaky element timing. Defaults to plain text on stderr so it never pollutes a CLI command's stdout; pass null to disable, or your own IEngineLogger to redirect it.
+    public IEngineLogger? Logger { get; init; } = new EngineLogger(Console.Error);
 
     // Sensible defaults for most automation scenarios.
     public static AppOptions Default { get; } = new();

@@ -1,13 +1,13 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
 using AutoMancer.Engine;
+using AutoMancer.Engine.Actions;
 using AutoMancer.Engine.Core;
 using AutoMancer.Engine.Errors;
 using Interop.UIAutomationClient;
 
 namespace AutoMancer.Engine.Tests.Integration;
 
-// Longer workflow tests that exercise the full provider chain, multiple locator strategies,
-// action dispatch, session attachment, and error handling against a live Notepad instance.
+// Longer workflow tests exercising the full provider chain, locator strategies, action dispatch, session attachment, and error handling against live Notepad.
 [Collection("Notepad")]
 [Trait("Category", "Integration")]
 public sealed class NotepadWorkflowTests(NotepadFixture fixture) : IClassFixture<NotepadFixture>
@@ -59,8 +59,7 @@ public sealed class NotepadWorkflowTests(NotepadFixture fixture) : IClassFixture
         Assert.Equal("uia3", handle.ResolvedVia);
     }
 
-    // Win32-only App finds a child window by title — proves the provider works independently of UIA.
-    // Uses the snapshot to discover an actual named child rather than hardcoding an internal window title.
+    // Win32-only App finds a child window by title (proves independence from UIA) — uses the snapshot to discover a real child rather than hardcoding one.
     [Fact]
     public async Task ProviderChain_Win32OnlyResolver_FindsByWindowTitle()
     {
@@ -119,6 +118,26 @@ public sealed class NotepadWorkflowTests(NotepadFixture fixture) : IClassFixture
         Assert.Equal("uia3", handle.ResolvedVia);
     }
 
+    // Locator.ByPath walks the live tree segment by segment — Pane[2] picks the third Pane child of Window (the toolbar/menu bridge), then MenuBar, then the named File item.
+    [Fact]
+    public async Task FindAsync_ByPath_FindsFileMenuItem()
+    {
+        var handle = await _app.FindAsync(Locator.ByPath("Window > Pane[2] > Pane > MenuBar > MenuItem[\"File\"]"));
+
+        Assert.Equal("File", handle.Name);
+        Assert.Equal("uia3", handle.ResolvedVia);
+    }
+
+    // A trailing wildcard segment matches every direct child regardless of control type.
+    [Fact]
+    public async Task FindAllAsync_ByPath_WildcardMatchesEveryChild()
+    {
+        var menuItems = await _app.FindAllAsync(Locator.ByPath("Window > Pane[2] > Pane > MenuBar > *"));
+
+        Assert.True(menuItems.Count >= 3);
+        Assert.Contains(menuItems, e => e.Name == "File");
+    }
+
     // -------------------------------------------------------------------------
     // Snapshot
     // -------------------------------------------------------------------------
@@ -172,6 +191,22 @@ public sealed class NotepadWorkflowTests(NotepadFixture fixture) : IClassFixture
 
         Assert.NotNull(ex.ClosestMatch);
         Assert.Equal("File", ex.ClosestMatch!.ElementName);
+    }
+
+    // A minimized target window throws WindowMinimizedError instead of silently sending input nowhere; the window is always restored afterward.
+    [Fact]
+    public async Task ClickAsync_WindowMinimized_ThrowsWindowMinimizedError()
+    {
+        await _app.SetWindowStateAsync(WindowState.Minimized);
+        try
+        {
+            await Assert.ThrowsAsync<WindowMinimizedError>(() => _app.ClickAsync(Locator.ByControlType("Document")));
+        }
+        finally
+        {
+            await _app.SetWindowStateAsync(WindowState.Normal);
+            await Task.Delay(200);
+        }
     }
 
     // -------------------------------------------------------------------------

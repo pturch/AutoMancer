@@ -1,8 +1,7 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
 namespace AutoMancer.Engine.Actions;
 
-// Tracks keys currently held via App.KeyDownAsync, so a crash or early Kill/Dispose can still release every key still down instead of leaving it stuck at the OS level, as funny as that might be. 
-// Locked because App's async key methods can legitimately be called concurrently (e.g. holding W+A while moving the mouse).
+// Tracks keys held via App.KeyDownAsync so Kill/Dispose can release them all even after a crash; locked since App's key methods can be called concurrently.
 internal sealed class HeldKeyTracker
 {
     private readonly object _gate = new();

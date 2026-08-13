@@ -1,4 +1,6 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
+using AutoMancer.Engine.Diagnostics;
+
 namespace AutoMancer.Engine;
 
 // Configures the App façade: which providers to use, how long to wait for elements, and how long to pause after each action.
@@ -13,11 +15,20 @@ public sealed class AppOptions
     // Milliseconds between retry attempts during implicit wait.
     public int PollIntervalMs { get; init; } = 500;
 
-    // Milliseconds to pause after each ClickAsync / TypeAsync call so the UI can settle.
-    // Covers SendInput key-queue latency (~10 ms/key) and UI render time. Set to 0 to disable.
+    // Milliseconds to pause after each ClickAsync/TypeAsync so the UI can settle (SendInput latency + render time); 0 disables it.
     public int ActionDelayMs { get; init; } = 150;
 
-    // Sensible defaults for most automation scenarios.
+    // Trace of the engine's own retry/resolve process, e.g. for debugging flaky element timing. Defaults to plain text on stderr so it never pollutes a CLI command's stdout; pass null to disable, or your own IEngineLogger to redirect it.
+    public IEngineLogger? Logger { get; init; } = new EngineLogger(Console.Error);
+
+    // When set, AutoMancer queries the Windows Application/System event logs for Critical/Error/Warning entries since the run started and writes them here at DisposeAsync, in the same JSON-lines shape as Logger — a second, independent artifact from the OS itself rather than an inferred Win32 return code. Null (the default) skips the query entirely.
+    public IEngineLogger? WindowsEventLogger { get; init; }
+
+    // When set, merges this run's AutoMancer issues (Logger's own Warn/Error entries) with the Windows Event Log entries (see WindowsEventLogger) into one timestamp-sorted timeline artifact, written here at DisposeAsync — a third artifact for reviewing both together. Null (the default) skips it.
+    public IEngineLogger? CombinedLogger { get; init; }
+
+    // Sensible defaults for most automation scenarios. 
+    // Note: every App created without explicit options shares this one Default.Logger instance — see EngineLogger's _issues comment on why that overlaps PullIssuesSince results across concurrent Apps; pass an explicit Logger per App if you're also using WindowsEventLogger/CombinedLogger.
     public static AppOptions Default { get; } = new();
 
     // Tuned for CI/test-runner use: a longer implicit wait tolerates slower CI machines, and a shorter action delay is safe because tests retry-assert via WaitForAsync/Expect() instead of relying on a fixed settle pause.

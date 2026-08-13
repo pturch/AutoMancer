@@ -18,6 +18,6 @@ public sealed class MouseMoveActionTests
         Assert.Equal(NativeMethods.InputTypeMouse, input.Type);
         Assert.Equal(dx, input.Data.Mouse.Dx);
         Assert.Equal(dy, input.Data.Mouse.Dy);
-        Assert.Equal(NativeMethods.MouseEventMove, input.Data.Mouse.Flags);
+        Assert.Equal(NativeMethods.MouseEventFlags.Move, input.Data.Mouse.Flags);
     }
 }

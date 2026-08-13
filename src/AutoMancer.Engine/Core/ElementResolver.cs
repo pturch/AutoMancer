@@ -10,10 +10,10 @@ public sealed class ElementResolver
 {
     private readonly IReadOnlyList<IElementProvider> _providers;
     private readonly ElementProviderOptions _options;
-    private readonly EngineLogger? _logger;
+    private readonly IEngineLogger? _logger;
 
     // Orders providers by ElementProviderOptions.ProviderChain, dropping any chain entry with no matching provider.
-    public ElementResolver(IEnumerable<IElementProvider> providers, ElementProviderOptions? options = null, EngineLogger? logger = null)
+    public ElementResolver(IEnumerable<IElementProvider> providers, ElementProviderOptions? options = null, IEngineLogger? logger = null)
     {
         _options = options ?? ElementProviderOptions.Default;
         _logger = logger;
@@ -41,6 +41,7 @@ public sealed class ElementResolver
                 var found = await provider.FindElementAsync(locator, session, ct).ConfigureAwait(false);
                 if (found is not null)
                 {
+                    found.Logger = _logger;
                     _logger?.Info("Element resolved", new { provider = provider.ProviderName, locator.Strategy, locator.Value, elapsedMs = stopwatch.ElapsedMilliseconds });
                     return found;
                 }
@@ -99,6 +100,7 @@ public sealed class ElementResolver
                 var found = await provider.FindElementAsync(locator, session, ct).ConfigureAwait(false);
                 if (found is not null && condition(found))
                 {
+                    found.Logger = _logger;
                     _logger?.Info("Wait condition met", new { provider = provider.ProviderName, locator.Strategy, locator.Value, elapsedMs = stopwatch.ElapsedMilliseconds });
                     return found;
                 }
@@ -118,7 +120,12 @@ public sealed class ElementResolver
         {
             var matches = await provider.FindElementsAsync(locator, session, ct).ConfigureAwait(false);
             if (matches.Count > 0)
+            {
+                foreach (var match in matches)
+                    match.Logger = _logger;
+                _logger?.Info("Elements found", new { provider = provider.ProviderName, locator.Strategy, locator.Value, count = matches.Count });
                 return matches;
+            }
         }
 
         return Array.Empty<ElementHandle>();
@@ -131,7 +138,10 @@ public sealed class ElementResolver
         {
             var snapshot = await provider.SnapshotTreeAsync(session, ct).ConfigureAwait(false);
             if (snapshot.Count > 0)
+            {
+                _logger?.Info("Snapshot taken", new { provider = provider.ProviderName, count = snapshot.Count });
                 return snapshot;
+            }
         }
 
         return null;

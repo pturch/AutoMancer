@@ -2,9 +2,14 @@
   <Folder Name="/src/">
     <Project Path="src/AutoMancer.Cli/AutoMancer.Cli.csproj" />
     <Project Path="src/AutoMancer.Engine/AutoMancer.Engine.csproj" />
+    <Project Path="src/AutoMancer.Testing/AutoMancer.Testing.csproj" />
+    <Project Path="src/AutoMancer.Testing.XUnit/AutoMancer.Testing.XUnit.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/AutoMancer.Cli.Tests/AutoMancer.Cli.Tests.csproj" />
     <Project Path="tests/AutoMancer.Engine.Tests/AutoMancer.Engine.Tests.csproj" />
+  </Folder>
+  <Folder Name="/samples/">
+    <Project Path="samples/ConsumerNotepadTests/ConsumerNotepadTests.csproj" />
   </Folder>
 </Solution>

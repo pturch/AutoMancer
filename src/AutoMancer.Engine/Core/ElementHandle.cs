@@ -1,4 +1,6 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
+using AutoMancer.Engine.Diagnostics;
+
 namespace AutoMancer.Engine.Core;
 
 // A logical-pixel bounding box, used for element rects and window geometry.
@@ -17,11 +19,18 @@ public sealed class ElementHandle
     public string? ControlType { get; init; }
     public Rect BoundingRect { get; init; }
 
+    // Whether the element currently accepts input; null when the resolving provider can't determine this (e.g. Win32 has no equivalent to UIA's IsOffscreen).
+    public bool? IsEnabled { get; init; }
+    public bool? IsOffscreen { get; init; }
+
     // The provider that resolved this element — retained for re-finding and diagnostics.
     internal IElementProvider? Provider { get; init; }
 
     // The operator for this element's native handle type — null for Win32 and Visual elements, which fall back to SendInput.
     internal IElementOperator? Operator { get; init; }
+
+    // The logger this element was resolved with, if any — stamped by ElementResolver so actions can log without taking a separate logger parameter.
+    internal IEngineLogger? Logger { get; set; }
 
     // Constructed by providers only — callers receive handles exclusively from the resolver.
     internal ElementHandle(string id, string resolvedVia, object nativeHandle)

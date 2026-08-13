@@ -29,7 +29,7 @@ AutoMancer/
 │   ├── AutoMancer.Engine/
 │   │   ├── AutoMancer.Engine.csproj
 │   │   ├── Core/
-│   │   │   ├── LocatorStrategy.cs        enum: Name, AutomationId, ClassName, ControlType, RuntimeId, AutoMancerPath, AutomancerXPath
+│   │   │   ├── LocatorStrategy.cs        enum: Name, AutomationId, ClassName, ControlType, RuntimeId, AutoMancerPath, AutoMancerXPath
 │   │   │   ├── Locator.cs                value object + factory methods (incl. ByRuntimeId, ByXPath)
 │   │   │   ├── ElementHandle.cs          resolved element + Rect struct; holds Provider and Operator backrefs (internal)
 │   │   │   ├── ElementProviderOptions.cs timeouts, chain, DPI flag
@@ -127,7 +127,7 @@ dotnet build AutoMancer.slnx
 - `src/AutoMancer.Engine/Core/LocatorStrategy.cs` — enum: Name, AutomationId, ClassName, ControlType, AutoMancerPath
 - `src/AutoMancer.Engine/Core/Locator.cs` — sealed record with `ByName`, `ByAutomationId`, `ByControlType`, `ByClassName`, `ByPath` factory methods
 - `src/AutoMancer.Engine/Core/ElementHandle.cs` — opaque `Id`, `ResolvedVia`, `NativeHandle`, metadata properties, and the `Rect` struct
-- `src/AutoMancer.Engine/Core/ElementProviderOptions.cs` — `ProviderChain`, `ImplicitWaitMs`, `PollIntervalMs`, `DpiNormalize`; static `Default`
+- `src/AutoMancer.Engine/Core/ElementProviderOptions.cs` — `ProviderChain`, `ImplicitWaitMs`, `PollIntervalMs`; static `Default`
 
 
 - [ ] **Implement and verify**
@@ -298,7 +298,7 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration"
 
 ### Task 11: ClickAction and TypeAction
 
-**What:** The two primary interaction actions. Each action checks `element.Operator` first — if non-null, it delegates to the operator's native pattern (InvokePattern for click, ValuePattern for type). If the operator returns `false` (pattern not supported) or is `null` (Win32/Visual elements), the action falls back to synthesized `SendInput`. Both use `DpiHelper` when `DpiNormalize` is enabled.
+**What:** The two primary interaction actions. Each action checks `element.Operator` first — if non-null, it delegates to the operator's native pattern (InvokePattern for click, ValuePattern for type). If the operator returns `false` (pattern not supported) or is `null` (Win32/Visual elements), the action falls back to synthesized `SendInput`. DPI correctness comes from `DpiAwareness`'s process-wide Per-Monitor-V2 declaration (called once from `AppSession`'s static constructor), which makes every `BoundingRect` and `SendInput` coordinate physical-pixel-native by construction — `ClickAction` only needs to normalize those physical pixels into `SendInput`'s 0–65535 absolute coordinate space, no logical→physical conversion step required. `DpiHelper`'s `LogicalToPhysical`/`PhysicalToLogical` are kept as a standalone conversion utility, not wired into the click/type path, reserved for the Stage 2.7 DPI compat matrix (comparing logical coordinates across DPI settings).
 
 **Creates:**
 - `src/AutoMancer.Engine/Actions/ClickAction.cs` — `ClickType` enum; `element.Operator?.TryClickAsync` → SendInput mouse fallback; `GetCenter` via `BoundingRect`
@@ -477,11 +477,11 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration"
 
 **Creates:**
 - `src/AutoMancer.Engine/Core/XPathEvaluator.cs` — `Evaluate(xpath, snapshots)` → `IReadOnlyList<int>` (indices into the snapshot list); uses `System.Xml.Linq`
-- `src/AutoMancer.Engine/Core/LocatorStrategy.cs` — add `AutomancerXPath`
+- `src/AutoMancer.Engine/Core/LocatorStrategy.cs` — add `AutoMancerXPath`
 - `src/AutoMancer.Engine/Core/Locator.cs` — add `ByXPath(string xpath)` factory
 
 **Modifies:**
-- `src/AutoMancer.Engine/Providers/Uia3Provider.cs` — add `AutomancerXPath` path: snapshot tree, evaluate XPath, return element at matched index
+- `src/AutoMancer.Engine/Providers/Uia3Provider.cs` — add `AutoMancerXPath` path: snapshot tree, evaluate XPath, return element at matched index
 - `tests/AutoMancer.Engine.Tests/Core/XPathEvaluatorTests.cs` — XPath on a known snapshot tree: `//Button`, `//Button[0]`, `//Pane/Button[@Name='OK']`
 
 

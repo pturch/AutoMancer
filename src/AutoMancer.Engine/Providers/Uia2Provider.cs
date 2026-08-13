@@ -170,6 +170,8 @@ public sealed class Uia2Provider : IElementProvider
             ClassName = props.ClassName,
             ControlType = ControlTypeNames.GetValueOrDefault(props.ControlType.Id, "Unknown"),
             BoundingRect = ToRect(props.BoundingRectangle),
+            IsEnabled = props.IsEnabled,
+            IsOffscreen = props.IsOffscreen,
             Provider = this,
             Operator = _op,
         };

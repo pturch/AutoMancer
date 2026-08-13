@@ -1,6 +1,7 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
 using System.Diagnostics;
 using AutoMancer.Engine.Core;
+using AutoMancer.Engine.Diagnostics;
 using AutoMancer.Engine.Errors;
 using Moq;
 
@@ -168,5 +169,111 @@ public sealed class ElementResolverTests
         var resolver = new ElementResolver([provider.Object], options);
 
         await Assert.ThrowsAsync<ElementConditionTimeoutError>(() => resolver.WaitForAsync(TestLocator, _ => true, Session));
+    }
+
+    [Fact]
+    public async Task FindAsync_Success_WritesInfoLogEntry()
+    {
+        var writer = new StringWriter();
+        var logger = new EngineLogger(writer);
+        var provider = MockProvider("uia3", Handle("1"));
+        var resolver = new ElementResolver([provider.Object], new ElementProviderOptions { ProviderChain = ["uia3"] }, logger);
+
+        await resolver.FindAsync(TestLocator, Session);
+
+        Assert.Contains("Element resolved", writer.ToString());
+    }
+
+    [Fact]
+    public async Task WaitUntilGoneAsync_Success_WritesInfoLogEntry()
+    {
+        var writer = new StringWriter();
+        var logger = new EngineLogger(writer);
+        var provider = MockProvider("uia3", null);
+        var resolver = new ElementResolver([provider.Object], new ElementProviderOptions { ProviderChain = ["uia3"] }, logger);
+
+        await resolver.WaitUntilGoneAsync(TestLocator, Session);
+
+        Assert.Contains("Element gone", writer.ToString());
+    }
+
+    [Fact]
+    public async Task WaitForAsync_Success_WritesInfoLogEntry()
+    {
+        var writer = new StringWriter();
+        var logger = new EngineLogger(writer);
+        var provider = MockProvider("uia3", Handle("1"));
+        var resolver = new ElementResolver([provider.Object], new ElementProviderOptions { ProviderChain = ["uia3"] }, logger);
+
+        await resolver.WaitForAsync(TestLocator, e => e.Id == "1", Session);
+
+        Assert.Contains("Wait condition met", writer.ToString());
+    }
+
+    [Fact]
+    public async Task FindAllAsync_Success_WritesInfoLogEntryWithMatchCount()
+    {
+        var writer = new StringWriter();
+        var logger = new EngineLogger(writer);
+        var provider = new Mock<IElementProvider>();
+        provider.SetupGet(p => p.ProviderName).Returns("uia3");
+        provider.Setup(p => p.FindElementsAsync(TestLocator, Session, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([Handle("1"), Handle("2")]);
+        var resolver = new ElementResolver([provider.Object], new ElementProviderOptions { ProviderChain = ["uia3"] }, logger);
+
+        var results = await resolver.FindAllAsync(TestLocator, Session);
+
+        Assert.Equal(2, results.Count);
+        Assert.Contains("Elements found", writer.ToString());
+        Assert.Contains("\"count\":2", writer.ToString());
+    }
+
+    [Fact]
+    public async Task FindAllAsync_NoMatches_WritesNoLogEntry()
+    {
+        var writer = new StringWriter();
+        var logger = new EngineLogger(writer);
+        var provider = new Mock<IElementProvider>();
+        provider.SetupGet(p => p.ProviderName).Returns("uia3");
+        provider.Setup(p => p.FindElementsAsync(TestLocator, Session, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<ElementHandle>());
+        var resolver = new ElementResolver([provider.Object], new ElementProviderOptions { ProviderChain = ["uia3"] }, logger);
+
+        var results = await resolver.FindAllAsync(TestLocator, Session);
+
+        Assert.Empty(results);
+        Assert.Empty(writer.ToString());
+    }
+
+    [Fact]
+    public async Task TrySnapshotAsync_Success_WritesInfoLogEntryWithSnapshotCount()
+    {
+        var writer = new StringWriter();
+        var logger = new EngineLogger(writer);
+        var provider = new Mock<IElementProvider>();
+        provider.SetupGet(p => p.ProviderName).Returns("uia3");
+        var snapshot = new ElementSnapshot("1", "root", null, null, "Window", default, Array.Empty<ElementSnapshot>());
+        provider.Setup(p => p.SnapshotTreeAsync(Session, It.IsAny<CancellationToken>())).ReturnsAsync([snapshot]);
+        var resolver = new ElementResolver([provider.Object], new ElementProviderOptions { ProviderChain = ["uia3"] }, logger);
+
+        var result = await resolver.TrySnapshotAsync(Session);
+
+        Assert.NotNull(result);
+        Assert.Contains("Snapshot taken", writer.ToString());
+        Assert.Contains("\"count\":1", writer.ToString());
+    }
+
+    [Fact]
+    public async Task TrySnapshotAsync_AllProvidersEmpty_WritesNoLogEntry()
+    {
+        var writer = new StringWriter();
+        var logger = new EngineLogger(writer);
+        var provider = MockProvider("uia3", null);
+        var resolver = new ElementResolver([provider.Object], new ElementProviderOptions { ProviderChain = ["uia3"] }, logger);
+
+        var result = await resolver.TrySnapshotAsync(Session);
+
+        Assert.Null(result);
+        Assert.Empty(writer.ToString());
     }
 }

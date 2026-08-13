@@ -14,7 +14,7 @@ public sealed class FindCommandTests
     [InlineData("control", LocatorStrategy.ControlType)]
     [InlineData("path", LocatorStrategy.AutoMancerPath)]
     [InlineData("runtime", LocatorStrategy.RuntimeId)]
-    [InlineData("xpath", LocatorStrategy.AutomancerXPath)]
+    [InlineData("xpath", LocatorStrategy.AutoMancerXPath)]
     public void ParseLocator_KnownStrategy_ReturnsMatchingLocator(string by, LocatorStrategy expected)
     {
         var locator = FindCommand.ParseLocator(by, "some-value");

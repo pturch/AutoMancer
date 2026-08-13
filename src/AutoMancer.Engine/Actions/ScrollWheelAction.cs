@@ -21,13 +21,13 @@ public static class ScrollWheelAction
         var (normX, normY) = ClickAction.Normalize(x, y);
         var inputs = new List<NativeMethods.INPUT>
         {
-            ClickAction.MouseInputAt(normX, normY, NativeMethods.MouseEventMove),
+            ClickAction.MouseInputAt(normX, normY, NativeMethods.MouseEventFlags.Move),
         };
 
         if (deltaY != 0)
-            inputs.Add(ClickAction.MouseInputAt(normX, normY, NativeMethods.MouseEventWheel, unchecked((uint)(deltaY * NativeMethods.WheelDelta))));
+            inputs.Add(ClickAction.MouseInputAt(normX, normY, NativeMethods.MouseEventFlags.Wheel, unchecked((uint)(deltaY * NativeMethods.WheelDelta))));
         if (deltaX != 0)
-            inputs.Add(ClickAction.MouseInputAt(normX, normY, NativeMethods.MouseEventHWheel, unchecked((uint)(deltaX * NativeMethods.WheelDelta))));
+            inputs.Add(ClickAction.MouseInputAt(normX, normY, NativeMethods.MouseEventFlags.HWheel, unchecked((uint)(deltaX * NativeMethods.WheelDelta))));
 
         NativeMethods.SendInputs(inputs.ToArray(), logger);
     }, ct);

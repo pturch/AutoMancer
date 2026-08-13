@@ -2,6 +2,7 @@
 using System.Runtime.InteropServices;
 using System.Text;
 using AutoMancer.Engine.Diagnostics;
+using AutoMancer.Engine.Errors;
 
 namespace AutoMancer.Engine.Providers;
 
@@ -26,6 +27,10 @@ internal static class NativeMethods
     // Reports whether windowHandle is currently visible.
     [DllImport("user32.dll")]
     internal static extern bool IsWindowVisible(IntPtr windowHandle);
+
+    // Reports whether windowHandle currently accepts mouse/keyboard input (not disabled).
+    [DllImport("user32.dll")]
+    internal static extern bool IsWindowEnabled(IntPtr windowHandle);
 
     // Reports whether windowHandle is currently minimized.
     [DllImport("user32.dll")]
@@ -84,12 +89,22 @@ internal static class NativeMethods
     [DllImport("user32.dll", SetLastError = true)]
     internal static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
 
-    // Submits one or more INPUT events to SendInput as a single batch, warning if the OS delivers fewer than requested (e.g. blocked by UIPI).
+    // Submits one or more INPUT events to SendInput as a single batch; throws InputDeliveryError if the OS delivers fewer than requested (e.g. blocked by UIPI).
     internal static void SendInputs(INPUT[] inputs, IEngineLogger? logger = null)
     {
         var sent = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
         if (sent != inputs.Length)
-            logger?.Warn("SendInput delivered fewer events than requested", new { requested = inputs.Length, sent, win32Error = Marshal.GetLastWin32Error() });
+        {
+            logger?.Warn("SendInput delivered fewer events than requested", new { requested = inputs.Length, sent });
+            throw new InputDeliveryError(inputs.Length, (int)sent);
+        }
+    }
+
+    // Throws Win32CallError naming operation and the current GetLastWin32Error() code when a bool-returning P/Invoke call reports failure.
+    internal static void ThrowIfFailed(this bool success, string operation)
+    {
+        if (!success)
+            throw new Win32CallError(operation, Marshal.GetLastWin32Error());
     }
 
     // Reports whether vKey is currently down (high bit of the return value) — global OS state, independent of which window has focus.
@@ -117,7 +132,7 @@ internal static class NativeMethods
         public int Dx;
         public int Dy;
         public uint MouseData;
-        public uint Flags;
+        public MouseEventFlags Flags;
         public uint Time;
         public IntPtr ExtraInfo;
     }
@@ -127,7 +142,7 @@ internal static class NativeMethods
     {
         public ushort Vk;
         public ushort Scan;
-        public uint Flags;
+        public KeyEventFlags Flags;
         public uint Time;
         public IntPtr ExtraInfo;
     }
@@ -144,31 +159,42 @@ internal static class NativeMethods
     internal const uint InputTypeKeyboard = 1;
     internal const uint InputTypeHardware = 2;
 
-    internal const uint MouseEventMove = 0x0001;
-    internal const uint MouseEventLeftDown = 0x0002;
-    internal const uint MouseEventLeftUp = 0x0004;
-    internal const uint MouseEventRightDown = 0x0008;
-    internal const uint MouseEventRightUp = 0x0010;
-    internal const uint MouseEventMiddleDown = 0x0020;
-    internal const uint MouseEventMiddleUp = 0x0040;
-    internal const uint MouseEventXDown = 0x0080;
-    internal const uint MouseEventXUp = 0x0100;
-    internal const uint MouseEventWheel = 0x0800;
-    internal const uint MouseEventHWheel = 0x01000;
-    internal const uint MouseEventAbsolute = 0x8000;
+    // MOUSEINPUT.Flags — bit flags describing which mouse event(s) an INPUT carries, per the Win32 MOUSEEVENTF_* contract.
+    [Flags]
+    internal enum MouseEventFlags : uint
+    {
+        Move       = 0x0001,
+        LeftDown   = 0x0002,
+        LeftUp     = 0x0004,
+        RightDown  = 0x0008,
+        RightUp    = 0x0010,
+        MiddleDown = 0x0020,
+        MiddleUp   = 0x0040,
+        XDown      = 0x0080,
+        XUp        = 0x0100,
+        Wheel      = 0x0800,
+        HWheel     = 0x1000,
+        Absolute   = 0x8000,
+    }
 
-    // mouseData values for MouseEventXDown/XUp — identifies which X button (Back/Forward).
+    // mouseData values for MouseEventFlags.XDown/XUp — identifies which X button (Back/Forward).
     internal const uint XButton1 = 0x0001;
     internal const uint XButton2 = 0x0002;
 
     // One notch of a standard mouse wheel, per the Win32 WHEEL_DELTA contract.
     internal const int WheelDelta = 120;
 
-    internal const uint KeyEventExtendedKey = 0x0001;
-    internal const uint KeyEventKeyUp = 0x0002;
-    internal const uint KeyEventUnicode = 0x0004;
-    internal const uint KeyEventScancode = 0x0008;
+    // KEYBDINPUT.Flags — bit flags describing how a keyboard INPUT should be interpreted, per the Win32 KEYEVENTF_* contract.
+    [Flags]
+    internal enum KeyEventFlags : uint
+    {
+        ExtendedKey = 0x0001,
+        KeyUp       = 0x0002,
+        Unicode     = 0x0004,
+        Scancode    = 0x0008,
+    }
 
+    // VK_* codes stay plain consts (not a MouseEventFlags/KeyEventFlags-style enum) since they're never OR'd and VirtualKeyA needs plain arithmetic for the A-Z range.
     internal const ushort VirtualKeyBackspace = 0x08;
     internal const ushort VirtualKeyTab       = 0x09;
     internal const ushort VirtualKeyReturn    = 0x0D;
@@ -200,9 +226,9 @@ internal static class NativeMethods
         INPUT[] inputs =
         [
             // MOVE first — WinUI3 hit-testing needs the pointer over the target before LEFTDOWN, or the click is swallowed.
-            new() { Type = InputTypeMouse, Data = new InputUnion { Mouse = new MOUSEINPUT { Dx = nx, Dy = ny, Flags = MouseEventMove     | MouseEventAbsolute } } },
-            new() { Type = InputTypeMouse, Data = new InputUnion { Mouse = new MOUSEINPUT { Dx = nx, Dy = ny, Flags = MouseEventLeftDown | MouseEventAbsolute } } },
-            new() { Type = InputTypeMouse, Data = new InputUnion { Mouse = new MOUSEINPUT { Dx = nx, Dy = ny, Flags = MouseEventLeftUp   | MouseEventAbsolute } } },
+            new() { Type = InputTypeMouse, Data = new InputUnion { Mouse = new MOUSEINPUT { Dx = nx, Dy = ny, Flags = MouseEventFlags.Move     | MouseEventFlags.Absolute } } },
+            new() { Type = InputTypeMouse, Data = new InputUnion { Mouse = new MOUSEINPUT { Dx = nx, Dy = ny, Flags = MouseEventFlags.LeftDown | MouseEventFlags.Absolute } } },
+            new() { Type = InputTypeMouse, Data = new InputUnion { Mouse = new MOUSEINPUT { Dx = nx, Dy = ny, Flags = MouseEventFlags.LeftUp   | MouseEventFlags.Absolute } } },
         ];
         SendInputs(inputs, logger);
     }
@@ -220,7 +246,7 @@ internal static class NativeMethods
 
     // Moves, resizes, or repositions windowHandle without changing its Z-order or foreground state.
     [DllImport("user32.dll", SetLastError = true)]
-    internal static extern bool SetWindowPos(IntPtr windowHandle, IntPtr insertAfterWindowHandle, int X, int Y, int cx, int cy, uint uFlags);
+    internal static extern bool SetWindowPos(IntPtr windowHandle, IntPtr insertAfterWindowHandle, int X, int Y, int cx, int cy, SetWindowPosFlags uFlags);
 
     // Changes the show state of windowHandle (minimize, maximize, restore, etc.).
     [DllImport("user32.dll")]
@@ -232,10 +258,16 @@ internal static class NativeMethods
 
     internal const uint WmClose = 0x0010;
 
-    internal const uint SwpNoSize     = 0x0001;
-    internal const uint SwpNoMove     = 0x0002;
-    internal const uint SwpNoZOrder   = 0x0004;
-    internal const uint SwpNoActivate = 0x0010;
+    // SetWindowPos's uFlags — bit flags controlling which aspects of the window are left unchanged, per the Win32 SWP_* contract.
+    [Flags]
+    internal enum SetWindowPosFlags : uint
+    {
+        None       = 0,
+        NoSize     = 0x0001,
+        NoMove     = 0x0002,
+        NoZOrder   = 0x0004,
+        NoActivate = 0x0010,
+    }
 
     internal const int SwRestore  = 9;
     internal const int SwMinimize = 2;

@@ -18,6 +18,7 @@ public sealed class XunitEngineLogger : IEngineLogger
     public void Info(string message, object? data = null) => _inner.Info(message, data);
     public void Warn(string message, object? data = null) => _inner.Warn(message, data);
     public void Error(string message, object? data = null) => _inner.Error(message, data);
+    public IReadOnlyList<(DateTime Timestamp, LogLevel Level, string Message, object? Data)> PullIssuesSince(DateTime since) => _inner.PullIssuesSince(since);
 
     // Forwards each completed line to ITestOutputHelper.WriteLine; EngineLogger only ever calls WriteLine(string), never the character-at-a-time Write members.
     private sealed class TestOutputWriter(ITestOutputHelper output) : TextWriter

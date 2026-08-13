@@ -106,7 +106,7 @@ All C# code (engine + daemon) is tested in C# with xunit + Moq. SDK client code 
 | Layer | Test framework | Location |
 |---|---|---|
 | Engine (core library) | C# / xunit 2.8 / Moq 4.20 | `tests/AutoMancer.Engine.Tests/` |
-| Test adapter (`.Testing` / `.Testing.XUnit`) | C# / xunit 2.8 | `tests/AutoMancer.Testing.Tests/` |
+| Test adapter (`.Testing` / `.Testing.XUnit`) | C# / xunit 2.8 / Moq 4.20 | `tests/AutoMancer.Engine.Tests/TestingAdapter/` — folded into the engine test project rather than a separate one, since both `.Testing` and `.Testing.XUnit` are thin layers over `App`/`Locator` and `App.CreateForTesting` already gives them the same fake-provider seam the engine tests use |
 | Daemon (HTTP server) | C# / xunit 2.8 / Moq 4.20 | `tests/AutoMancer.Daemon.Tests/` |
 | Python SDK | Python / pytest | `sdk/python/tests/` |
 | TypeScript SDK | TypeScript / vitest | `sdk/typescript/tests/` |
@@ -189,14 +189,14 @@ All C# code (engine + daemon) is tested in C# with xunit + Moq. SDK client code 
 ### Stage 1.5 — Extended Locator Strategies
 > **Unlocks:** Complex element addressing — positional paths, re-finding by ID, XPath queries.
 > **Estimated time:** 2–3 hours
-> **Done when:** `RuntimeId` and `AutomancerXPath` find correct elements in Notepad end-to-end. `AutoMancerPath` parser is complete; provider wiring (segment-by-segment tree traversal) is deferred to Stage 1.6.
+> **Done when:** `RuntimeId` and `AutoMancerXPath` find correct elements in Notepad end-to-end. `AutoMancerPath` parser is complete; provider wiring (segment-by-segment tree traversal) is deferred to Stage 1.6.
 
 | Batch | Work | Plan ref |
 |---|---|---|
 | 1.5.1 | `AutoMancerPathParser` — `"Window > Pane[2] > Button[\"OK\"]"` syntax; unit tests | Engine Task 15 |
 | 1.5.2 | `RuntimeId` strategy — add to enum, `Locator.ByRuntimeId`, `UIA_RuntimeIdPropertyId` in both providers | Engine Task 17 |
 | 1.5.3 | `XPathEvaluator` — UIA tree snapshot → `XDocument` → XPath → element indices; unit tests | Engine Task 18 |
-| 1.5.4 | Wire `AutomancerXPath` into `Uia3Provider.FindElementAsync`; add `CollectElements` helper for index→element mapping | Engine Task 18 |
+| 1.5.4 | Wire `AutoMancerXPath` into `Uia3Provider.FindElementAsync`; add `CollectElements` helper for index→element mapping | Engine Task 18 |
 
 **After 1.5.4:** `Locator.ByXPath("//MenuItem[@Name='File']")` finds the File menu in Notepad. (File is a `MenuItem` in WinUI3 Notepad, not a `Button`.)
 
@@ -374,7 +374,7 @@ All C# code (engine + daemon) is tested in C# with xunit + Moq. SDK client code 
 | 2.6.3 | Template matching — `OpenCvSharp4.Windows`; `automancer:image` strategy (base64 PNG template) | Engine spec §4.3 |
 | 2.6.4 | Add `visual` to default `ElementProviderOptions.ProviderChain`; integration test with a no-UIA test app | Engine spec §4.3 |
 | 2.6.5 | `App.WaitForIdleAsync()` — diffs consecutive `ScreenshotAsync()` captures at a short interval until two frames match within a pixel-difference threshold, or a timeout is hit; replaces the ad-hoc `Task.Delay(300) // flyout animation` waits already scattered through the integration test suite with a real settledness check | — |
-| 2.6.6 | Visual regression snapshot assertion — captures the current window/element region and pixel-diffs it against a stored baseline PNG, failing past a configurable difference threshold; reuses the screenshot/pixel-compare plumbing built for template matching in 2.6.3 | — |
+| 2.6.6 | Visual regression snapshot assertion — captures the current window/element region and pixel-diffs it against a stored baseline PNG, failing past a configurable difference threshold; reuses the screenshot/pixel-compare plumbing built for template matching in 2.6.3. `ScreenshotAsync()` captures physical pixels, and the same logical window is a different physical size at 100% vs. 150% DPI — normalize both the baseline and the live capture to logical scale via `DpiHelper.PhysicalToLogical` (kept unwired for exactly this) before diffing, or the assertion spuriously fails whenever it runs on a differently-scaled machine than the one that recorded the baseline | — |
 
 **This stage is entirely engine-side** — like the rest of Phase 2, it only touches `AutoMancer.Engine`. Exposing `VisualProvider` over HTTP is Phase 3's job (see batch 3.2.8), since that requires the daemon project to exist first.
 
@@ -524,7 +524,7 @@ All C# code (engine + daemon) is tested in C# with xunit + Moq. SDK client code 
 - [ ] `WaitUntilGoneAsync()` resolves correctly when an element disappears
 - [ ] `WaitForAsync(locator, condition)` resolves once the condition is true, not merely once the element is found
 - [ ] `AutoMancer.Testing` / `AutoMancer.Testing.XUnit` ship; `Expect(locator).ToHaveName(...)` and direct `App`/`Locator` calls both work in the same test method against the same engine surface
-- [ ] `dotnet test tests/AutoMancer.Testing.Tests/` — all tests green
+- [ ] `dotnet test tests/AutoMancer.Engine.Tests/ --filter "FullyQualifiedName~TestingAdapter"` — all tests green
 - [ ] Apache-2.0 license header present in all `.cs` source files
 
 **Phase 2 complete when:**

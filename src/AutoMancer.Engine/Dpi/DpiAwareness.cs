@@ -3,13 +3,10 @@ using AutoMancer.Engine.Providers;
 
 namespace AutoMancer.Engine.Dpi;
 
+// Declares the process DPI-aware once at startup so coordinate APIs report true physical pixels.
 internal static class DpiAwareness
 {
-    // Declares the process Per-Monitor-V2 DPI aware — called once from AppSession's static constructor, before any
-    // UIA or Win32 coordinate query runs — so bounding rects and SendInput coordinates agree on true physical pixels
-    // with no per-process virtualization (the default for an unmanifested process would otherwise scale every rect
-    // as if every monitor were 96 DPI). Safe to call more than once: SetProcessDpiAwarenessContext just fails after
-    // the first successful call.
+    // Called once from AppSession's static constructor, before any coordinate query runs; safe to call more than once.
     internal static void EnsureConfigured() =>
         NativeMethods.SetProcessDpiAwarenessContext(NativeMethods.DpiAwarenessContextPerMonitorAwareV2);
 }

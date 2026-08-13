@@ -18,7 +18,7 @@ public static class HoverAction
         ClickAction.EnsureForeground(element);
 
         var (x, y) = ClickAction.GetCenter(element);
-        var input = ClickAction.MouseInput(x, y, NativeMethods.MouseEventMove);
+        var input = ClickAction.MouseInput(x, y, NativeMethods.MouseEventFlags.Move);
         NativeMethods.SendInputs([input], logger);
     }, ct);
 }

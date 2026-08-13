@@ -6,8 +6,7 @@ using Xunit.Abstractions;
 
 namespace AutoMancer.Engine.Tests.Integration;
 
-// Diagnostic: launches Paint, snapshots the full UIA3 element tree, and writes it to %TEMP% as a text file.
-// Run this once to find the correct AutomationIds for toolbar buttons.
+// Diagnostic: launches Paint, snapshots the full UIA3 tree, and writes it to %TEMP% as text — run once to find toolbar AutomationIds.
 [Collection("Paint")]
 [Trait("Category", "Integration")]
 public sealed class PaintTreeDumpTests(ITestOutputHelper output) : IAsyncLifetime

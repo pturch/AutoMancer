@@ -19,7 +19,7 @@ public sealed class NotepadXmlDumpTests(NotepadFixture fixture, ITestOutputHelpe
         Assert.NotEmpty(xml);
     }
 
-    // Verifies that the AutomancerXPath locator strategy resolves a live element end-to-end via Uia3Provider.
+    // Verifies that the AutoMancerXPath locator strategy resolves a live element end-to-end via Uia3Provider.
     [Fact]
     public async Task XPathLocator_FindsFileMenuItem()
     {

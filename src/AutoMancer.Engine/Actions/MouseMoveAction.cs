@@ -21,7 +21,7 @@ public static class MouseMoveAction
         Type = NativeMethods.InputTypeMouse,
         Data = new NativeMethods.InputUnion
         {
-            Mouse = new NativeMethods.MOUSEINPUT { Dx = dx, Dy = dy, Flags = NativeMethods.MouseEventMove },
+            Mouse = new NativeMethods.MOUSEINPUT { Dx = dx, Dy = dy, Flags = NativeMethods.MouseEventFlags.Move },
         },
     };
 }

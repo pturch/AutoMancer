@@ -27,9 +27,9 @@ public static class DoubleClickAction
         var (normX, normY) = ClickAction.Normalize(x, y);
         NativeMethods.INPUT[] click =
         [
-            ClickAction.MouseInputAt(normX, normY, NativeMethods.MouseEventMove),
-            ClickAction.MouseInputAt(normX, normY, NativeMethods.MouseEventLeftDown),
-            ClickAction.MouseInputAt(normX, normY, NativeMethods.MouseEventLeftUp),
+            ClickAction.MouseInputAt(normX, normY, NativeMethods.MouseEventFlags.Move),
+            ClickAction.MouseInputAt(normX, normY, NativeMethods.MouseEventFlags.LeftDown),
+            ClickAction.MouseInputAt(normX, normY, NativeMethods.MouseEventFlags.LeftUp),
         ];
 
         NativeMethods.SendInputs(click, logger);

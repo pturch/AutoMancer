@@ -19,6 +19,10 @@ public sealed class ElementHandle
     public string? ControlType { get; init; }
     public Rect BoundingRect { get; init; }
 
+    // Whether the element currently accepts input; null when the resolving provider can't determine this (e.g. Win32 has no equivalent to UIA's IsOffscreen).
+    public bool? IsEnabled { get; init; }
+    public bool? IsOffscreen { get; init; }
+
     // The provider that resolved this element — retained for re-finding and diagnostics.
     internal IElementProvider? Provider { get; init; }
 

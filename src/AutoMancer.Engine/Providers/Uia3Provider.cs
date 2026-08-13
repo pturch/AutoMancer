@@ -69,8 +69,10 @@ public sealed class Uia3Provider : IElementProvider
     {
         return Task.Run(() =>
         {
-            if (locator.Strategy == LocatorStrategy.AutomancerXPath)
+            if (locator.Strategy == LocatorStrategy.AutoMancerXPath)
                 return FindByXPath(locator.Value, session);
+            if (locator.Strategy == LocatorStrategy.AutoMancerPath)
+                return FindByPath(locator.Value, session);
 
             var condition = BuildCondition(locator);
             if (condition is null)
@@ -87,8 +89,10 @@ public sealed class Uia3Provider : IElementProvider
     {
         return Task.Run(() =>
         {
-            if (locator.Strategy == LocatorStrategy.AutomancerXPath)
+            if (locator.Strategy == LocatorStrategy.AutoMancerXPath)
                 return (IReadOnlyList<ElementHandle>)FindAllByXPath(locator.Value, session);
+            if (locator.Strategy == LocatorStrategy.AutoMancerPath)
+                return (IReadOnlyList<ElementHandle>)FindAllByPath(locator.Value, session);
 
             var condition = BuildCondition(locator);
             var root = condition is null ? null : Automation.ElementFromHandle(session.RootWindowHandle);
@@ -125,6 +129,71 @@ public sealed class Uia3Provider : IElementProvider
         var indices = XPathEvaluator.Evaluate(xpath, [snapshot]);
         if (indices.Count == 0) return [];
         return CollectElements(root, [.. indices]).Select(Wrap).ToList();
+    }
+
+    // Resolves a tree-path locator ("Window > Pane[2] > Button[\"OK\"]") by walking live children segment by segment; returns the first match at the deepest level.
+    private ElementHandle? FindByPath(string path, AppSession session)
+    {
+        var candidates = ResolvePathCandidates(AutoMancerPathParser.Parse(path), session);
+        return candidates.Count > 0 ? Wrap(candidates[0]) : null;
+    }
+
+    // Resolves a tree-path locator like FindByPath, returning every match at the deepest level.
+    private List<ElementHandle> FindAllByPath(string path, AppSession session)
+    {
+        var candidates = ResolvePathCandidates(AutoMancerPathParser.Parse(path), session);
+        return candidates.Select(Wrap).ToList();
+    }
+
+    // Walks the tree from the root (which the first segment must match) through each later segment against direct children of every prior match — all matches when Index is unset, only the one at Index when it is.
+    private static List<IUIAutomationElement> ResolvePathCandidates(IReadOnlyList<PathSegment> segments, AppSession session)
+    {
+        var root = Automation.ElementFromHandle(session.RootWindowHandle);
+        if (root is null || segments.Count == 0 || !SegmentMatches(root, segments[0]))
+            return [];
+
+        var candidates = new List<IUIAutomationElement> { root };
+        for (var i = 1; i < segments.Count && candidates.Count > 0; i++)
+        {
+            var segment = segments[i];
+            var next = new List<IUIAutomationElement>();
+            foreach (var candidate in candidates)
+            {
+                var matches = ChildrenMatching(candidate, segment);
+                if (segment.Index is int index)
+                {
+                    if (index >= 0 && index < matches.Count) next.Add(matches[index]);
+                }
+                else
+                {
+                    next.AddRange(matches);
+                }
+            }
+            candidates = next;
+        }
+        return candidates;
+    }
+
+    // Returns true when element's control type (or "*" wildcard) and optional Name both satisfy segment.
+    private static bool SegmentMatches(IUIAutomationElement element, PathSegment segment)
+    {
+        if (segment.ControlType != "*" &&
+            !string.Equals(ControlTypeNames.GetValueOrDefault(element.CurrentControlType, "Unknown"), segment.ControlType, StringComparison.OrdinalIgnoreCase))
+            return false;
+        return segment.Name is null || element.CurrentName == segment.Name;
+    }
+
+    // Returns parent's direct children whose control type/name satisfy segment, in tree order.
+    private static List<IUIAutomationElement> ChildrenMatching(IUIAutomationElement parent, PathSegment segment)
+    {
+        var result = new List<IUIAutomationElement>();
+        var child = Automation.ControlViewWalker.GetFirstChildElement(parent);
+        while (child is not null)
+        {
+            if (SegmentMatches(child, segment)) result.Add(child);
+            child = Automation.ControlViewWalker.GetNextSiblingElement(child);
+        }
+        return result;
     }
 
     // Walks the live UIA tree depth-first and returns the elements whose flat indices are in targetIndices.
@@ -165,8 +234,7 @@ public sealed class Uia3Provider : IElementProvider
         }, ct);
     }
 
-    // Recursively builds a snapshot of an element and its children, stopping once MaxTreeDepth is reached.
-    // Properties are read defensively because dynamic apps (e.g. Task Manager) can invalidate elements mid-walk.
+    // Recursively builds a snapshot of an element and its children (defensive reads, since dynamic apps like Task Manager can invalidate elements mid-walk), stopping at MaxTreeDepth.
     private static ElementSnapshot WalkTree(IUIAutomationElement element, IUIAutomationTreeWalker walker, int depth)
     {
         var children = new List<ElementSnapshot>();
@@ -240,6 +308,8 @@ public sealed class Uia3Provider : IElementProvider
         ClassName = element.CurrentClassName,
         ControlType = ControlTypeNames.GetValueOrDefault(element.CurrentControlType, "Unknown"),
         BoundingRect = ToRect(element.CurrentBoundingRectangle),
+        IsEnabled = element.CurrentIsEnabled != 0,
+        IsOffscreen = element.CurrentIsOffscreen != 0,
         Provider = this,
         Operator = _op,
     };

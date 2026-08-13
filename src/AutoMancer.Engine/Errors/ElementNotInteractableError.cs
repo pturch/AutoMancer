@@ -3,7 +3,7 @@ using AutoMancer.Engine.Core;
 
 namespace AutoMancer.Engine.Errors;
 
-// Thrown when a resolved element can't accept the requested interaction (e.g. no usable pattern and no fallback worked).
+// Thrown when a resolved element's IsEnabled or IsOffscreen property indicates it can't accept a synthesized click — checked in ClickAction.GetCenter before falling through to SendInput.
 public sealed class ElementNotInteractableError : Exception
 {
     public ElementHandle Element { get; }

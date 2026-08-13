@@ -23,5 +23,5 @@ public sealed record Locator(LocatorStrategy Strategy, string Value)
     public static Locator ByRuntimeId(string runtimeId) => new(LocatorStrategy.RuntimeId, runtimeId);
 
     // Finds elements via XPath evaluated against the UIA element tree (0-based indices; tags are control types, attrs are UIA properties).
-    public static Locator ByXPath(string xpath) => new(LocatorStrategy.AutomancerXPath, xpath);
+    public static Locator ByXPath(string xpath) => new(LocatorStrategy.AutoMancerXPath, xpath);
 }

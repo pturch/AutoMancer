@@ -26,6 +26,7 @@ public static class TypeAction
         await Task.Run(() =>
         {
             ClickAction.EnsureForeground(element);
+            ClickAction.EnsureInteractable(element);
             SendUnicodeText(text, logger);
         }, ct).ConfigureAwait(false);
         logger?.Info("Typed via synthesized input", new { elementId = element.Id, textLength = text.Length });
@@ -47,8 +48,8 @@ public static class TypeAction
     // Builds a single KEYBDINPUT event; Vk=0, Scan=codeUnit per the KEYEVENTF_UNICODE contract.
     private static NativeMethods.INPUT UnicodeKeyInput(ushort codeUnit, bool isKeyUp)
     {
-        var flags = NativeMethods.KeyEventUnicode;
-        if (isKeyUp) flags |= NativeMethods.KeyEventKeyUp;
+        var flags = NativeMethods.KeyEventFlags.Unicode;
+        if (isKeyUp) flags |= NativeMethods.KeyEventFlags.KeyUp;
 
         return new NativeMethods.INPUT
         {

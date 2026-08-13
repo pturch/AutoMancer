@@ -11,7 +11,7 @@ public static class ScreenshotAction
     // Captures windowHandle's current bounding rectangle from the desktop and returns it PNG-encoded; captures composited/DWM windows correctly because it reads the desktop framebuffer, not the app's own back buffer.
     public static Task<byte[]> CaptureAsync(IntPtr windowHandle, CancellationToken ct = default) => Task.Run(() =>
     {
-        NativeMethods.GetWindowRect(windowHandle, out var rect);
+        NativeMethods.GetWindowRect(windowHandle, out var rect).ThrowIfFailed("GetWindowRect");
         var width = rect.Right - rect.Left;
         var height = rect.Bottom - rect.Top;
 

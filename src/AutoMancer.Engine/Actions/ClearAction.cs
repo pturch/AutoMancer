@@ -25,6 +25,7 @@ public static class ClearAction
         await Task.Run(() =>
         {
             ClickAction.EnsureForeground(element);
+            ClickAction.EnsureInteractable(element);
             SendCtrlADelete(logger);
         }, ct).ConfigureAwait(false);
         logger?.Info("Cleared via synthesized input", new { elementId = element.Id });
@@ -46,8 +47,8 @@ public static class ClearAction
     // Builds a virtual-key keyboard INPUT event; extended=true is required for the non-numpad Delete key.
     private static NativeMethods.INPUT VkInput(ushort vk, bool isKeyUp, bool extended)
     {
-        var flags = isKeyUp ? NativeMethods.KeyEventKeyUp : 0u;
-        if (extended) flags |= NativeMethods.KeyEventExtendedKey;
+        var flags = isKeyUp ? NativeMethods.KeyEventFlags.KeyUp : 0;
+        if (extended) flags |= NativeMethods.KeyEventFlags.ExtendedKey;
         return new NativeMethods.INPUT
         {
             Type = NativeMethods.InputTypeKeyboard,

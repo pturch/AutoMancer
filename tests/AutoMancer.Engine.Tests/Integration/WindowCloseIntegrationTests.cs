@@ -21,18 +21,23 @@ public sealed class WindowCloseIntegrationTests
         // Calculator has no WindowPattern support, so this hits the WM_CLOSE fallback, whose UWP teardown can exceed 30s under load; retries across a generous budget rather than a single short wait.
         bool IsStillOpen() => NativeMethods.IsWindowVisible(windowHandle) && !NativeMethods.IsIconic(windowHandle);
 
-        for (var attempt = 0; attempt < 3 && IsStillOpen(); attempt++)
+        try
         {
-            await app.CloseWindowAsync();
-            var deadline = DateTime.UtcNow.AddSeconds(20);
-            while (DateTime.UtcNow < deadline && IsStillOpen())
-                await Task.Delay(200);
+            for (var attempt = 0; attempt < 3 && IsStillOpen(); attempt++)
+            {
+                await app.CloseWindowAsync();
+                var deadline = DateTime.UtcNow.AddSeconds(20);
+                while (DateTime.UtcNow < deadline && IsStillOpen())
+                    await Task.Delay(200);
+            }
+
+            Assert.False(IsStillOpen());
         }
-
-        Assert.False(IsStillOpen());
-
-        // Safety net: UWP hosts often stay resident after their window closes, so kill it to avoid lingering for the next test class.
-        app.Kill();
-        await Task.Delay(800);
+        finally
+        {
+            // Safety net: UWP hosts often stay resident after their window closes, so kill it to avoid lingering for the next test class — must run even when the assertion above fails.
+            app.Kill();
+            await Task.Delay(800);
+        }
     }
 }

@@ -1,16 +1,18 @@
 ﻿# AutoMancer Core Engine Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking..
+> **For agentic workers:** Steps use checkbox (`- [ ]`) syntax for tracking progress through this plan.
 >
 > **NEVER run git commands (add, commit, push) automatically.** All version control is the developer's responsibility. Bash blocks in this document are implementation reference — execute the build/test lines only, never the git lines.
+>
+> **This plan covers the original C# proof of concept (through roughly Stage 1.6 of [roadmap-spec.md](./roadmap-spec.md)) and predates that document's three-phase restructuring.** Stage 1.7 onward (extended interactions, screenshots, wait utilities, the `AutoMancer.Testing`/`AutoMancer.Testing.XUnit` adapter layer) and all of Phase 2 (extended locators, resilience, context menus, diagnostics, accessibility audit, visual provider) were built after this plan's task list ends — see `roadmap-spec.md` for that work, not the task list below.
 
-**Phase:** 1 of 2 — this plan is the complete C# proof of concept. The daemon (Phase 2) adds an HTTP layer on top of this library without modifying it.
+**Phase:** 1 of 3 — this plan is the complete C# proof of concept. Phase 2 deepens the engine surface; the daemon (Phase 3) adds an HTTP layer on top of this library without modifying it.
 
 **Goal:** Build the `AutoMancer.Engine` class library and `AutoMancer.Cli` console harness — the Windows automation core with UIA3/UIA2/Win32 providers, element resolver, retry loop, actions, and DPI normalization.
 
 **Architecture:** `AutoMancer.Engine` is a pure class library with no HTTP/RPC. Providers implement `IElementProvider` (find-only). Separately, `IElementOperator` is an optional contract for providers that can interact with elements via native UIA patterns (InvokePattern, ValuePattern). UIA3 and UIA2 providers each ship a paired operator class; Win32 has none (SendInput covers it universally). `ElementResolver` runs the fallback chain with retry until implicit wait expires. Action classes (Click, Type, Clear, Scroll, Window) check `ElementHandle.Operator` first for native dispatch before falling back to SendInput. `AutoMancer.Cli` wraps the engine for interactive developer testing.
 
-**API stability note:** `ElementHandle` must remain opaque — only `Id` and `NativeHandle` exposed publicly. The Phase 2 daemon stores handles in an element registry keyed by `Id` between stateless HTTP requests; leaking implementation details here creates cleanup work later.
+**API stability note:** `ElementHandle` must remain opaque — only `Id` and `NativeHandle` exposed publicly. The Phase 3 daemon stores handles in an element registry keyed by `Id` between stateless HTTP requests; leaking implementation details here creates cleanup work later.
 
 **WinAppDriver lessons incorporated:** WinAppDriver (Microsoft, abandoned 2020) uses a single UIAutomation provider with no fallback chain and ships source-closed. Three concrete gaps it left open that AutoMancer fills: (1) `RuntimeId` locator strategy — re-finds a specific element by its UIA RuntimeId, the UIA equivalent of a CSS `:id` selector; (2) `automancer:xpath` — XPath evaluated against the UIA element tree, not rejected like browser XPath; (3) window management actions (resize, move, maximize) missing from WinAppDriver entirely. Our `KEYEVENTF_UNICODE` typing approach also fixes WinAppDriver's known keyboard layout bug (QWERTY-only regardless of system layout).
 
@@ -543,4 +545,4 @@ dotnet build AutoMancer.slnx
 - All public API is `async Task<T>`; synchronous Win32/UIA2 calls wrapped in `Task.Run`
 - `TypeAction` must use `KEYEVENTF_UNICODE` with `wScan` set to the character codepoint — never use VK codes for printable characters; this is what fixes WinAppDriver's known QWERTY-only keyboard layout bug
 - `automancer:xpath` is an AutoMancer extension strategy, not standard WebDriver XPath; it targets the UIA element tree, not a browser DOM — document this distinction clearly
-- `ElementHandle` must stay opaque — only `Id` (string) and `NativeHandle` (object) are public. No other internal fields exposed. This is a Phase 1 → Phase 2 contract: the daemon's element registry depends on being able to store and retrieve handles purely by `Id` without knowing their internals
+- `ElementHandle` must stay opaque — only `Id` (string) and `NativeHandle` (object) are public. No other internal fields exposed. This is a Phase 1 → Phase 3 contract: the daemon's element registry depends on being able to store and retrieve handles purely by `Id` without knowing their internals

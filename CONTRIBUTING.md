@@ -1,9 +1,10 @@
 # Contributing
 
+Looking for how to write tests *against your own app* using AutoMancer instead of how to contribute to AutoMancer itself? See [TESTING.md](TESTING.md).
+
 ## Prerequisites
 
-- Windows 10/11 (the engine targets `net10.0-windows10.0.22621.0` — no cross-platform support)
-- .NET 10 SDK
+Same as the engine — see [README.md](README.md#prerequisites).
 
 ## Build & test
 
@@ -11,9 +12,12 @@
 dotnet build AutoMancer.slnx
 dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category!=Integration"
 dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration"   # requires Windows + Notepad
+dotnet test samples/ConsumerNotepadTests/                                   # requires Windows + Notepad
 ```
 
 CI runs the build and the non-integration suite on every push and pull request to `main`. Integration tests need a real interactive desktop session, so they're local-only.
+
+**Don't run `dotnet test AutoMancer.slnx`** to exercise the integration suites. It builds and runs every test project in the solution concurrently, and Windows 11 Notepad is single-instance: `AutoMancer.Engine.Tests`'s Notepad integration tests and `samples/ConsumerNotepadTests`'s demo tests will fight over the same OS-level window, producing flaky, non-reproducible failures (stale UIA elements, text from one test landing in another). Run each Notepad-touching project one at a time via the commands above instead. `AutoMancer.Cli.Tests` has no live-UI dependency and is safe to run alongside anything.
 
 ## Code style
 

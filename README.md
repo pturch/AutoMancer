@@ -7,7 +7,7 @@
 
 Bring older Windows applications back to life: AutoMancer enables modern testing patterns for UIA3 automation with a C# class library and CLI.
 
-> **Status:** Phase 1 (engine + CLI) is complete and this is what's usable today. The HTTP daemon and Python/TypeScript SDKs described in the roadmap haven't been built yet — see [docs/roadmap-spec.md](docs/roadmap-spec.md) for where things actually stand.
+> **Status:** Phase 1 (engine + CLI) is complete and this is what's usable today. Phase 2 (richer locators, resilience, diagnostics, a visual fallback provider, and full UIA pattern coverage) is in progress — its completion is the v1 milestone. The HTTP daemon and Python/TypeScript SDKs are deliberately deferred, long-running future work, picked up once v1 has had real time in the field — not the next thing on the list. See [docs/roadmap-spec.md](docs/roadmap-spec.md) for where things actually stand.
 
 ## What it is
 

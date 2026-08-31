@@ -2,6 +2,8 @@
 
 Looking for how to write tests *against your own app* using AutoMancer instead of how to contribute to AutoMancer itself? See [TESTING.md](TESTING.md).
 
+By participating in this project you're expected to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
+
 ## Prerequisites
 
 Same as the engine — see [README.md](README.md#prerequisites).
@@ -21,7 +23,7 @@ CI runs the build and the non-integration suite on every push and pull request t
 
 ## Code style
 
-- Write the minimum code that satisfies the requirement — no speculative abstractions, no helper methods for single call sites.
+- Write the minimum code that satisfies the requirement — no speculative abstractions, no helper methods for single call sites. Multiple instances of a pattern (or a clear architectural plan) are reasons to start abstracting.
 - `System.Text.Json` only, no Newtonsoft.Json.
 - Every function/method and every class/struct/enum gets a one-line topline comment directly above it explaining its purpose — constructors and private helpers included.
 - Beyond that, inline comments only when the *why* is non-obvious.
@@ -31,8 +33,13 @@ CI runs the build and the non-integration suite on every push and pull request t
   // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
   ```
 
+## Reporting bugs and requesting features
+
+Open a [GitHub issue](https://github.com/pturch/AutoMancer/issues). For a bug, include the Windows version, the target app you were automating, and — if you can — the smallest repro you found. For a security issue, see [SECURITY.md](SECURITY.md) instead of opening a public issue.
+
 ## Pull requests
 
 - Keep PRs focused on a single change.
 - Make sure `dotnet build` and the non-integration test suite pass locally before opening a PR.
 - Describe what changed and why in the PR description.
+- By submitting a pull request, you agree to license your contribution under the project's [Apache License 2.0](LICENSE).

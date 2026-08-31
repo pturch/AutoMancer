@@ -4,7 +4,7 @@
 >
 > **NEVER run git commands (add, commit, push) automatically.** All version control is the developer's responsibility. Bash blocks in this document are implementation reference — execute the build/test lines only, never the git lines.
 
-**Phase:** 3 of 3 — this plan adds an HTTP translation layer on top of the completed Phase 1/2 engine. No engine source files are modified. See [roadmap-spec.md](./roadmap-spec.md) for the current phase breakdown.
+**Phase:** 3 of 3 — this plan adds an HTTP translation layer on top of the completed Phase 1/2 engine. No engine source files are modified. **This is deferred, long-running future work, not the next thing after Phase 2** — Phase 2's completion ships v1 (a complete, hardened C# engine/CLI/test adapter on its own), and this plan is picked up later, once v1 has had real field time. See [roadmap-spec.md](./roadmap-spec.md) for the current phase breakdown.
 
 **Goal:** Build `automancerd` — the W3C WebDriver 2 HTTP server that wraps `AutoMancer.Engine` and exposes a JSON-over-HTTP API for session management, element finding, and interaction.
 
@@ -12,11 +12,11 @@
 
 **WinAppDriver lessons incorporated:** WinAppDriver defaulted to port 4723 (Appium standard) making it usable by stock Selenium/Appium clients. AutoMancer uses 27272 by default but should accept `--port 4723` for Appium compat mode. WinAppDriver also omitted window management endpoints entirely; AutoMancer adds `GET/POST .../window/size` and `POST .../window/:handle/maximize`. New locator strategies `id` (RuntimeId) and `automancer:xpath` are routed here.
 
-**Tech Stack:** C# latest / .NET 10 Windows (`net10.0-windows10.0.22621.0`), `System.Net.HttpListener`, `System.Text.Json`, `AutoMancer.Engine` project reference, `System.Drawing.Common` (screenshots)
+**Tech Stack:** C# latest / .NET 10 Windows (`net10.0-windows10.0.22621.0`), `System.Net.HttpListener`, `System.Text.Json`, `AutoMancer.Engine` project reference. No new screenshot dependency needed — `App.ScreenshotAsync()` already returns PNG bytes via the engine's existing WPF-based `ScreenshotAction`.
 
 **Test Stack:** xunit 2.8, Moq 4.20, `Microsoft.NET.Test.Sdk` 17.9.0 — all tests are C# in `tests/AutoMancer.Daemon.Tests/`; run with `dotnet test`
 
-**Prerequisite:** Phase 1 complete — Core Engine plan done, all engine tests passing, `dotnet build AutoMancer.slnx` exits 0. Phase 2 is sequenced first in the roadmap but isn't a hard gate; this plan can start against the Phase 1 surface alone if priorities shift. The engine API is treated as stable before this plan begins.
+**Prerequisite:** Phase 1 complete — Core Engine plan done, all engine tests passing, `dotnet build AutoMancer.slnx` exits 0. Phase 2 is sequenced first in the roadmap, and in practice this plan shouldn't start until well after Phase 2 has shipped as v1 and had real field time — nothing here is a hard technical gate against starting earlier against the Phase 1 surface alone, but that's not the intent. The engine API is treated as stable before this plan begins.
 
 ---
 
@@ -41,7 +41,7 @@ src/
     │   ├── InteractionEndpoints.cs     click/double-click/right-click/hover (element- and coordinate-based), value, clear, drag, scroll wheel
     │   ├── PropertyEndpoints.cs        GET .../text, name, enabled, selected, displayed, rect, attribute
     │   ├── KeyboardEndpoints.cs        POST .../hotkey, .../keydown, .../keyup
-    │   ├── ClipboardEndpoints.cs       GET/POST .../clipboard (text or image)
+    │   ├── ClipboardEndpoints.cs       GET/POST .../clipboard (text)
     │   ├── PatternEndpoints.cs         POST .../windows/expand, collapse, toggle, select, ... — windows:* extension commands
     │   ├── TimeoutEndpoints.cs         GET/POST .../timeouts
     │   ├── ScreenshotEndpoint.cs       GET .../screenshot (base64 PNG)
@@ -216,7 +216,7 @@ curl -X POST http://127.0.0.1:27272/session/$SESSION_ID/element \
 
 ### Task 8: Interaction endpoints
 
-**What:** Covers the full interaction surface the engine has grown since the original click/value/clear-only draft of this task (see Stage 1.7–1.8 of roadmap-spec.md): click (with `modifiers` and `button` params, delegating to `ClickAction`), double-click (`DoubleClickAction`), right-click, hover (`HoverAction`), value/type (`TypeAction`), clear (`ClearAction`), drag (`DragAction`), and scroll wheel (`ScrollWheelAction`, `deltaX`/`deltaY`). Also adds coordinate-based click and hover variants that skip element resolution entirely (`App.ClickAtAsync(x, y)`/direct `SendInput`) — for targets with no accessible element, like a fill-bucket tool. Each element-scoped endpoint resolves the session and element from the URL, reconstructs an `AppSession` via `ToAppSession()`, and executes the action.
+**What:** Covers the full interaction surface the engine has grown since the original click/value/clear-only draft of this task (see Stage 1.7–1.8 of roadmap-spec.md): click (with `modifiers` and `button` params, delegating to `ClickAction`), double-click (`DoubleClickAction`), right-click, hover (`HoverAction`), value/type (`TypeAction`), clear (`ClearAction`), drag (`DragAction`), and scroll wheel (`ScrollWheelAction`, `deltaX`/`deltaY`). Also adds coordinate-based click and hover variants that skip element resolution entirely — for targets with no accessible element, like a fill-bucket tool. The click variant delegates to `App.ClickAtAsync(x, y)`, which already exists; there's no `App.HoverAtAsync(x, y)` equivalent today, so the coordinate-based hover endpoint has to bypass the `App` facade and call `NativeMethods.SendInputs`/`HoverAction`'s underlying mouse-move plumbing directly (or add a small `App.HoverAtAsync(x, y)` facade method first — the cheaper, more consistent option). Each element-scoped endpoint resolves the session and element from the URL, reconstructs an `AppSession` via `ToAppSession()`, and executes the action.
 
 **Creates:**
 - `src/AutoMancer.Daemon/Endpoints/InteractionEndpoints.cs` — `Register`; `GetSessionAndElement` helper; `POST .../click` (body: `{modifiers, button}`), `POST .../doubleclick`, `POST .../rightclick`, `POST .../hover`, `POST .../value`, `POST .../clear`, `POST .../drag` (body: waypoints or from/to), `POST .../scrollwheel` (body: `{deltaX, deltaY}`); `POST /session/:id/actions/click` and `.../hover` for the coordinate-based, no-element variants
@@ -234,7 +234,7 @@ dotnet build src/AutoMancer.Daemon/AutoMancer.Daemon.csproj
 
 ### Task 9: Property endpoints
 
-**What:** Exposes element state over HTTP: `text`, `name` (control type), `enabled`, `selected`, `displayed`, `rect`, `attribute/:name`. Each reads from the cached `ElementHandle` or falls through to the live UIA element when the handle doesn't have the data.
+**What:** Exposes element state over HTTP: `text`, `name` (control type), `enabled`, `displayed`, `rect`, `attribute/:name`. Each reads from the cached `ElementHandle` or falls through to the live UIA element when the handle doesn't have the data. **`selected` is not included here** — `ElementHandle` has no `IsSelected` field, and no per-item selection read exists anywhere in the engine yet (Stage 2.8's `SelectionAction` only reads the container's full selection via `GetSelectedItemsAsync`, not a single item's own state). Add it once a per-item read (`SelectionItemPattern.CurrentIsSelected`, surfaced as `App.IsSelectedAsync(Locator)`) exists — see extended-coverage-spec.md Task 34.
 
 **Creates:**
 - `src/AutoMancer.Daemon/Endpoints/PropertyEndpoints.cs` — `Register`; `GetElement` helper; `TryGet`/`TryGetBool` COM-safe accessors
@@ -252,7 +252,7 @@ dotnet build src/AutoMancer.Daemon/AutoMancer.Daemon.csproj
 
 ### Task 10: Window management endpoints
 
-**What:** WinAppDriver lacks these entirely. Implements W3C-compatible window management: get/set window size, maximize, minimize, restore, and close. Maps to `WindowAction` in the Engine — size/maximize/minimize/restore use `SetVisualStateAsync`/`WindowPattern` falling back to `SetWindowPos`; close uses `CloseWindowAsync` (`WindowPattern.Close()` falling back to posting `WM_CLOSE`). The `:windowHandle` segment accepts `"current"` to target the session's root window.
+**What:** WinAppDriver lacks these entirely. Implements W3C-compatible window management: get/set window size, maximize, minimize, restore, and close. Maps to `WindowAction` in the Engine — size uses `GetSizeAsync`/`MoveAsync`/`ResizeAsync` (`TransformPattern` falling back to Win32 `SetWindowPos`); maximize/minimize/restore use `SetVisualStateAsync` (`WindowPattern.SetWindowVisualState` falling back to Win32 `ShowWindow`); close uses `CloseAsync` (`WindowPattern.Close()` falling back to posting `WM_CLOSE`). The `:windowHandle` segment accepts `"current"` to target the session's root window.
 
 **Creates:**
 - `src/AutoMancer.Daemon/Endpoints/WindowEndpoints.cs` — `Register`; `GET/POST /session/:id/window/size`; `POST /session/:id/window/:handle/maximize`; `POST /session/:id/window/:handle/minimize`; `POST /session/:id/window/:handle/restore`; `DELETE /session/:id/window/:handle` (close)
@@ -298,11 +298,9 @@ curl -X POST http://127.0.0.1:27272/session/$SESSION_ID/hotkey -d '{"modifiers":
 **What:** Completes the daemon's core surface area. Screenshot captures the app window as a base64 PNG. Timeout endpoints read the session's current wait settings and let a client change them mid-session — `DaemonSession` holds `ImplicitWaitMs`/`PollIntervalMs` as mutable fields rather than baking them into an immutable resolver at creation, so `ToAppSession()` (Task 3) always builds the resolver from whatever the session's settings are *right now*. This matches Appium's `/session/:id/appium/settings`, which actually mutates live session config, instead of silently discarding the write. Extension endpoints expose AutoMancer-specific capabilities: provider info, scroll-to, PID, kill app, and annotated snapshot.
 
 **Creates:**
-- `src/AutoMancer.Daemon/Endpoints/ScreenshotEndpoint.cs` — `GDI+ CopyFromScreen` → base64 PNG; `CaptureBase64Internal` for extension endpoint reuse
+- `src/AutoMancer.Daemon/Endpoints/ScreenshotEndpoint.cs` — calls the session's `App.ScreenshotAsync()` (already returns PNG `byte[]` via the engine's `ScreenshotAction`) and base64-encodes the result; `CaptureBase64Internal` for extension endpoint reuse — no new screenshot capture code, no new package
 - `src/AutoMancer.Daemon/Endpoints/TimeoutEndpoints.cs` — GET returns `{ implicitWaitMs, pollIntervalMs }` from the live `DaemonSession`; POST updates those fields on the session so subsequent finds in that session pick up the new values immediately
 - `src/AutoMancer.Daemon/Endpoints/ExtensionEndpoints.cs` — `/automancer/element/:id/provider`, `/automancer/element/:id/scroll-to`, `/automancer/app/pid`, `/automancer/app` (DELETE = kill), `/automancer/snapshot`
-
-Extends `AutoMancer.Daemon.csproj` with `System.Drawing.Common`.
 
 
 - [ ] **Implement and end-to-end test**
@@ -313,7 +311,7 @@ dotnet build src/AutoMancer.Daemon/AutoMancer.Daemon.csproj
 curl http://127.0.0.1:27272/session/$SESSION_ID/screenshot | \
   python -c "import sys,json,base64; d=json.load(sys.stdin); open('screen.png','wb').write(base64.b64decode(d['value']))"
 curl http://127.0.0.1:27272/session/$SESSION_ID/automancer/element/$ELEMENT_ID/provider
-curl -X POST http://127.0.0.1:27272/session/$SESSION_ID/timeouts -d '{"implicit":10000}'
+curl -X POST http://127.0.0.1:27272/session/$SESSION_ID/timeouts -d '{"implicitWaitMs":10000}'
 curl http://127.0.0.1:27272/session/$SESSION_ID/timeouts   # should now return the updated value
 dotnet test tests/AutoMancer.Daemon.Tests/ -v
 ```
@@ -324,7 +322,7 @@ dotnet test tests/AutoMancer.Daemon.Tests/ -v
 
 ### Task 13: Clipboard, pattern, and grid endpoints
 
-**What:** Three extension surfaces beyond the W3C-standard endpoints, namespaced under `windows:*` per the WebDriver extension-command convention (like Appium's `appium:*`). Clipboard endpoints read/write the system clipboard as text, for workflows that copy/paste between the target app and the outside world. Pattern endpoints expose toggle/expand-collapse/selection. Grid endpoints expose row/column counts and cell lookup for `DataGrid`-style controls. **Depends on Phase 2 Stage 2.8 having shipped `ClipboardAction`/`ToggleAction`/`ExpandCollapseAction`/`SelectionAction`/`GridAction` — skip or defer this task entirely if Phase 2 hasn't reached that stage yet.** Each handler is a thin delegation to the matching `App` method, same shape as `InteractionEndpoints` (Task 8) — no direct COM/native-pattern access from the daemon layer, keeping the daemon a pure consumer of the engine's public API.
+**What:** Three extension surfaces beyond the W3C-standard endpoints. Clipboard endpoints (bare `/clipboard` path, treated as core session surface) read/write the system clipboard as text, for workflows that copy/paste between the target app and the outside world. Pattern and grid endpoints live under each element's `windows/` path segment per the WebDriver extension-command convention (like Appium's `appium:*`) — pattern endpoints expose toggle/expand-collapse/selection, grid endpoints expose row/column counts and cell lookup for `DataGrid`-style controls. **Depends on Phase 2 Stage 2.8 having shipped `ClipboardAction`/`ToggleAction`/`ExpandCollapseAction`/`SelectionAction`/`GridAction` — skip or defer this task entirely if Phase 2 hasn't reached that stage yet.** Each handler is a thin delegation to the matching `App` method, same shape as `InteractionEndpoints` (Task 8) — no direct COM/native-pattern access from the daemon layer, keeping the daemon a pure consumer of the engine's public API.
 
 **Creates:**
 - `src/AutoMancer.Daemon/Endpoints/ClipboardEndpoints.cs` — `Register`; `GET /session/:id/clipboard` → `App.GetClipboardTextAsync()`; `POST /session/:id/clipboard` (body: `{text}`) → `SetClipboardTextAsync`
@@ -410,7 +408,7 @@ curl -X POST http://127.0.0.1:27272/session/$SESSION_ID/element \
 ## Constraints
 
 - All error responses use `{"value":{"error":"...","message":"...","stacktrace":""}}` — no naked exceptions
-- `no such element` errors include `data.closestMatch` when confidence > 0.70
+- `no such element` errors include `data.closestMatch` when confidence >= 0.70
 - Element references use the W3C constant key `element-6066-11e4-a52e-4f735466cecf`
 - `css selector`, `xpath`, `link text` return `{"error":"invalid argument"}` — these are browser concepts with no meaning here
 - `automancer:xpath` is NOT the same as the rejected `xpath` strategy — it targets the UIA tree and must be explicitly routed to `Locator.ByXPath`
@@ -418,4 +416,4 @@ curl -X POST http://127.0.0.1:27272/session/$SESSION_ID/element \
 - Sessions are in-memory only — no persistence between daemon restarts
 - `DELETE /session/:id` disposes the session and its element registry cleanly, releasing any keys still held via `POST .../keydown` without a matching `.../keyup`
 - Default port is 27272; `--port 4723` enables Appium-compatible mode for teams already using Appium client libraries
-- Non-W3C-standard endpoints (window close/minimize, keyboard hold, clipboard, UIA patterns) are namespaced `windows:*`/`automancer/*`, matching the WebDriver extension-command convention (cf. Appium's `appium:*`) — never added as bare, unnamespaced paths that could collide with a future W3C standard endpoint
+- Non-W3C-standard endpoints are grouped two ways: AutoMancer-specific capabilities live under the bare `/automancer/*` prefix (provider info, scroll-to, PID, kill, snapshot); UIA pattern/grid actions (`Task 13`'s expand/collapse/toggle/select/grid endpoints) live under a `windows/` path segment per element (`.../element/:id/windows/toggle`, etc.), matching the WebDriver extension-command convention (cf. Appium's `appium:*`). Window management (`/window/...`) and clipboard (`/clipboard`) are bare, unnamespaced paths — they're treated as core session surface, not extensions, since WinAppDriver's own gap in window management is one of the reasons this daemon exists

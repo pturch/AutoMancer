@@ -6,7 +6,7 @@ namespace AutoMancer.Engine.Core;
 // A logical-pixel bounding box, used for element rects and window geometry.
 public readonly record struct Rect(double X, double Y, double Width, double Height);
 
-// An opaque, resolved reference to a found UI element; only Id and NativeHandle are public per the daemon's storage contract.
+// An opaque, resolved reference to a found UI element; Id, NativeHandle, and read-only metadata are public, but Provider/Operator/Logger stay internal per the daemon's storage contract.
 public sealed class ElementHandle
 {
     public string Id { get; }

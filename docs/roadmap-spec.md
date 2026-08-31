@@ -14,7 +14,9 @@
 
 ## Delivery Strategy
 
-This project ships in three distinct phases. **Phase 1** is a self-contained C# proof of concept that grows into the complete interaction surface and a test adapter layer — engine + CLI + `AutoMancer.Testing`. **Phase 2** deepens that surface — richer locators, wait primitives, native fallbacks, and diagnostics — all additive to what Phase 1 built. **Phase 3** adds the daemon and polyglot SDKs on top of that surface without modifying it.
+This project ships in three distinct phases. **Phase 1** is a self-contained C# proof of concept that grows into the complete interaction surface and a test adapter layer — engine + CLI + `AutoMancer.Testing`. **Phase 2** deepens that surface — richer locators, wait primitives, native fallbacks, and diagnostics — all additive to what Phase 1 built.
+
+**Phase 2's completion is v1.** At that point the engine, CLI, and test adapter are a complete, hardened C# product on their own — that's what ships and what people build on. **Phase 3** adds the daemon and polyglot SDKs on top of that surface without modifying it, but it isn't the next sprint after Phase 2 — it's deliberately deferred, long-running future work, picked up once v1 has had real time in the field to prove the engine out. There's no fixed timeline for starting it.
 
 ```
 ╔══════════════════════════════════════════════════════════╗
@@ -66,14 +68,16 @@ This project ships in three distinct phases. **Phase 1** is a self-contained C# 
 ║       │                               Win10/11, examples✓║
 ║       │                                                  ║
 ║   Stage 2.8: Extended Patterns ───► toggle/expand/select,║
-║                                clipboard, grid cells ✓   ║
+║                                clipboard, grid cells     ║
+║                                     v1.0 shippable ✓     ║
 ╚══════════════════════════════════════════════════════════╝
                         │
-                        │  Daemon added as a new project —
-                        │  no engine changes required.
+                        │  v1 ships here. Phase 3 is deferred,
+                        │  long-running future work — picked up
+                        │  once v1 has real field time behind it.
                         ▼
 ╔══════════════════════════════════════════════════════════╗
-║  PHASE 3 — Polyglot HTTP Layer  (Stages 3.1–3.6)         ║
+║  PHASE 3 — Polyglot HTTP Layer (Future — Stages 3.1–3.6) ║
 ║                                                          ║
 ║   Stage 3.1: Daemon Foundation ─────► curl finds elements║
 ║       │                                                  ║
@@ -84,7 +88,7 @@ This project ships in three distinct phases. **Phase 1** is a self-contained C# 
 ║       │                                                  ║
 ║   Stage 3.5: CI Session ─────────────► headless CI works ║
 ║       │                                                  ║
-║   Stage 3.6: Polish ─────────────────► v0.1 shippable ✓  ║
+║   Stage 3.6: Polish ─────────────────► daemon+SDKs ship ✓║
 ╚══════════════════════════════════════════════════════════╝
 ```
 
@@ -94,9 +98,9 @@ This project ships in three distinct phases. **Phase 1** is a self-contained C# 
 
 Phase 1 covers the full arc from first find to a complete interaction surface and a test adapter layer — proof of concept through "a C# consumer has everything they need" — in one phase, so there's no artificial seam between "does it work" and "is it complete." Stage 1.9 (test adapter layer) is sequenced at the end of Phase 1 because it's the natural next thing a C# consumer reaches for once the interaction surface is complete, and it only adds new projects (`AutoMancer.Testing`, `AutoMancer.Testing.XUnit`) on top of the `App`/`Locator` surface.
 
-Phase 2 deepens that surface — richer locators, canned wait conditions, opt-in resilience, a native context-menu fallback, some Windows-native diagnostics with no web/mobile equivalent, and a visual (OCR/template-matching) fallback for apps with no accessibility tree at all. None of it is required for Phase 3's daemon to exist; it's sequenced first because the daemon gets to wrap a deeper surface if it's already there, not because anything here is a hard gate. Every batch in this phase is additive — existing callers and existing tests keep working unchanged whether or not a given batch has landed.
+Phase 2 deepens that surface — richer locators, canned wait conditions, opt-in resilience, a native context-menu fallback, some Windows-native diagnostics with no web/mobile equivalent, and a visual (OCR/template-matching) fallback for apps with no accessibility tree at all. Every batch in this phase is additive — existing callers and existing tests keep working unchanged whether or not a given batch has landed. **Phase 2's completion is the v1 milestone** — a hardened, complete C# engine, CLI, and test adapter, shipped and usable on its own with no daemon or SDKs required.
 
-Phase 3 adds the daemon and polyglot SDKs on top of whatever the engine looks like by then. Nothing in Phase 3 modifies engine source files.
+Phase 3 adds the daemon and polyglot SDKs on top of whatever the engine looks like by then. Nothing in Phase 3 modifies engine source files. Unlike Phases 1 and 2, Phase 3 is not the next thing to pick up after v1 ships — it's long-running future work, taken up once the engine has had real field time to surface the bugs and API rough edges that only show up under sustained use. Rushing straight into a daemon and two SDKs on top of a freshly-shipped engine just multiplies the surface area that breaking changes have to ripple through.
 
 The one thing to keep clean throughout Phases 1 and 2: `ElementHandle` must stay opaque (only `Id` and `NativeHandle` exposed). The daemon's element registry depends on this — it stores handles by ID between stateless HTTP requests.
 
@@ -283,7 +287,7 @@ All C# code (engine + daemon) is tested in C# with xunit + Moq. SDK client code 
 
 | Batch | Work | Plan ref |
 |---|---|---|
-| 2.1.1 | `Locator.Near(Locator anchor, SpatialDirection direction, int maxDistancePx = ...)` — new `LocatorStrategy.Spatial` case; the anchor locator and direction (`Above`/`Below`/`LeftOf`/`RightOf`/`Near`) travel as the locator's value | Extended Coverage Task 1 |
+| 2.1.1 | `Locator.Near(Locator anchor, SpatialDirection direction, int maxDistancePx = ...)` — new `LocatorStrategy.Spatial` case; the anchor locator, direction (`Above`/`Below`/`LeftOf`/`RightOf`/`Near`), and distance travel as internal `init`-only properties added to the `Locator` record, not encoded into its string `Value` — a nested `Locator` and an `int` don't fit a single string losslessly | Extended Coverage Task 1 |
 | 2.1.2 | `SpatialMatcher` — resolves the anchor via the existing `ElementResolver.FindAsync`, then filters candidate elements by `BoundingRect` proximity/direction; lives once in `ElementResolver`, not duplicated per provider, since it operates on already-resolved rects rather than raw UIA queries | Extended Coverage Task 2 |
 | 2.1.3 | `Locator.ByProperty(int propertyId, object value)` — generic escape-hatch strategy for the built-in UIA property set; `Uia3Provider.BuildCondition` routes it straight to `IUIAutomation.CreatePropertyCondition(propertyId, value)`, bypassing the fixed strategy→property map | Extended Coverage Task 3 |
 | 2.1.4 | `UiaProperty` enum — named constants for the built-in properties worth surfacing (`HelpText`, `LocalizedControlType`, `IsOffscreen`, `ItemStatus`, `IsContentElement`, `AriaRole`, `AriaProperties`, ...) mapped to their well-known integer IDs; `Locator.ByProperty(UiaProperty property, object value)` overload so the common case never needs a raw int | Extended Coverage Task 4 |
@@ -363,7 +367,7 @@ All C# code (engine + daemon) is tested in C# with xunit + Moq. SDK client code 
 | 2.6.3 | Template matching — `OpenCvSharp4.Windows`; `automancer:image` strategy (base64 PNG template) | Extended Coverage Task 23 |
 | 2.6.4 | Add `visual` to default `ElementProviderOptions.ProviderChain`; integration test with a no-UIA test app | Extended Coverage Task 24 |
 | 2.6.5 | `App.WaitForIdleAsync()` — diffs consecutive `ScreenshotAsync()` captures at a short interval until two frames match within a pixel-difference threshold, or a timeout is hit; replaces the ad-hoc `Task.Delay(300) // flyout animation` waits already scattered through the integration test suite with a real settledness check | Extended Coverage Task 25 |
-| 2.6.6 | Visual regression snapshot assertion — captures the current window/element region and pixel-diffs it against a stored baseline PNG, failing past a configurable difference threshold; reuses the screenshot/pixel-compare plumbing built for template matching in 2.6.3. `ScreenshotAsync()` captures physical pixels, and the same logical window is a different physical size at 100% vs. 150% DPI — normalize both the baseline and the live capture to logical scale via `DpiHelper.PhysicalToLogical` (kept unwired for exactly this) before diffing, or the assertion spuriously fails whenever it runs on a differently-scaled machine than the one that recorded the baseline | Extended Coverage Task 26 |
+| 2.6.6 | Visual regression snapshot assertion — captures the current window/element region and pixel-diffs it against a stored baseline PNG, failing past a configurable difference threshold; reuses the screenshot/pixel-compare plumbing built for template matching in 2.6.3. `ScreenshotAsync()` captures physical pixels, and the same logical window is a different physical *pixel size* at 100% vs. 150% DPI — resize whichever of the baseline/live capture was taken at a different DPI to match the other's pixel dimensions (by the `dpi / 96.0` scale ratio) before diffing, or the assertion spuriously fails whenever it runs on a differently-scaled machine than the one that recorded the baseline. `DpiHelper.PhysicalToLogical` converts a coordinate pair, not a bitmap, so it doesn't apply directly here | Extended Coverage Task 26 |
 
 **This stage is entirely engine-side** — like the rest of Phase 2, it only touches `AutoMancer.Engine`. Exposing `VisualProvider` over HTTP is Phase 3's job (see batch 3.2.8), since that requires the daemon project to exist first.
 
@@ -394,21 +398,22 @@ All C# code (engine + daemon) is tested in C# with xunit + Moq. SDK client code 
 
 | Batch | Work | Plan ref |
 |---|---|---|
-| 2.8.1 | `ClipboardAction` — `GetTextAsync`/`SetTextAsync` via `OpenClipboard`/`GetClipboardData`/`SetClipboardData` (`CF_UNICODETEXT`); not element-scoped, same category as `ScreenshotAction`/`WindowAction`; `App.GetClipboardTextAsync()`/`SetClipboardTextAsync(string)` | Extended Coverage Task 31 |
+| 2.8.1 | `ClipboardAction` — `GetTextAsync`/`SetTextAsync`, each a `Task.Run` wrapper around `System.Windows.Clipboard.GetText()`/`SetText(string)` (`UseWPF` is already enabled in the engine csproj, so no raw `OpenClipboard`/`GetClipboardData` P/Invoke is needed); not element-scoped, same category as `ScreenshotAction`/`WindowAction`; `App.GetClipboardTextAsync()`/`SetClipboardTextAsync(string)` | Extended Coverage Task 31 |
 | 2.8.2 | `ToggleAction` — `TogglePattern.Toggle()`, mirrors `ScrollAction`'s no-op-when-unsupported shape; `App.ToggleAsync(Locator)` | Extended Coverage Task 32 |
 | 2.8.3 | `ExpandCollapseAction` — `ExpandCollapsePattern.Expand()`/`Collapse()`; `App.ExpandAsync(Locator)`/`CollapseAsync(Locator)` | Extended Coverage Task 33 |
 | 2.8.4 | `SelectionAction` — `SelectionItemPattern.Select()`/`AddToSelection()`/`RemoveFromSelection()`; `SelectionPattern.GetCurrentSelection()`/`CanSelectMultiple` for reads; `App.SelectAsync(Locator)`, `AddToSelectionAsync(Locator)`, `RemoveFromSelectionAsync(Locator)`, `GetSelectedItemsAsync(Locator)` | Extended Coverage Task 34 |
 | 2.8.5 | `GridAction` — `GridPattern.CurrentRowCount`/`CurrentColumnCount`/`GetItem(row, col)` (falling back to `TablePattern` when only that's supported); `App.GetGridRowCountAsync(Locator)`, `GetGridColumnCountAsync(Locator)`, `GetGridCellAsync(Locator, int row, int col)` → `ElementHandle` for the cell, so existing actions/locators work on it unchanged | Extended Coverage Task 35 |
 | 2.8.6 | Unit tests for each action's no-op/unsupported-pattern path (mirroring `ScrollActionTests`/`SetFocusActionTests`); integration tests — toggle a checkbox, select/multi-select a list, read a `ListView`/`DataGrid`-style control's row and column counts and fetch a specific cell, clipboard round-trip | Extended Coverage Task 36 |
 
-**After 2.8.6:** Phase 2 complete. The daemon's `PatternEndpoints`/`ClipboardEndpoints` (Stage 3.2.6) and the SDKs' `ComboBox`/`DataGrid` controls can now delegate to real `App` methods instead of reaching around the engine — daemon-spec.md Task 13 and sdks-spec.md's control-subclass tasks should be revisited once this stage lands to switch from the `NativeHandle`-direct workaround to calling these actions.
+**After 2.8.6:** Phase 2 complete — **v1**. The engine, CLI, and test adapter are a hardened, complete C# product on their own; this is what ships. Phase 3 (below) is deferred, long-running future work, not the next thing in the queue. Whenever it is picked up, the daemon's `PatternEndpoints`/`ClipboardEndpoints` (Stage 3.2.6) and the SDKs' `ComboBox`/`DataGrid` controls can delegate to real `App` methods instead of reaching around the engine — daemon-spec.md Task 13 and sdks-spec.md's control-subclass tasks should be revisited at that point to switch from the `NativeHandle`-direct workaround to calling these actions.
 
 ---
 
-## Phase 3 — Polyglot HTTP Layer
+## Phase 3 — Polyglot HTTP Layer (Future)
 
-> **Prerequisite:** Phase 1 complete and `dotnet build AutoMancer.slnx` reporting 0 errors. Phase 2 is sequenced first because the daemon gets to wrap a deeper surface if it's already there — but nothing in Phase 2 is a hard gate; Phase 3 can start against the Phase 1 surface alone if priorities shift.
-> The engine and `App` facade APIs are settled at this point. The daemon, SDKs, and test adapter are additive — no engine source files are modified for this phase's work.
+> **Not the next phase to pick up after v1.** Phase 2's completion ships v1 — the engine, CLI, and test adapter as a complete, hardened C# product. Phase 3 is deliberately deferred, long-running future work: a daemon and polyglot SDKs on top of that surface, started once v1 has had real time in the field to prove the engine's API and behavior out under sustained use, not immediately after Phase 2 lands. There's no fixed date for starting it — this section documents the plan for when it's picked up.
+>
+> **Prerequisite:** Phase 1 complete and `dotnet build AutoMancer.slnx` reporting 0 errors. Phase 2 is sequenced first because the daemon gets to wrap a deeper surface if it's already there — but nothing in Phase 2 is a hard technical gate; Phase 3 could start against the Phase 1 surface alone if priorities changed. The engine and `App` facade APIs are settled at this point. The daemon, SDKs, and test adapter are additive — no engine source files are modified for this phase's work.
 
 ### Stage 3.1 — Daemon Foundation
 > **Unlocks:** Any HTTP client can find elements in a Windows app. `curl` test is possible.
@@ -422,7 +427,7 @@ All C# code (engine + daemon) is tested in C# with xunit + Moq. SDK client code 
 | 3.1.4 | `StatusEndpoint` + `Program.cs` entry point; smoke test `GET /status` | Daemon Task 4 |
 | 3.1.5 | `SessionEndpoints` — `POST /session` (parse capabilities, launch/attach, return sessionId), `DELETE /session/:id` | Daemon Task 5 |
 | 3.1.6 | `FindEndpoints` — 4 W3C find endpoints; routes all strategies including `id` and `automancer:xpath` | Daemon Task 6 |
-| 3.1.7 | Route `AppOptions.Logger` (owned by `App` since batch 1.1.4) into daemon session construction — attach an `EngineLogger` sink (file or stdout `TextWriter`, configurable via `DaemonConfig`) when building each session's `AppOptions`, so the engine's existing structured operational trace (`ElementResolver` + `AppSession` launch/attach) reaches daemon request handling. Daemon-side only, no engine source changes needed. Unrelated to Stage 1.9's `Expect()` diagnostics, which stay self-contained | Engine spec Task 4 |
+| 3.1.7 | Route `AppOptions.Logger` (owned by `App` since batch 1.1.4) into daemon session construction — attach an `EngineLogger` sink (file or stdout `TextWriter`, configurable via `DaemonConfig`) when building each session's `AppOptions`, so the engine's existing structured operational trace (`ElementResolver` + `AppSession` launch/attach) reaches daemon request handling. Daemon-side only, no engine source changes needed. Unrelated to Stage 1.9's `Expect()` diagnostics, which stay self-contained | Daemon Task 7 |
 
 **After 3.1.7:** Full element-finding stack reachable via HTTP, with structured operational logging wired end-to-end. Selenium client can locate elements.
 
@@ -439,7 +444,7 @@ All C# code (engine + daemon) is tested in C# with xunit + Moq. SDK client code 
 | 3.2.3 | `ScreenshotEndpoint` (base64 PNG), `TimeoutEndpoints` | Daemon Task 12 (partial) |
 | 3.2.4 | `WindowEndpoints` — size GET/POST, maximize, minimize, restore, close | Daemon Task 10 |
 | 3.2.5 | `KeyboardEndpoints` — hotkey, key-down/up; `ExtensionEndpoints` — provider, scroll-to, app PID, kill, snapshot | Daemon Tasks 11–12 |
-| 3.2.6 | `ClipboardEndpoints` — `GET /session/:id/clipboard` (text or image), `POST /session/:id/clipboard`; `PatternEndpoints` — expand, collapse, toggle, select, addToSelection, removeFromSelection, allSelectedItems, isMultiple, getValue, setFocus as `windows:*` extension commands | Daemon Task 13 |
+| 3.2.6 | `ClipboardEndpoints` — `GET/POST /session/:id/clipboard` (text); `PatternEndpoints` — expand, collapse, toggle, select, addToSelection, removeFromSelection, allSelectedItems, rowcount, columncount, cell, under each element's `windows/` path segment | Daemon Task 13 |
 | 3.2.7 | C# daemon integration tests — `DaemonIntegrationTests.cs`; tests covering full HTTP surface including clipboard, pattern commands, and coordinate-based interactions | Daemon Task 14 |
 | 3.2.8 | Expose the Visual Provider over HTTP — add it to `FindEndpoints`' resolver builder; surface via `automancer:resolverChain` capability. Depends on Stage 2.6 having shipped (the engine-side `VisualProvider`); skip or defer this batch if Phase 2 hasn't reached that stage yet | Daemon Task 15 |
 
@@ -457,11 +462,12 @@ All C# code (engine + daemon) is tested in C# with xunit + Moq. SDK client code 
 | 3.3.2 | `locator.py` — `build_locator` with all strategies including `runtime_id` and `xpath` | SDK Task 2 |
 | 3.3.3 | `session.py` — W3C HTTP client, `_unwrap` error mapper, window methods | SDK Task 2 |
 | 3.3.4 | `element.py` (`Rect`, `Element`) + `app.py` (`App.launch`, `attach`, `find`, `wait_*`, `window_size`, `maximize`) | SDK Task 3 |
-| 3.3.5 | Control subclasses — `Button`, `TextBox`, `ComboBox`, `DataGrid` | SDK Task 5 |
-| 3.3.6 | Integration tests — launch, type, click, attach-by-pid, screenshot, closest-match error | SDK Task 6 |
-| 3.3.7 | `mypy --strict` pass | SDK Task 6 |
+| 3.3.5 | Clipboard, pattern, and grid methods — `App.get_clipboard`/`set_clipboard`; `Element.expand`/`collapse`/`toggle`/`select`/`add_to_selection`/`remove_from_selection`/`all_selected_items`/`row_count`/`column_count`/`cell`. Depends on Stage 2.8 and Daemon Task 13; skip or defer if Phase 2 hasn't reached that stage yet | SDK Task 4 |
+| 3.3.6 | Control subclasses — `Button`, `TextBox`, `ComboBox`, `DataGrid` | SDK Task 5 |
+| 3.3.7 | Integration tests — launch, type, click, attach-by-pid, screenshot, closest-match error | SDK Task 6 |
+| 3.3.8 | `mypy --strict` pass | SDK Task 6 |
 
-**After 3.3.7:** Python SDK ships.
+**After 3.3.8:** Python SDK ships.
 
 ---
 
@@ -475,10 +481,11 @@ All C# code (engine + daemon) is tested in C# with xunit + Moq. SDK client code 
 | 3.4.2 | `types.ts` (all interfaces incl. `runtimeId`, `xpath`), `Locator.ts` (`buildLocator`), unit tests | SDK Task 8 |
 | 3.4.3 | `Session.ts` — HTTP client, error mapper, window methods | SDK Task 8 |
 | 3.4.4 | `Element.ts` (async getters + actions) + `App.ts` (launch, attach, find, waitUntilGone, window management) | SDK Task 9 |
-| 3.4.5 | Control subclasses — `Button`, `TextBox`, `ComboBox`, `DataGrid` | SDK Task 11 |
-| 3.4.6 | Integration tests + final `tsc --noEmit` pass | SDK Task 11 |
+| 3.4.5 | Clipboard, pattern, and grid methods — `App.getClipboard`/`setClipboard`; `Element.expand`/`collapse`/`toggle`/`select`/`addToSelection`/`removeFromSelection`/`allSelectedItems`/`rowCount`/`columnCount`/`cell`. Depends on Stage 2.8 and Daemon Task 13; skip or defer if Phase 2 hasn't reached that stage yet | SDK Task 10 |
+| 3.4.6 | Control subclasses — `Button`, `TextBox`, `ComboBox`, `DataGrid` | SDK Task 11 |
+| 3.4.7 | Integration tests + final `tsc --noEmit` pass | SDK Task 11 |
 
-**After 3.4.6:** Both SDKs ship. The full stack (engine → daemon → SDKs) is complete.
+**After 3.4.7:** Both SDKs ship. The full stack (engine → daemon → SDKs) is complete.
 
 ---
 
@@ -487,19 +494,21 @@ All C# code (engine + daemon) is tested in C# with xunit + Moq. SDK client code 
 > **Done when:** `automancer-session start && automancer-session run pytest tests/ && automancer-session stop` exits 0 in a CI pipeline.
 > **Not the `automancer` CLI from Stage 1.6.** The CLI (`launch`/`find`/`tree`/`click`/`type`) drives one action at a time against a desktop a human is already logged into — a developer tool. `automancer-session` solves a different problem: `SendInput`/UIA generally need an interactive desktop (`WinSta0\Default`), which most CI runners don't have — clicks silently go nowhere and screenshots come back black. `start`/`stop` create and tear down an isolated virtual desktop (`CreateDesktop`/`SetThreadDesktop`); `run <command>` executes a whole test command (`pytest tests/`, `npm test`, ...) inside it, not individual UI actions.
 
+**No detailed spec doc covers this stage yet** — unlike Phases 1–3's other stages, there's no `Task N` breakdown for `VirtualDesktop.cs`/`automancer-session` in any of the four spec docs. Write one before starting, matching the format of `core-engine-spec.md`/`daemon-spec.md`.
+
 | Batch | Work | Plan ref |
 |---|---|---|
-| 3.5.1 | `VirtualDesktop.cs` in daemon — `CreateDesktop` / `SetThreadDesktop` Win32 APIs | Engine spec §9 |
-| 3.5.2 | `automancer-session` CLI — `start`, `run`, `stop`, `list` sub-commands | Engine spec §9 |
-| 3.5.3 | Session isolation — each `automancer-session start` gets a named desktop; parallel sessions don't interfere | Engine spec §9 |
-| 3.5.4 | CI example — GitHub Actions `.yml` with start/run/stop steps | Engine spec §9 |
+| 3.5.1 | `VirtualDesktop.cs` in daemon — `CreateDesktop` / `SetThreadDesktop` Win32 APIs | — |
+| 3.5.2 | `automancer-session` CLI — `start`, `run`, `stop`, `list` sub-commands | — |
+| 3.5.3 | Session isolation — each `automancer-session start` gets a named desktop; parallel sessions don't interfere | — |
+| 3.5.4 | CI example — GitHub Actions `.yml` with start/run/stop steps | — |
 
 **After 3.5.4:** Headless CI works. The `automancer-session run pytest tests/integration/` pattern is validated.
 
 ---
 
-### Stage 3.6 — Polish and v0.1 Release
-> **Unlocks:** Something you can actually publish and point people to.
+### Stage 3.6 — Polish and Release
+> **Unlocks:** A publishable daemon + SDK layer on top of the already-shipped v1 engine.
 > **Done when:** The Definition of Done checklist below is fully satisfied.
 
 | Batch | Work |
@@ -526,7 +535,7 @@ All C# code (engine + daemon) is tested in C# with xunit + Moq. SDK client code 
 - [ ] `dotnet test tests/AutoMancer.Engine.Tests/ --filter "FullyQualifiedName~TestingAdapter"` — all tests green
 - [ ] Apache-2.0 license header present in all `.cs` source files
 
-**Phase 2 complete when:**
+**Phase 2 complete when (v1 release):**
 - [ ] `dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category!=Integration"` — all unit tests green including Phase 2 additions
 - [ ] A spatial locator finds an unlabeled control relative to a known anchor
 - [ ] `Locator.ByProperty(UiaProperty.HelpText, ...)` finds an element via the named enum
@@ -549,7 +558,7 @@ All C# code (engine + daemon) is tested in C# with xunit + Moq. SDK client code 
 - [ ] `app.GetGridCellAsync(locator, row, col)` returns the element at a table/`DataGrid`-style control's cell
 - [ ] `app.SetClipboardTextAsync(...)` / `GetClipboardTextAsync()` round-trip a string through the system clipboard
 
-**Phase 3 complete when (full v0.1):**
+**Phase 3 complete when (daemon + SDKs shipped — future, deferred work):**
 - [ ] `automancer-session start && automancer-session run pytest tests/integration/notepad_test.py && automancer-session stop` exits 0 on clean Windows 11
 - [ ] Same test passes at 100%, 125%, 150% DPI without modification
 - [ ] Raw `curl` to `/session` with Selenium capabilities creates a session and returns a valid `sessionId`

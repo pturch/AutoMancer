@@ -4,7 +4,7 @@
 >
 > **Version control stays manual.** Whoever picks up a task commits deliberately — nothing in this workflow auto-commits or auto-pushes. Bash blocks in this document are implementation reference — execute the build/test lines only, never the git lines.
 
-**Phase:** 2 of 3 — this plan deepens the Phase 1 engine surface (richer locators, wait/resilience primitives, native fallbacks, diagnostics, a visual provider, and UIA pattern coverage). No Phase 1 source files are removed or have their existing signatures changed; every task here is additive. See [roadmap-spec.md](./roadmap-spec.md) for how this fits into the overall three-phase plan, and for the batch-level numbering (`2.1.1`, `2.2.3`, …) each task below maps to one-to-one.
+**Phase:** 2 of 3 — this plan deepens the Phase 1 engine surface (richer locators, wait/resilience primitives, native fallbacks, diagnostics, a visual provider, and UIA pattern coverage). No Phase 1 source files are removed or have their existing signatures changed; every task here is additive. **Completing this phase is the v1 milestone** — a hardened, complete C# engine, CLI, and test adapter, shippable on its own. Phase 3 (daemon + SDKs) is deliberately deferred, long-running future work picked up later, not the next phase in the queue. See [roadmap-spec.md](./roadmap-spec.md) for how this fits into the overall three-phase plan, and for the batch-level numbering (`2.1.1`, `2.2.3`, …) each task below maps to one-to-one.
 
 **Goal:** Take the Phase 1 engine — UIA3/UIA2/Win32 providers, `ElementResolver`, the full interaction/wait surface, and the `AutoMancer.Testing` adapter — and extend it with the coverage a real automation suite eventually needs but a proof of concept doesn't: locators for unlabeled/custom-property elements, a canned wait vocabulary, stale-element resilience, native context menus, resource/monitor diagnostics, an accessibility audit, a visual (OCR/template) fallback provider, DPI/OS hardening, and the UIA pattern actions (`Toggle`/`ExpandCollapse`/`Selection`/`Grid`/clipboard) that Phase 3's daemon and SDKs already assume exist.
 
@@ -12,7 +12,7 @@
 
 **Prior art:** `WaitConditions` (Stage 2.2) mirrors Selenium's `ExpectedConditions` — a starter vocabulary instead of every caller hand-rolling predicates. The Visual Provider (Stage 2.6) is the fallback tier neither Selenium, Playwright, nor WinAppDriver offer for apps with no accessibility tree at all. `WatchResourcesAsync`/`MoveToMonitorAsync` (Stage 2.4) have no counterpart in any of those tools — they're Windows-native concerns with no web/mobile equivalent.
 
-**Tech Stack:** C# latest / .NET 10 Windows (`net10.0-windows10.0.22621.0`), `Interop.UIAutomationClient` (UIA3 COM — already referenced; this phase adds `IUIAutomationRegistrar` for custom-property GUID resolution and `TogglePattern`/`ExpandCollapsePattern`/`SelectionItemPattern`/`SelectionPattern`/`GridPattern`/`TablePattern` usage), `Windows.Media.Ocr.OcrEngine` (on-device OCR via the existing `windows10.x` TFM suffix — no extra package, per CLAUDE.md), `OpenCvSharp4.Windows` (new — template matching), raw Win32 P/Invoke additions to `NativeMethods.cs` (`GetGuiResources`, `EnumDisplayMonitors`, `GetMenu`/`GetSubMenu`/`GetMenuItemInfo`/`TrackPopupMenuEx`, `OpenClipboard`/`GetClipboardData`/`SetClipboardData`).
+**Tech Stack:** C# latest / .NET 10 Windows (`net10.0-windows10.0.22621.0`), `Interop.UIAutomationClient` (UIA3 COM — already referenced; this phase adds `IUIAutomationRegistrar` for custom-property GUID resolution and `TogglePattern`/`ExpandCollapsePattern`/`SelectionItemPattern`/`SelectionPattern`/`GridPattern`/`TablePattern` usage), `Windows.Media.Ocr.OcrEngine` (on-device OCR via the existing `windows10.x` TFM suffix — no extra package, per CLAUDE.md), `OpenCvSharp4.Windows` (new — template matching), `System.Windows.Clipboard` (already available via `UseWPF`, no new dependency — see Task 31), raw Win32 P/Invoke additions to `NativeMethods.cs` (`GetGuiResources`, `EnumDisplayMonitors`, `GetMenu`/`GetSubMenu`/`GetMenuItemInfo`/`TrackPopupMenuEx`).
 
 **Test Stack:** xunit 2.8, Moq 4.20 — unit tests in `tests/AutoMancer.Engine.Tests/`; integration tests in the same project under `[Trait("Category","Integration")]`, run separately per CLAUDE.md's Notepad single-instance rule; run with `dotnet test`.
 
@@ -725,11 +725,11 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "ExpandCollapseActionTests"
 
 ### Task 34: `SelectionAction`
 
-**What:** `SelectionItemPattern.Select()`/`AddToSelection()`/`RemoveFromSelection()` for writes; `SelectionPattern.GetCurrentSelection()`/`CanSelectMultiple` for reads. `App.SelectAsync(Locator)`, `AddToSelectionAsync(Locator)`, `RemoveFromSelectionAsync(Locator)`, `GetSelectedItemsAsync(Locator)` — the last one resolves the *container* locator, reads `SelectionPattern`, and maps each selected native element back to an `ElementHandle` the same way `Uia3Provider`'s tree walk already wraps elements.
+**What:** `SelectionItemPattern.Select()`/`AddToSelection()`/`RemoveFromSelection()` for writes; `SelectionItemPattern.CurrentIsSelected` for a single item's own state; `SelectionPattern.GetCurrentSelection()`/`CanSelectMultiple` for container-level reads. `App.SelectAsync(Locator)`, `AddToSelectionAsync(Locator)`, `RemoveFromSelectionAsync(Locator)`, `IsSelectedAsync(Locator)`, `GetSelectedItemsAsync(Locator)` — the last one resolves the *container* locator, reads `SelectionPattern`, and maps each selected native element back to an `ElementHandle` the same way `Uia3Provider`'s tree walk already wraps elements.
 
 **Creates:**
 - `src/AutoMancer.Engine/Actions/SelectionAction.cs`
-- `src/AutoMancer.Engine/App.cs` — the four methods above
+- `src/AutoMancer.Engine/App.cs` — the five methods above
 - `tests/AutoMancer.Engine.Tests/Actions/SelectionActionTests.cs`
 
 - [ ] **Write tests, run (expect FAIL), implement, run (expect PASS)**

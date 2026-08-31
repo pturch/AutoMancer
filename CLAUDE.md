@@ -53,7 +53,7 @@ Inline comments only when the *why* is non-obvious — never narrate what the co
 
 ## Key invariants
 
-**`ElementHandle` must stay opaque.** Only `Id` (string) and `NativeHandle` (object) are public. The Phase 2 daemon stores handles by `Id` between stateless HTTP requests — leaking internals breaks that contract.
+**`ElementHandle` must stay opaque.** `Id`, `NativeHandle`, and read-only metadata (`Name`, `AutomationId`, `ClassName`, `ControlType`, `BoundingRect`, `IsEnabled`, `IsOffscreen`, `ResolvedVia`) are public; `Provider`, `Operator`, and `Logger` stay `internal`. The Phase 2 daemon stores handles by `Id` between stateless HTTP requests — leaking the provider/operator internals breaks that contract.
 
 **Providers never throw on not-found.** Return `null` / empty. Only `ElementResolver` throws `ElementNotFoundError`.
 

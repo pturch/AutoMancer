@@ -4,7 +4,7 @@
 >
 > **NEVER run git commands (add, commit, push) automatically.** All version control is the developer's responsibility. Bash blocks in this document are implementation reference — execute the build/test lines only, never the git lines.
 
-**Phase:** 3 of 3 — client SDKs built on top of the daemon. No engine or daemon source files are modified. See [roadmap-spec.md](./roadmap-spec.md) for the current phase breakdown.
+**Phase:** 3 of 3 — client SDKs built on top of the daemon. No engine or daemon source files are modified. **Deferred, long-running future work, not the next thing after v1** — see [roadmap-spec.md](./roadmap-spec.md) for the current phase breakdown and why Phase 3 is picked up later rather than immediately after Phase 2.
 
 **Goal:** Build the Python and TypeScript client SDKs that talk to `automancerd` over HTTP using the W3C WebDriver wire protocol.
 
@@ -306,7 +306,7 @@ npm run typecheck
 - Python SDK passes `mypy --strict` with zero errors
 - TypeScript SDK passes `tsc --noEmit` with zero errors
 - No global state in either SDK — multiple `App` instances can coexist in the same process
-- Both SDKs use the W3C wire protocol for the core surface, plus the daemon's namespaced extensions: `automancer/*` (provider info, scroll-to, PID, kill, snapshot) and `windows:*` (keyboard hold, clipboard, UIA patterns) — document in each method's docstring that it's an AutoMancer/Windows-specific extension, not portable to another WebDriver-compatible server
+- Both SDKs use the W3C wire protocol for the core surface, plus the daemon's extensions: the bare `automancer/*` prefix (provider info, scroll-to, PID, kill, snapshot), the per-element `windows/` path segment (UIA patterns — toggle, expand/collapse, selection, grid), and bare (unnamespaced) window-management/clipboard/keyboard-hold routes treated as core session surface — document in each method's docstring that it's an AutoMancer/Windows-specific extension, not portable to another WebDriver-compatible server
 - `find(xpath="//Button[@Name='OK']")` maps to `automancer:xpath`, NOT to the W3C `xpath` strategy — document this distinction in docstrings so users who migrate from WinAppDriver/Selenium understand the difference
 - `find(text="Submit Order")`/`find(image=<base64 PNG>)` map to `automancer:text`/`automancer:image` and only resolve once the session opts into the visual resolver chain — depends on Phase 2's Visual Provider and daemon-spec.md Task 15 having shipped; implement the kwargs/params regardless, but their integration tests are gated the same way
 - `find(runtime_id="42.333896.3.1")` maps to the `id` strategy — this is a UIA RuntimeId, not a DOM id or element-6066 reference

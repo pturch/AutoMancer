@@ -1,16 +1,18 @@
 ﻿# AutoMancer Core Engine Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking..
+> **For agentic workers:** Steps use checkbox (`- [ ]`) syntax for tracking progress through this plan.
 >
 > **NEVER run git commands (add, commit, push) automatically.** All version control is the developer's responsibility. Bash blocks in this document are implementation reference — execute the build/test lines only, never the git lines.
+>
+> **This plan covers the original C# proof of concept (through roughly Stage 1.6 of [roadmap-spec.md](./roadmap-spec.md)) and predates that document's three-phase restructuring.** Stage 1.7 onward (extended interactions, screenshots, wait utilities, the `AutoMancer.Testing`/`AutoMancer.Testing.XUnit` adapter layer) and all of Phase 2 (extended locators, resilience, context menus, diagnostics, accessibility audit, visual provider) were built after this plan's task list ends — see `roadmap-spec.md` for that work, not the task list below.
 
-**Phase:** 1 of 2 — this plan is the complete C# proof of concept. The daemon (Phase 2) adds an HTTP layer on top of this library without modifying it.
+**Phase:** 1 of 3 — this plan is the complete C# proof of concept. Phase 2 deepens the engine surface; the daemon (Phase 3) adds an HTTP layer on top of this library without modifying it.
 
 **Goal:** Build the `AutoMancer.Engine` class library and `AutoMancer.Cli` console harness — the Windows automation core with UIA3/UIA2/Win32 providers, element resolver, retry loop, actions, and DPI normalization.
 
 **Architecture:** `AutoMancer.Engine` is a pure class library with no HTTP/RPC. Providers implement `IElementProvider` (find-only). Separately, `IElementOperator` is an optional contract for providers that can interact with elements via native UIA patterns (InvokePattern, ValuePattern). UIA3 and UIA2 providers each ship a paired operator class; Win32 has none (SendInput covers it universally). `ElementResolver` runs the fallback chain with retry until implicit wait expires. Action classes (Click, Type, Clear, Scroll, Window) check `ElementHandle.Operator` first for native dispatch before falling back to SendInput. `AutoMancer.Cli` wraps the engine for interactive developer testing.
 
-**API stability note:** `ElementHandle` must remain opaque — only `Id` and `NativeHandle` exposed publicly. The Phase 2 daemon stores handles in an element registry keyed by `Id` between stateless HTTP requests; leaking implementation details here creates cleanup work later.
+**API stability note:** `ElementHandle` must remain opaque — `Id`, `NativeHandle`, and read-only metadata (`Name`, `AutomationId`, `ClassName`, `ControlType`, `BoundingRect`, `IsEnabled`, `IsOffscreen`, `ResolvedVia`) are public, but `Provider`/`Operator`/`Logger` stay `internal`. The Phase 3 daemon stores handles in an element registry keyed by `Id` between stateless HTTP requests; leaking the provider/operator internals here creates cleanup work later.
 
 **WinAppDriver lessons incorporated:** WinAppDriver (Microsoft, abandoned 2020) uses a single UIAutomation provider with no fallback chain and ships source-closed. Three concrete gaps it left open that AutoMancer fills: (1) `RuntimeId` locator strategy — re-finds a specific element by its UIA RuntimeId, the UIA equivalent of a CSS `:id` selector; (2) `automancer:xpath` — XPath evaluated against the UIA element tree, not rejected like browser XPath; (3) window management actions (resize, move, maximize) missing from WinAppDriver entirely. Our `KEYEVENTF_UNICODE` typing approach also fixes WinAppDriver's known keyboard layout bug (QWERTY-only regardless of system layout).
 
@@ -32,10 +34,10 @@ AutoMancer/
 │   │   │   ├── LocatorStrategy.cs        enum: Name, AutomationId, ClassName, ControlType, RuntimeId, AutoMancerPath, AutoMancerXPath
 │   │   │   ├── Locator.cs                value object + factory methods (incl. ByRuntimeId, ByXPath)
 │   │   │   ├── ElementHandle.cs          resolved element + Rect struct; holds Provider and Operator backrefs (internal)
-│   │   │   ├── ElementProviderOptions.cs timeouts, chain, DPI flag
+│   │   │   ├── ElementProviderOptions.cs timeouts, chain
 │   │   │   ├── AppSession.cs             connection to a running app
 │   │   │   ├── IElementProvider.cs       find-only provider contract + ElementSnapshot
-│   │   │   ├── IElementOperator.cs       optional native-interact contract (TryClickAsync, TrySetValueAsync)
+│   │   │   ├── IElementOperator.cs       optional native-interact contract (TryClickAsync, TrySetValueAsync, TryGetValueAsync)
 │   │   │   ├── ElementResolver.cs        fallback chain orchestrator
 │   │   │   ├── AutoMancerPathParser.cs   tree-path syntax parser
 │   │   │   └── XPathEvaluator.cs         UIA tree snapshot → XML → XPath → element IDs
@@ -177,7 +179,7 @@ dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
 dotnet test tests/AutoMancer.Engine.Tests/ --filter "EngineLoggerTests"
 ```
 
-**Done when:** 2 `EngineLoggerTests` pass.
+**Done when:** `EngineLoggerTests` pass.
 
 ---
 
@@ -196,7 +198,7 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "EngineLoggerTests"
 dotnet test tests/AutoMancer.Engine.Tests/ --filter "ClosestMatchFinderTests"
 ```
 
-**Done when:** 5 tests pass.
+**Done when:** `ClosestMatchFinderTests` pass.
 
 ---
 
@@ -215,7 +217,7 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "ClosestMatchFinderTests"
 dotnet test tests/AutoMancer.Engine.Tests/ --filter "DpiHelperTests"
 ```
 
-**Done when:** 4 tests pass.
+**Done when:** `DpiHelperTests` pass.
 
 ---
 
@@ -243,7 +245,7 @@ dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
 
 **Creates:**
 - `src/AutoMancer.Engine/Providers/Uia3Provider.cs` — `FindElementAsync`, `FindElementsAsync`, `SnapshotTreeAsync`; `ControlTypeMap`; `BuildCondition`; `WalkTree` up to 20 levels; injects `Uia3Operator` singleton into each `ElementHandle` via the `Operator` backref
-- `src/AutoMancer.Engine/Operators/Uia3Operator.cs` — `IElementOperator` implementation; `TryClickAsync` via `InvokePattern`; `TrySetValueAsync` via `ValuePattern`; returns `false` when the pattern is not exposed
+- `src/AutoMancer.Engine/Operators/Uia3Operator.cs` — `IElementOperator` implementation; `TryClickAsync` via `InvokePattern`; `TrySetValueAsync`/`TryGetValueAsync` via `ValuePattern` (with `TextPattern` fallback for reads); returns `false`/`null` when the pattern is not exposed
 
 
 - [ ] **Implement and build**
@@ -271,7 +273,7 @@ dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
 dotnet test tests/AutoMancer.Engine.Tests/ --filter "ElementResolverTests"
 ```
 
-**Done when:** 3 tests pass.
+**Done when:** `ElementResolverTests` pass.
 
 ---
 
@@ -282,8 +284,8 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "ElementResolverTests"
 **WinUI3 single-instance constraint:** Windows 11 Notepad (WinUI3) is single-instance — a second `notepad.exe` launch opens a new tab in the existing window rather than starting a fresh process. This means test classes that each launch Notepad must run **sequentially**, not in parallel. Enforce this with an xUnit `[CollectionDefinition]` on a marker class and `[Collection("Notepad")]` on every integration test class. Each test's `DisposeAsync` must also `await Task.Delay(800)` after `KillApp()` so the process fully exits before the next test's `LaunchAsync` runs.
 
 **Creates:**
-- `tests/AutoMancer.Engine.Tests/Integration/NotepadTestCollection.cs` — `[CollectionDefinition("Notepad", DisableParallelization = true)]` marker
-- `tests/AutoMancer.Engine.Tests/Integration/NotepadIntegrationTests.cs` — `[Collection("Notepad")]`; launch+find Document control via UIA3, attach-by-title, typo → closest match, type text, click File menu
+- `tests/AutoMancer.Engine.Tests/Integration/Notepad/NotepadTestCollection.cs` — `[CollectionDefinition("Notepad", DisableParallelization = true)]` marker
+- `tests/AutoMancer.Engine.Tests/Integration/Notepad/NotepadIntegrationTests.cs` — `[Collection("Notepad")]`; launch+find Document control via UIA3, attach-by-title, typo → closest match, type text, click File menu
 
 
 - [ ] **Run integration tests**
@@ -292,7 +294,7 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "ElementResolverTests"
 dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration"
 ```
 
-**Done when:** 5 tests pass on a Windows machine with Notepad.
+**Done when:** `NotepadIntegrationTests` pass on a Windows machine with Notepad.
 
 ---
 
@@ -301,7 +303,7 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration"
 **What:** The two primary interaction actions. Each action checks `element.Operator` first — if non-null, it delegates to the operator's native pattern (InvokePattern for click, ValuePattern for type). If the operator returns `false` (pattern not supported) or is `null` (Win32/Visual elements), the action falls back to synthesized `SendInput`. DPI correctness comes from `DpiAwareness`'s process-wide Per-Monitor-V2 declaration (called once from `AppSession`'s static constructor), which makes every `BoundingRect` and `SendInput` coordinate physical-pixel-native by construction — `ClickAction` only needs to normalize those physical pixels into `SendInput`'s 0–65535 absolute coordinate space, no logical→physical conversion step required. `DpiHelper`'s `LogicalToPhysical`/`PhysicalToLogical` are kept as a standalone conversion utility, not wired into the click/type path, reserved for the Stage 2.7 DPI compat matrix (comparing logical coordinates across DPI settings).
 
 **Creates:**
-- `src/AutoMancer.Engine/Actions/ClickAction.cs` — `ClickType` enum; `element.Operator?.TryClickAsync` → SendInput mouse fallback; `GetCenter` via `BoundingRect`
+- `src/AutoMancer.Engine/Actions/ClickAction.cs` — `MouseButton` enum; `element.Operator?.TryClickAsync` → SendInput mouse fallback; `GetCenter` via `BoundingRect`
 - `src/AutoMancer.Engine/Actions/TypeAction.cs` — `element.Operator?.TrySetValueAsync` → Unicode `SendInput` fallback (`KEYEVENTF_UNICODE`, never VK codes)
 
 Extends `NativeMethods.cs` with `GetSystemMetrics`.
@@ -341,7 +343,7 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration"
 
 ### Task 13: Win32Provider
 
-**What:** Last-resort provider using only `EnumChildWindows` P/Invoke. Works on apps with no accessibility tree at all. Matches by window title text (Name strategy, substring match) or class name (exact match). Returns the HWND wrapped in `ElementHandle`. No operator class — Win32 has no native automation patterns equivalent to InvokePattern/ValuePattern, and `SendInput` is more universal for modern apps. A `Win32Operator` will be added in Stage 6.1 for window management actions (`SetWindowPos`, `ShowWindow`).
+**What:** Last-resort provider using only `EnumChildWindows` P/Invoke. Works on apps with no accessibility tree at all. Matches by window title text (Name strategy, substring match) or class name (exact match). Returns the HWND wrapped in `ElementHandle`. No operator class — Win32 has no native automation patterns equivalent to InvokePattern/ValuePattern, and `SendInput` is more universal for modern apps. A `Win32Operator` will be added in roadmap-spec.md Stage 1.6.1 for window management actions (`SetWindowPos`, `ShowWindow`).
 
 **Creates:**
 - `src/AutoMancer.Engine/Providers/Win32Provider.cs` — `EnumChildWindows` callback; `Matches`; `GetTitle`/`GetClass` helpers; `Operator = null` in wrapped handles (actions fall through to SendInput)
@@ -367,7 +369,7 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration"
 - Inconclusive-safe tests: when a snapshot returns no named/classed children (valid on some Notepad builds), the test returns early rather than asserting on nothing.
 
 **Creates:**
-- `tests/AutoMancer.Engine.Tests/Integration/NotepadWorkflowTests.cs` — `[Collection("Notepad")]`; full workflow (type + menu + re-attach), provider chain assertions, Win32 locators, UIA3/Win32 snapshots, error hint tests (15 tests total)
+- `tests/AutoMancer.Engine.Tests/Integration/Notepad/NotepadWorkflowTests.cs` — `[Collection("Notepad")]`; full workflow (type + menu + re-attach), provider chain assertions, Win32 locators, UIA3/Win32 snapshots, error hint tests
 
 
 - [ ] **Run integration tests**
@@ -376,7 +378,7 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration"
 dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration"
 ```
 
-**Done when:** All 15 integration tests pass (5 from `NotepadIntegrationTests` + 10 from `NotepadWorkflowTests`).
+**Done when:** `NotepadIntegrationTests` and `NotepadWorkflowTests` both pass.
 
 ---
 
@@ -401,7 +403,7 @@ dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
 
 ### Task 15: AutoMancerPathParser
 
-**What:** Parses tree-traversal path strings like `"Window > Pane[2] > Button[\"Submit\"]"` into typed `PathSegment` records. Supports control type, quoted name, 0-based index, and wildcard `*`. Provider wiring (segment-by-segment tree traversal) is a separate concern handled in Stage 6; this task produces only the parser.
+**What:** Parses tree-traversal path strings like `"Window > Pane[2] > Button[\"Submit\"]"` into typed `PathSegment` records. Supports control type, quoted name, 0-based index, and wildcard `*`. Provider wiring (segment-by-segment tree traversal) is a separate concern handled in roadmap-spec.md Stage 1.6; this task produces only the parser.
 
 **Creates:**
 - `src/AutoMancer.Engine/Core/AutoMancerPathParser.cs` — `Parse(string)` → `IReadOnlyList<PathSegment>`; regex-based
@@ -498,10 +500,10 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration"
 
 ### Task 19: WindowAction — resize, move, maximize
 
-**What:** WinAppDriver supports window size/position/maximize endpoints that AutoMancer is missing. `WindowAction` wraps `WindowPattern.SetTransformProperties` (move + resize) and `WindowPattern.SetWindowVisualState` (maximize/minimize/normal). Falls back to `SetWindowPos` P/Invoke for apps that don't expose `WindowPattern`.
+**What:** WinAppDriver supports window size/position/maximize endpoints that AutoMancer is missing. `WindowAction` wraps `TransformPattern.Move`/`.Resize` (move/resize) and `WindowPattern.SetWindowVisualState` (maximize/minimize/normal, via a `WindowState` enum). Falls back to `SetWindowPos` P/Invoke for move/resize and `ShowWindow` for visual-state changes, on apps that don't expose the corresponding pattern.
 
 **Creates:**
-- `src/AutoMancer.Engine/Actions/WindowAction.cs` — `MoveAsync`, `ResizeAsync`, `MaximizeAsync`, `RestoreAsync`; `WindowPattern` → `SetWindowPos` P/Invoke fallback
+- `src/AutoMancer.Engine/Actions/WindowAction.cs` — `MoveAsync`, `ResizeAsync`, `GetSizeAsync`, `SetVisualStateAsync(WindowState)`, `CloseAsync`; `TransformPattern`/`WindowPattern` → `SetWindowPos`/`ShowWindow`/`PostMessage(WM_CLOSE)` P/Invoke fallbacks
 
 **Modifies:**
 - `src/AutoMancer.Engine/Providers/NativeMethods.cs` — add `SetWindowPos` P/Invoke and `SWP_*` constants
@@ -543,4 +545,4 @@ dotnet build AutoMancer.slnx
 - All public API is `async Task<T>`; synchronous Win32/UIA2 calls wrapped in `Task.Run`
 - `TypeAction` must use `KEYEVENTF_UNICODE` with `wScan` set to the character codepoint — never use VK codes for printable characters; this is what fixes WinAppDriver's known QWERTY-only keyboard layout bug
 - `automancer:xpath` is an AutoMancer extension strategy, not standard WebDriver XPath; it targets the UIA element tree, not a browser DOM — document this distinction clearly
-- `ElementHandle` must stay opaque — only `Id` (string) and `NativeHandle` (object) are public. No other internal fields exposed. This is a Phase 1 → Phase 2 contract: the daemon's element registry depends on being able to store and retrieve handles purely by `Id` without knowing their internals
+- `ElementHandle` must stay opaque — `Id`, `NativeHandle`, and read-only metadata (`Name`, `AutomationId`, `ClassName`, `ControlType`, `BoundingRect`, `IsEnabled`, `IsOffscreen`, `ResolvedVia`) are public, but `Provider`/`Operator`/`Logger` stay `internal`. This is a Phase 1 → Phase 3 contract: the daemon's element registry depends on being able to store and retrieve handles purely by `Id` without leaking the provider/operator internals

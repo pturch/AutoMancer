@@ -30,8 +30,7 @@ public sealed class PaintTreeDumpTests(ITestOutputHelper output) : IAsyncLifetim
     // Kills Paint without triggering the save dialog.
     public async Task DisposeAsync()
     {
-        _app.Kill();
-        await Task.Delay(800);
+        await _app.KillAsync();
     }
 
     // Snapshots the full UIA3 element tree and writes it to %TEMP%\automancer-paint-tree.txt.

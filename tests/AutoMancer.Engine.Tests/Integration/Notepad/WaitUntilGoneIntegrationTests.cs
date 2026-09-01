@@ -33,8 +33,7 @@ public sealed class WaitUntilGoneIntegrationTests
         }
         finally
         {
-            app.Kill();
-            await Task.Delay(500);
+            await app.KillAsync();
         }
     }
 }

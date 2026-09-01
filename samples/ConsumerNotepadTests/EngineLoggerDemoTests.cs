@@ -11,7 +11,7 @@ namespace ConsumerNotepadTests;
 
 // Demonstrates attaching an EngineLogger via AppOptions.Logger to capture AutoMancer's own operational trace — separate from Expect's on-failure diagnostics, which stay self-contained.
 [Collection("ConsumerNotepad")]
-public sealed class EngineLoggerDemoTests(NotepadFixture fixture, ITestOutputHelper output) : AutoMancerTest(fixture), IClassFixture<NotepadFixture>
+public sealed class EngineLoggerDemoTests(NotepadFixture fixture, ITestOutputHelper output) : AutoMancerTest(fixture)
 {
     // WithOptions attaches a logger to the shared session without relaunching Notepad; the captured trace shows both element resolution and the click's branch decision.
     [Fact]

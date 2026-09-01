@@ -7,7 +7,7 @@ namespace ConsumerNotepadTests;
 
 // Exercises App's window management, discovery, and session-attachment methods against a live Notepad instance.
 [Collection("ConsumerNotepad")]
-public sealed class WindowAndDiscoveryDemoTests(NotepadFixture fixture) : AutoMancerTest(fixture), IClassFixture<NotepadFixture>
+public sealed class WindowAndDiscoveryDemoTests(NotepadFixture fixture) : AutoMancerTest(fixture)
 {
     // GetWindowSizeAsync, MoveWindowAsync, and ResizeWindowAsync round-trip the window back to where they found it.
     [Fact]

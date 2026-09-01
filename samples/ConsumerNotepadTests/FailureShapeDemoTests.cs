@@ -8,7 +8,7 @@ namespace ConsumerNotepadTests;
 // Deliberately-triggered assertion failures, one per failure shape, wrapped in Assert.Throws/ThrowsAsync so this stays a real
 // (passing) regression test on Expect's diagnostic message shape instead of a permanently-red demonstration.
 [Collection("ConsumerNotepad")]
-public sealed class FailureShapeDemoTests(NotepadFixture fixture) : AutoMancerTest(fixture), IClassFixture<NotepadFixture>
+public sealed class FailureShapeDemoTests(NotepadFixture fixture) : AutoMancerTest(fixture)
 {
     // Golden path — passes without needing Assert.Throws, for contrast against the failures below.
     [Fact]

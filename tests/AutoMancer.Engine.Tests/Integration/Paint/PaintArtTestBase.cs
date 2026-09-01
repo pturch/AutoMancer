@@ -30,8 +30,7 @@ public abstract class PaintArtTestBase : IAsyncLifetime
     // Kills Paint without triggering the save dialog.
     public async Task DisposeAsync()
     {
-        _app.Kill();
-        await Task.Delay(800);
+        await _app.KillAsync();
     }
 
     // Opens the Resize and Skew flyout and sets the canvas to an exact square pixel size, so "Maintain aspect ratio" can't matter.

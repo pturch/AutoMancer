@@ -1,4 +1,5 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
+using System.Runtime.InteropServices;
 using AutoMancer.Engine.Core;
 using AutoMancer.Engine.Diagnostics;
 using AutoMancer.Engine.Errors;
@@ -38,12 +39,27 @@ public static class ClickAction
         logger?.Info("Clicked via synthesized input", new { elementId = element.Id, button });
     }
 
-    // Brings the element's owning window to the foreground so synthesized input reaches it; no-op for non-UIA handles. Logs (doesn't throw) if the OS declines — SetForegroundWindow's failure signal is known to be unreliable, so this isn't treated as conclusive.
+    // Brings the element's owning window to the foreground so synthesized input reaches it; no-op for non-UIA handles.
     internal static void EnsureForeground(ElementHandle element)
     {
-        if (element.NativeHandle is IUIAutomationElement uiaElement && uiaElement.CurrentNativeWindowHandle != IntPtr.Zero)
-            if (!NativeMethods.SetForegroundWindow(uiaElement.CurrentNativeWindowHandle))
-                element.Logger?.Warn("SetForegroundWindow declined");
+        if (element.NativeHandle is not IUIAutomationElement uiaElement)
+            return;
+
+        IntPtr windowHandle;
+        try
+        {
+            windowHandle = uiaElement.CurrentNativeWindowHandle;
+        }
+        catch (COMException ex)
+        {
+            // Some UIA elements (e.g. split-button MenuItems observed against VLC) throw or time out here; log and move on rather than failing the click.
+            element.Logger?.Warn("CurrentNativeWindowHandle failed", new { elementId = element.Id, error = ex.Message });
+            return;
+        }
+
+        // SetForegroundWindow's failure signal is unreliable, so a false return is logged but not treated as conclusive.
+        if (windowHandle != IntPtr.Zero && !NativeMethods.SetForegroundWindow(windowHandle))
+            element.Logger?.Warn("SetForegroundWindow declined");
     }
 
     // Throws ElementNotInteractableError when IsEnabled/IsOffscreen say a synthesized action can't land meaningfully; shared by every action that falls back to SendInput (click, type, clear), not just click.
@@ -59,8 +75,8 @@ public static class ClickAction
     internal static (int X, int Y) GetCenter(ElementHandle element)
     {
         EnsureInteractable(element);
-        var rect = element.BoundingRect;
-        return ((int)(rect.X + rect.Width / 2), (int)(rect.Y + rect.Height / 2));
+        var (x, y) = element.BoundingRect.Center;
+        return ((int)x, (int)y);
     }
 
     // Sends a leading move, then modifier-down, the button click, then modifier-up (reverse order), all as one SendInput batch.

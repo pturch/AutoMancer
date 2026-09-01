@@ -7,7 +7,7 @@ namespace ConsumerNotepadTests;
 
 // Exercises App's keyboard, drag, and scroll methods against a live Notepad Document control.
 [Collection("ConsumerNotepad")]
-public sealed class KeyboardDragScrollDemoTests(NotepadFixture fixture) : AutoMancerTest(fixture), IClassFixture<NotepadFixture>
+public sealed class KeyboardDragScrollDemoTests(NotepadFixture fixture) : AutoMancerTest(fixture)
 {
     private static readonly Locator Document = Locator.ByControlType("Document");
 
@@ -83,11 +83,9 @@ public sealed class KeyboardDragScrollDemoTests(NotepadFixture fixture) : AutoMa
         await App.PressKeyAsync(Key.Home);
         await App.DragThroughAsync([(startX, y), (endX, y)]);
         await App.TypeDirectAsync("Replaced");
-        await Task.Delay(200);
 
         // Not an exact match — the drag selects an approximate pixel range, so some of the original text may survive alongside "Replaced".
-        var value = await App.GetValueAsync(Document);
-        Assert.Contains("Replaced", value);
+        await Expect(() => App.GetValueAsync(Document)).ToSatisfyAsync(v => v?.Contains("Replaced") == true, "to contain \"Replaced\"");
     }
 
     // DragAsync is DragThroughAsync's straight-line convenience overload — a short drag near the caret proves it dispatches without an explicit waypoint list.

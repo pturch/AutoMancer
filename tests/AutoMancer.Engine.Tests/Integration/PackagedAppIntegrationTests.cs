@@ -25,8 +25,8 @@ public sealed class PackagedAppIntegrationTests : IAsyncLifetime
     // Kills Calculator and waits for the process to fully exit before the next test.
     public async Task DisposeAsync()
     {
-        _app?.Kill();
-        await Task.Delay(800);
+        if (_app is not null)
+            await _app.KillAsync();
     }
 
     // Verifies that the Calculator result display can be found by AutomationId via UIA3.

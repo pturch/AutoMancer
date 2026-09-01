@@ -8,7 +8,10 @@ Windows UI automation engine — C# class library + CLI + HTTP daemon + polyglot
 dotnet build AutoMancer.slnx
 dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category!=Integration"
 dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration"   # requires Windows + Notepad
+dotnet test samples/ConsumerNotepadTests/                                   # requires Windows + Notepad
 ```
+
+**Never run `dotnet test AutoMancer.slnx`** to exercise the integration suites. It runs every test project in the solution concurrently, and Windows 11 Notepad is single-instance — `AutoMancer.Engine.Tests`'s Notepad integration tests and `samples/ConsumerNotepadTests`'s demo tests will fight over the same OS-level window, producing flaky, non-reproducible failures. Run each Notepad-touching project one at a time via the commands above. `AutoMancer.Cli.Tests` has no live-UI dependency and is safe to run alongside anything.
 
 The solution file is `.slnx` (not `.sln`) — that is the .NET 10 SDK default.
 
@@ -50,7 +53,7 @@ Inline comments only when the *why* is non-obvious — never narrate what the co
 
 ## Key invariants
 
-**`ElementHandle` must stay opaque.** Only `Id` (string) and `NativeHandle` (object) are public. The Phase 2 daemon stores handles by `Id` between stateless HTTP requests — leaking internals breaks that contract.
+**`ElementHandle` must stay opaque.** `Id`, `NativeHandle`, and read-only metadata (`Name`, `AutomationId`, `ClassName`, `ControlType`, `BoundingRect`, `IsEnabled`, `IsOffscreen`, `ResolvedVia`) are public; `Provider`, `Operator`, and `Logger` stay `internal`. The Phase 2 daemon stores handles by `Id` between stateless HTTP requests — leaking the provider/operator internals breaks that contract.
 
 **Providers never throw on not-found.** Return `null` / empty. Only `ElementResolver` throws `ElementNotFoundError`.
 

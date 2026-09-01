@@ -18,7 +18,4 @@ public sealed class NotepadAppFixture : AppFixture
                  .FindAsync(Locator.ByControlType("Document"));
         return app;
     }
-
-    // Notepad is single-instance — without this delay, the next fixture's launch can open a tab in this window instead of a fresh process.
-    protected override Task OnKilledAsync() => Task.Delay(800);
 }

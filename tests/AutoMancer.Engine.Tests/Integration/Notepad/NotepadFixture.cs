@@ -22,8 +22,7 @@ public sealed class NotepadFixture : IAsyncLifetime
     public async Task DisposeAsync()
     {
         SendEscape();
-        App.Kill();
-        await Task.Delay(800);
+        await App.KillAsync();
         await App.DisposeAsync();
     }
 

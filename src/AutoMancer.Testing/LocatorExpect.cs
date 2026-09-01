@@ -33,33 +33,30 @@ public sealed class LocatorExpect
     public Task ToHaveTextAsync(string expected, CancellationToken ct = default)
         => WaitOrFailAsync(e => e.Name?.Contains(expected, StringComparison.Ordinal) == true, $"to have text containing \"{expected}\"", ct);
 
-    // Polls until the located element's value (ValuePattern/TextPattern, not Name) equals expected exactly; throws ExpectFailedError on timeout. Runs its own loop rather than WaitOrFailAsync/App.WaitForAsync, since reading a value is an async operator call, not a synchronous ElementHandle check. Defaults mirror the App's own ImplicitWaitMs/PollIntervalMs (from AppOptions) unless overridden.
+    // Polls until the element's value equals expected, via Poll rather than WaitOrFailAsync since reading a value is async; throws ExpectFailedError on timeout.
     public async Task ToHaveValueAsync(string expected, int? timeoutMs = null, int? pollIntervalMs = null, CancellationToken ct = default)
     {
         var effectiveTimeoutMs = timeoutMs ?? _app.ImplicitWaitMs;
         var effectivePollIntervalMs = pollIntervalMs ?? _app.PollIntervalMs;
         var stopwatch = Stopwatch.StartNew();
-        string? actual = null;
+        bool success;
+        string? actual;
+        long elapsedMs;
         try
         {
-            while (true)
-            {
-                actual = await _app.GetValueAsync(_locator, ct);
-                if (actual == expected)
-                    return;
-                if (stopwatch.ElapsedMilliseconds >= effectiveTimeoutMs)
-                    break;
-                await Task.Delay(effectivePollIntervalMs, ct);
-            }
+            (success, actual, elapsedMs) = await Poll.UntilAsync(() => _app.GetValueAsync(_locator, ct), v => v == expected, effectiveTimeoutMs, effectivePollIntervalMs, ct);
         }
         catch (ElementNotFoundError)
         {
-            actual = null;
+            (success, actual, elapsedMs) = (false, null, stopwatch.ElapsedMilliseconds);
         }
 
+        if (success)
+            return;
+
         var describedActual = actual is null ? "no matching element was ever found" : $"found value \"{actual}\"";
-        var screenshot = _options.CaptureScreenshotsOnFailure ? await DescribeScreenshotAsync(ct) : "";
-        throw new ExpectFailedError($"Expected {_locator.Strategy}={_locator.Value} to have value \"{expected}\", but {describedActual} (elapsed {stopwatch.ElapsedMilliseconds}ms){screenshot}");
+        var screenshot = await ExpectDiagnostics.DescribeScreenshotAsync(_app, _options, ct);
+        throw new ExpectFailedError($"Expected {_locator.Strategy}={_locator.Value} to have value \"{expected}\", but {describedActual} (elapsed {elapsedMs}ms){screenshot}");
     }
 
     // Delegates to App.WaitForAsync and rewraps a timeout as ExpectFailedError carrying what was actually found, self-contained with no logger required.
@@ -72,7 +69,7 @@ public sealed class LocatorExpect
         catch (ElementConditionTimeoutError ex)
         {
             var actual = await DescribeActualAsync(ct);
-            var screenshot = _options.CaptureScreenshotsOnFailure ? await DescribeScreenshotAsync(ct) : "";
+            var screenshot = await ExpectDiagnostics.DescribeScreenshotAsync(_app, _options, ct);
             throw new ExpectFailedError($"Expected {_locator.Strategy}={_locator.Value} {description}, but {actual} (elapsed {ex.ElapsedMs}ms){screenshot}");
         }
     }
@@ -84,21 +81,5 @@ public sealed class LocatorExpect
         if (matches.Count == 0)
             return "no matching element was ever found";
         return $"found Name=\"{matches[0].Name}\", BoundingRect={matches[0].BoundingRect}";
-    }
-
-    // Saves a screenshot to a uniquely-named PNG in _options.ScreenshotDirectory; a capture failure is folded into the message rather than masking the original assertion failure.
-    private async Task<string> DescribeScreenshotAsync(CancellationToken ct)
-    {
-        try
-        {
-            var bytes = await _app.ScreenshotAsync(ct);
-            var path = Path.Combine(_options.ScreenshotDirectory, $"automancer-expect-{DateTime.UtcNow:yyyyMMdd-HHmmss-fff}.png");
-            await File.WriteAllBytesAsync(path, bytes, ct);
-            return $" Screenshot: {path}";
-        }
-        catch (Exception ex)
-        {
-            return $" (screenshot capture failed: {ex.Message})";
-        }
     }
 }

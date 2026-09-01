@@ -37,8 +37,7 @@ public sealed class ScreenshotActionIntegrationTests
         }
         finally
         {
-            app.Kill();
-            await Task.Delay(500);
+            await app.KillAsync();
         }
     }
 
@@ -55,8 +54,7 @@ public sealed class ScreenshotActionIntegrationTests
         }
         finally
         {
-            app.Kill();
-            await Task.Delay(500);
+            await app.KillAsync();
         }
     }
 }

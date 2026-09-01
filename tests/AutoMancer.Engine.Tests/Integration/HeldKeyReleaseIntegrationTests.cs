@@ -26,7 +26,7 @@ public sealed class HeldKeyReleaseIntegrationTests
 
         Assert.False(IsKeyDown(Key.W), "Kill() should have released the held key.");
 
-        await Task.Delay(800);
+        await app.WaitForExitAsync();
         await app.DisposeAsync();
     }
 
@@ -44,7 +44,7 @@ public sealed class HeldKeyReleaseIntegrationTests
         Assert.False(IsKeyDown(Key.W), "KeyUpAsync should have released the key.");
 
         app.Kill();
-        await Task.Delay(800);
+        await app.WaitForExitAsync();
         await app.DisposeAsync();
     }
 
@@ -65,7 +65,7 @@ public sealed class HeldKeyReleaseIntegrationTests
         Assert.False(IsKeyDown(Key.W), "Kill() should have released W.");
         Assert.False(IsKeyDown(Key.A), "Kill() should have released A.");
 
-        await Task.Delay(800);
+        await app.WaitForExitAsync();
         await app.DisposeAsync();
     }
 
@@ -90,7 +90,7 @@ public sealed class HeldKeyReleaseIntegrationTests
         Assert.False(IsKeyDown(Key.A), "KeyUpAsync should have released A.");
 
         app.Kill();
-        await Task.Delay(800);
+        await app.WaitForExitAsync();
         await app.DisposeAsync();
     }
 

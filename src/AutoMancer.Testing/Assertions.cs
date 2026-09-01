@@ -12,4 +12,7 @@ public static class Assertions
 
     // Wraps a locator for retry-asserting checks that poll through app until the condition holds or times out; options controls failure-diagnostics behavior.
     public static LocatorExpect Expect(App app, Locator locator, ExpectOptions? options = null) => new(app, locator, options ?? ExpectOptions.Default);
+
+    // Wraps an arbitrary async value producer for retry-asserting checks — the generic form of Expect(App, Locator), for state that isn't a single ElementHandle property.
+    public static ValueExpect<T> Expect<T>(App app, Func<Task<T>> produce, ExpectOptions? options = null) => new(app, produce, options ?? ExpectOptions.Default);
 }

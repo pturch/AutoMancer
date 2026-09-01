@@ -29,8 +29,7 @@ public sealed class PaintFixture : IAsyncLifetime
     // Kills Paint without triggering the save dialog (Kill bypasses it).
     public async Task DisposeAsync()
     {
-        App.Kill();
-        await Task.Delay(800);
+        await App.KillAsync();
     }
 }
 

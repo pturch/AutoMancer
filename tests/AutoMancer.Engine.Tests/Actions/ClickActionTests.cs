@@ -1,13 +1,31 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
+using System.Runtime.InteropServices;
 using AutoMancer.Engine.Actions;
 using AutoMancer.Engine.Core;
+using AutoMancer.Engine.Diagnostics;
 using AutoMancer.Engine.Errors;
 using AutoMancer.Engine.Providers;
+using Interop.UIAutomationClient;
+using Moq;
 
 namespace AutoMancer.Engine.Tests.Actions;
 
 public sealed class ClickActionTests
 {
+    // Reproduces a COMException observed against a live split-button MenuItem: get_CurrentNativeWindowHandle timed out mid-click.
+    [Fact]
+    public void EnsureForeground_CurrentNativeWindowHandleThrows_LogsInsteadOfThrowing()
+    {
+        var native = new Mock<IUIAutomationElement>();
+        native.SetupGet(e => e.CurrentNativeWindowHandle).Throws(new COMException("Operation timed out.", unchecked((int)0x80131505)));
+        var writer = new StringWriter();
+        var element = new ElementHandle("1", "uia3", native.Object) { Logger = new EngineLogger(writer) };
+
+        ClickAction.EnsureForeground(element);
+
+        Assert.Contains("CurrentNativeWindowHandle failed", writer.ToString());
+    }
+
     // Middle/Back/Forward have no live UI effect to assert in this project's integration tests, so this verifies the SendInput flag mapping directly.
     [Theory]
     [InlineData(MouseButton.Left, (uint)NativeMethods.MouseEventFlags.LeftDown, (uint)NativeMethods.MouseEventFlags.LeftUp, 0u)]

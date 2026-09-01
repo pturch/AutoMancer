@@ -8,7 +8,7 @@ namespace ConsumerNotepadTests;
 
 // Demonstrates the interactability signals a resolved ElementHandle carries, and the typed errors App throws instead of silently sending input nowhere.
 [Collection("ConsumerNotepad")]
-public sealed class InteractabilityDemoTests(NotepadFixture fixture) : AutoMancerTest(fixture), IClassFixture<NotepadFixture>
+public sealed class InteractabilityDemoTests(NotepadFixture fixture) : AutoMancerTest(fixture)
 {
     // IsEnabled/IsOffscreen are populated on every resolved element (null only when a provider can't determine them, e.g. Win32); a normal, visible, enabled control reads true/not-true respectively.
     [Fact]

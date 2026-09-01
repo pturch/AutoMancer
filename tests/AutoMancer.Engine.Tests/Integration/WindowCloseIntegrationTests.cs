@@ -36,8 +36,7 @@ public sealed class WindowCloseIntegrationTests
         finally
         {
             // Safety net: UWP hosts often stay resident after their window closes, so kill it to avoid lingering for the next test class — must run even when the assertion above fails.
-            app.Kill();
-            await Task.Delay(800);
+            await app.KillAsync();
         }
     }
 }

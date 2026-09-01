@@ -12,10 +12,10 @@ public abstract class AppFixture : IAsyncLifetime
     // Launches the app under test via the derived fixture's CreateAppAsync.
     public async Task InitializeAsync() => App = await CreateAppAsync();
 
-    // Kills the app, runs any app-specific teardown, then releases the process handle.
+    // Kills the app and waits for it to actually exit, runs any app-specific teardown, then releases the process handle.
     public async Task DisposeAsync()
     {
-        App.Kill();
+        await App.KillAsync();
         await OnKilledAsync();
         await App.DisposeAsync();
     }
@@ -26,6 +26,6 @@ public abstract class AppFixture : IAsyncLifetime
     // Defaults to the process-wide AutoMancerTestOptions policy; override only for a fixture that needs to diverge from it.
     protected virtual string LogDirectory => AutoMancerTestOptions.LogDirectory;
 
-    // Runs after Kill() and before the process handle is released; override for app-specific teardown timing (e.g. a single-instance app's re-launch race).
+    // Runs after the app has exited and before the process handle is released; override for app-specific teardown beyond waiting for exit.
     protected virtual Task OnKilledAsync() => Task.CompletedTask;
 }

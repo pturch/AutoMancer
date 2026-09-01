@@ -333,6 +333,18 @@ public sealed class App : IAsyncDisposable
         _session.KillApp();
     }
 
+    // Terminates the target process and waits until it has actually exited — use in test teardown instead of Kill() plus a guessed settle delay, since a single-instance app's next launch can otherwise reuse this process's still-closing window as a new tab.
+    public async Task KillAsync(int timeoutMs = 5_000, CancellationToken ct = default)
+    {
+        ReleaseHeldInputBestEffort();
+        _session.KillApp();
+        await _session.WaitForExitAsync(timeoutMs, ct);
+    }
+
+    // Waits until the process has actually exited, or timeoutMs elapses — use after a plain Kill() call instead of a guessed settle delay.
+    public Task WaitForExitAsync(int timeoutMs = 5_000, CancellationToken ct = default)
+        => _session.WaitForExitAsync(timeoutMs, ct);
+
     // Kills the app (if still running), writes the Windows Event Log / combined-timeline artifacts if configured, and releases the underlying process handle.
     public ValueTask DisposeAsync()
     {

@@ -4,7 +4,11 @@ using AutoMancer.Engine.Diagnostics;
 namespace AutoMancer.Engine.Core;
 
 // A logical-pixel bounding box, used for element rects and window geometry.
-public readonly record struct Rect(double X, double Y, double Width, double Height);
+public readonly record struct Rect(double X, double Y, double Width, double Height)
+{
+    // The midpoint of this rect, in the same coordinate space as X/Y.
+    public (double X, double Y) Center => (X + Width / 2, Y + Height / 2);
+}
 
 // An opaque, resolved reference to a found UI element; Id, NativeHandle, and read-only metadata are public, but Provider/Operator/Logger stay internal per the daemon's storage contract.
 public sealed class ElementHandle

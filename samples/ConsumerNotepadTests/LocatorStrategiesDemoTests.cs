@@ -7,7 +7,7 @@ namespace ConsumerNotepadTests;
 
 // Exercises the Locator strategies ActionsDemoTests/WindowAndDiscoveryDemoTests don't already cover — ByPath, ByXPath, ByRuntimeId, ByClassName — against a live Notepad instance.
 [Collection("ConsumerNotepad")]
-public sealed class LocatorStrategiesDemoTests(NotepadFixture fixture) : AutoMancerTest(fixture), IClassFixture<NotepadFixture>
+public sealed class LocatorStrategiesDemoTests(NotepadFixture fixture) : AutoMancerTest(fixture)
 {
     private static readonly Locator Document = Locator.ByControlType("Document");
 

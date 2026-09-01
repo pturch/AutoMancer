@@ -45,8 +45,7 @@ public sealed class WindowActionIntegrationTests
         }
         finally
         {
-            app.Kill();
-            await Task.Delay(500);
+            await app.KillAsync();
         }
     }
 
@@ -68,8 +67,7 @@ public sealed class WindowActionIntegrationTests
         }
         finally
         {
-            app.Kill();
-            await Task.Delay(500);
+            await app.KillAsync();
         }
     }
 
@@ -88,8 +86,7 @@ public sealed class WindowActionIntegrationTests
         }
         finally
         {
-            app.Kill();
-            await Task.Delay(500);
+            await app.KillAsync();
         }
     }
 
@@ -108,8 +105,7 @@ public sealed class WindowActionIntegrationTests
         }
         finally
         {
-            app.Kill();
-            await Task.Delay(500);
+            await app.KillAsync();
         }
     }
 
@@ -129,8 +125,7 @@ public sealed class WindowActionIntegrationTests
         }
         finally
         {
-            app.Kill();
-            await Task.Delay(500);
+            await app.KillAsync();
         }
     }
 
@@ -150,8 +145,7 @@ public sealed class WindowActionIntegrationTests
         }
         finally
         {
-            app.Kill();
-            await Task.Delay(500);
+            await app.KillAsync();
         }
     }
 
@@ -172,8 +166,7 @@ public sealed class WindowActionIntegrationTests
         }
         finally
         {
-            app.Kill();
-            await Task.Delay(500);
+            await app.KillAsync();
         }
     }
 }

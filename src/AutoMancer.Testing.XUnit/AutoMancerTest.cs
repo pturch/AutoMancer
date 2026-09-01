@@ -26,4 +26,7 @@ public abstract class AutoMancerTest(AppFixture fixture)
 
     // Retry-asserting checks against a locator, polling through this test's App until the condition holds or times out.
     protected LocatorExpect Expect(Locator locator) => Assertions.Expect(App, locator, ExpectOptions);
+
+    // Retry-asserting checks against an arbitrary async value producer, polling through this test's App until the condition holds or times out — for state that isn't a single ElementHandle property.
+    protected ValueExpect<T> Expect<T>(Func<Task<T>> produce) => Assertions.Expect(App, produce, ExpectOptions);
 }

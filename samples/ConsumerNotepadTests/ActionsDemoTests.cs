@@ -7,7 +7,7 @@ namespace ConsumerNotepadTests;
 
 // Exercises App's element-targeted action methods against a live Notepad Document control.
 [Collection("ConsumerNotepad")]
-public sealed class ActionsDemoTests(NotepadFixture fixture) : AutoMancerTest(fixture), IClassFixture<NotepadFixture>
+public sealed class ActionsDemoTests(NotepadFixture fixture) : AutoMancerTest(fixture)
 {
     private static readonly Locator Document = Locator.ByControlType("Document");
     private static readonly Locator FileMenu = Locator.ByName("File");
@@ -68,15 +68,14 @@ public sealed class ActionsDemoTests(NotepadFixture fixture) : AutoMancerTest(fi
     public async Task ClickAtAsync_Locator_ClicksElementCenter()
         => await App.ClickAtAsync(Document);
 
-    // ClickAtAsync(x, y) clicks a raw physical screen coordinate with no element lookup — computed here from the Document's already-resolved bounding rect.
+    // ClickAtAsync(x, y) clicks a raw physical screen coordinate with no element lookup — the path for targets with no accessible element at all, e.g. a paint tool's fill bucket.
     [Fact]
     public async Task ClickAtAsync_Coordinates_ClicksRawPoint()
     {
-        var document = await App.FindAsync(Document);
-        var x = (int)(document.BoundingRect.X + document.BoundingRect.Width / 2);
-        var y = (int)(document.BoundingRect.Y + document.BoundingRect.Height / 2);
+        var window = await App.FindAsync(Locator.ByControlType("Window"));
+        var (x, y) = window.BoundingRect.Center;
 
-        await App.ClickAtAsync(x, y);
+        await App.ClickAtAsync((int)x, (int)y);
     }
 
     // TypeDirectAsync sends keystrokes to whatever currently has focus, bypassing locator resolution entirely.

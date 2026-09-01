@@ -131,6 +131,16 @@ public sealed class AppSession : IAsyncDisposable
             _process.Kill();
     }
 
+    // Waits until the process has actually exited (event-based, not polled), or timeoutMs elapses
+    // Use after KillApp() to know a single-instance app's next launch won't reuse its still-closing window as a new tab.
+    public async Task WaitForExitAsync(int timeoutMs = 5_000, CancellationToken ct = default)
+    {
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(timeoutMs);
+        try { await _process.WaitForExitAsync(cts.Token).ConfigureAwait(false); }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
+    }
+
     // Releases the underlying Process object without killing the app.
     public ValueTask DisposeAsync()
     {

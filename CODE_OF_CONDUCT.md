@@ -6,14 +6,14 @@ Be respectful. Argue about code, not people. Harassment, personal attacks, and t
 
 ## What that means
 
-This project runs on technical discussion — issues, pull requests, code review. Disagreement about approach, pushback on a design, and blunt code review are all normal and expected. Keep it about the work.
+This project runs on technical discussion. Disagreement about approach, pushback on a design, and blunt code review are all normal and expected. Keep it about the work.
 
-Not okay, in any project space (issues, PRs, discussions):
+These behaviors are not acceptable in any project space (issues, PRs, discussions):
 
 - Harassment, insults, or personal attacks
 - Publishing someone else's private information without consent
-- Sexual content or unwelcome sexual attention
 - Sustained disruption of discussion (trolling, derailing threads)
+- Discriminatory language, sexual content, or threats of violence
 
 ## Enforcement
 

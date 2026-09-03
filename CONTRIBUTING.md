@@ -1,45 +1,49 @@
 # Contributing
 
-Looking for how to write tests *against your own app* using AutoMancer instead of how to contribute to AutoMancer itself? See [TESTING.md](TESTING.md).
-
 By participating in this project you're expected to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
-## Prerequisites
-
-Same as the engine — see [README.md](README.md#prerequisites).
-
-## Build & test
+## Build & Test:
 
 ```bash
+# Build:
 dotnet build AutoMancer.slnx
+
+# Unit Tests:
 dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category!=Integration"
-dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration"   # requires Windows + Notepad
-dotnet test samples/ConsumerNotepadTests/                                   # requires Windows + Notepad
+
+# Integration Tests (requires Windows + Notepad):
+dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration"   
+dotnet test samples/ConsumerNotepadTests/                                   
 ```
 
 CI runs the build and the non-integration suite on every push and pull request to `main`. Integration tests need a real interactive desktop session, so they're local-only.
 
-**Don't run `dotnet test AutoMancer.slnx`** to exercise the integration suites. It builds and runs every test project in the solution concurrently, and Windows 11 Notepad is single-instance: `AutoMancer.Engine.Tests`'s Notepad integration tests and `samples/ConsumerNotepadTests`'s demo tests will fight over the same OS-level window, producing flaky, non-reproducible failures (stale UIA elements, text from one test landing in another). Run each Notepad-touching project one at a time via the commands above instead. `AutoMancer.Cli.Tests` has no live-UI dependency and is safe to run alongside anything.
+Avoid running `dotnet test AutoMancer.slnx` because it runs every test project in the solution concurrently, causing the tests to fight over the same OS-level window resources.
 
-## Code style
+## Code Style:
 
-- Write the minimum code that satisfies the requirement — no speculative abstractions, no helper methods for single call sites. Multiple instances of a pattern (or a clear architectural plan) are reasons to start abstracting.
-- `System.Text.Json` only, no Newtonsoft.Json.
-- Every function/method and every class/struct/enum gets a one-line topline comment directly above it explaining its purpose — constructors and private helpers included.
-- Beyond that, inline comments only when the *why* is non-obvious.
-- Every `.cs` file starts with:
+There are many ways to write valid code, but making sure they share a look and feel makes the project feel more cohesive. These rules are covered in the `CLAUDE.MD` file for agents to consider, but keep them in mind while authoring:
+
+- **Write the minimum code that satisfies the requirement.** Speculative abstractions and helper methods for single call sites tend to lead to bloat. Multiple instances of a pattern (or a clear architectural plan) are reasons to start abstracting.
+- **Leverage existing packages instead of introducing new ones.** For example, AutoMancer is currently using `System.Text.Json`, not Newtonsoft.Json. Changing from one to the other would merit a discussion.
+- **Use comments wisely.** Every function/method and every class/struct/enum gets a one-line topline comment directly above it explaining its purpose. This includes  constructors and private helpers that might seem obvious to the author; the intention is to help the other maintainers. Beyond that, use inline comments only when the *why* is non-obvious.
+- **Formatting:** Every `.cs` file starts with:
 
   ```csharp
   // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
   ```
 
-## Reporting bugs and requesting features
+## Reporting Bugs and Requesting Features:
 
 Open a [GitHub issue](https://github.com/pturch/AutoMancer/issues). For a bug, include the Windows version, the target app you were automating, and — if you can — the smallest repro you found. For a security issue, see [SECURITY.md](SECURITY.md) instead of opening a public issue.
 
-## Pull requests
+## Pull Requests:
 
-- Keep PRs focused on a single change.
-- Make sure `dotnet build` and the non-integration test suite pass locally before opening a PR.
-- Describe what changed and why in the PR description.
-- By submitting a pull request, you agree to license your contribution under the project's [Apache License 2.0](LICENSE).
+Just like with code style, there are many ways to both log and fix a bug.
+
+- **Keep PRs focused on a single change.** Feature scope can be opinionated, but try for the smallest possible deliverable. Massive refactors and changes can complicate and invalidate other folks' branches.
+- **Test before opening PRs.** Make sure `dotnet build` compiles and all the test suites pass locally before opening a PR. The Integration tests are subject to flukes and not part of the PR process, but please make sure there are no functional regressions. 
+- **Keep up with documentation.** Describe what changed and why in the PR description, and update any docs the change affects so they don't drift out of sync with the code.
+- **Always have a human touch on anything you submit.** AI tools are fine for generating code or docs, but review and understand everything before opening a PR. Don't submit unread output. Keep prose human-readable and write PR descriptions in your own words.
+
+By submitting a pull request, you agree to license your contribution under the project's [Apache License 2.0](LICENSE).

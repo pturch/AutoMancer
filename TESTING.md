@@ -1,18 +1,13 @@
 # Writing Tests with AutoMancer
 
-A guide to testing your own app with `AutoMancer.Testing`/`AutoMancer.Testing.XUnit`, the retry-asserting `Expect()` API built on top of the engine.
+A guide to testing your own app with AutoMancer's testing libraries, `AutoMancer.Testing` and `AutoMancer.Testing.XUnit`, which add a retry-aware assertion helper on top of the engine.
 
-Looking for how to run or contribute to AutoMancer's own test suite instead? See [CONTRIBUTING.md](CONTRIBUTING.md).
-
-## Prerequisites
-
-Same as the engine — see [README.md](README.md#prerequisites).
 
 ## Write your first test
 
 There are three pieces to this, and none of them are much code.
 
-First, a fixture that launches the app. `AppFixture` is `IAsyncLifetime`: it launches in `InitializeAsync` and tears down in `DisposeAsync` automatically.
+First, a fixture that launches the app. It's a subclass of `AppFixture`, which plugs into xUnit's async lifecycle, so the app launches and tears down automatically with no manual setup or cleanup code in your tests.
 
 ```csharp
 public sealed class NotepadFixture : AppFixture
@@ -26,10 +21,20 @@ public sealed class NotepadFixture : AppFixture
 }
 ```
 
-Then a test class extending `AutoMancerTest`, paired with `IClassFixture<T>`. `IClassFixture` gives each test class its own fresh `NotepadFixture`, shared across every `[Fact]` in that class but not across classes. `AutoMancerTest` exposes `App` and `Expect` so you're not calling `Assertions.Expect` or touching fixture plumbing yourself.
+Then a collection that shares one fixture instance, and the single app it launches, across every test class in it. This matters for a single-instance app like Notepad. Letting each test class launch its own instance would just mean every class fighting over the same OS-level window, so instead the whole collection reuses the one app the fixture launches once.
 
 ```csharp
-public sealed class MyFirstTests(NotepadFixture fixture) : AutoMancerTest(fixture), IClassFixture<NotepadFixture>
+[CollectionDefinition("Notepad", DisableParallelization = true)]
+public sealed class NotepadCollection : ICollectionFixture<NotepadFixture> { }
+```
+
+Disabling parallelization stops xUnit from running this collection's test classes against each other at the same time. That matters here because they're all driving the same window, not separate ones.
+
+Then a test class extending the shared base class, tagged with the collection name and taking the fixture through its constructor. That base class gives you the running app and the assertion helper directly, so you're not touching fixture plumbing yourself.
+
+```csharp
+[Collection("Notepad")]
+public sealed class MyFirstTests(NotepadFixture fixture) : AutoMancerTest(fixture)
 {
     [Fact]
     public async Task Types_Into_Document()
@@ -43,22 +48,24 @@ public sealed class MyFirstTests(NotepadFixture fixture) : AutoMancerTest(fixtur
 }
 ```
 
-And if your app is single-instance like Notepad, a shared `[Collection]`:
+Every other test class that needs Notepad carries the same collection tag and constructor parameter, and they all share the one app the fixture already launched. See [`samples/ConsumerNotepadTests`](samples/ConsumerNotepadTests) for this pattern across a dozen files.
+
+If your app under test can run multiple instances side by side, you don't need any of that. Skip the collection and use xUnit's ordinary class fixture instead, so each test class gets its own fresh app.
 
 ```csharp
-[CollectionDefinition("Notepad", DisableParallelization = true)]
-public sealed class NotepadCollection { }
+public sealed class MyFirstTests(NotepadFixture fixture) : AutoMancerTest(fixture), IClassFixture<NotepadFixture>
+{
+    // same body as above
+}
 ```
-
-Carry `[Collection("Notepad")]` on every test class that shares this constraint. It doesn't share the `App` itself — that's still `IClassFixture`'s job, per class — it just stops xUnit from running these classes' launching `InitializeAsync`s in parallel, which would collide the same way running two Notepad-driving test projects at once does (more on that in [CONTRIBUTING.md](CONTRIBUTING.md)). Most apps don't need this at all.
 
 That's the whole pattern. Everything past this point is the same three pieces, aimed at different corners of the API.
 
-## Two kinds of Expect
+## Two kinds of assertion
 
-`Expect(locator)` retries. It polls through `App.WaitForAsync` until the condition holds or the implicit wait runs out, so it survives ordinary UI timing, like an element that isn't focused, enabled, or populated yet. Use this almost everywhere.
+Asserting against a locator retries. It keeps polling until the condition holds or the implicit wait runs out, so it survives ordinary UI timing, like an element that isn't focused, enabled, or populated yet. Use this almost everywhere.
 
-`Expect(element)` doesn't retry. It runs once, against an `ElementHandle` you already resolved yourself: no polling, no timeout, it either matches right now or it doesn't. Reach for it when you deliberately don't want a retry, or when you're asserting on a snapshot you took for some other reason anyway.
+Asserting against an element you already resolved yourself doesn't retry. It checks once: no polling, no timeout, it either matches right now or it doesn't. Reach for it when you deliberately don't want a retry, or when you're checking a snapshot you took for some other reason anyway.
 
 ## Assertions reference
 
@@ -67,13 +74,13 @@ That's the whole pattern. Everything past this point is the same three pieces, a
 | `ToHaveName(string)` / `ToHaveNameAsync(string)` | element / locator | `Name` equals exactly |
 | `ToBeVisible()` / `ToBeVisibleAsync()` | element / locator | `BoundingRect` is non-zero |
 | `ToHaveText(string)` / `ToHaveTextAsync(string)` | element / locator | `Name` contains the substring |
-| `ToHaveValueAsync(string, timeoutMs?, pollIntervalMs?)` | locator only | The element's `ValuePattern`/`TextPattern` value (not `Name`) equals exactly — the one that reads live content, e.g. what's actually typed into an editor |
+| `ToHaveValueAsync(string, timeoutMs?, pollIntervalMs?)` | locator only | The element's live value (not its `Name`) equals exactly. This is the one that reads what's actually typed into an editor. |
 
-The locator-based (`...Async`) forms live on `LocatorExpect`; the element-based, synchronous ones live on `ElementExpect`. Both throw `ExpectFailedError` on failure, and the message names what was expected alongside what was actually found.
+The locator-based, retrying assertions and the element-based, one-shot ones live in separate helper classes internally, but you call both the same way, through the `Expect` you saw above. Either kind throws on failure, and the message names what was expected alongside what was actually found.
 
 ## Failure diagnostics
 
-Set `AutoMancerTestOptions.CaptureScreenshotsOnFailure = true` once, a `[ModuleInitializer]` in your test assembly is a reasonable place for it, and every failed locator-based `Expect` saves a screenshot to `AutoMancerTestOptions.ScreenshotDirectory` (`%TEMP%` by default) and folds the path into the exception message:
+Turn on `AutoMancerTestOptions.CaptureScreenshotsOnFailure` once, and every failed locator-based assertion saves a screenshot automatically and folds its path into the failure message. A module initializer in your test assembly is a reasonable place to set it:
 
 ```csharp
 internal static class TestSetup
@@ -83,8 +90,8 @@ internal static class TestSetup
 }
 ```
 
-It's a process-wide switch, not a per-class setting. Set it once and every test class picks it up through `AutoMancerTest`'s default `ExpectOptions`.
+It's a process-wide switch, not a per-class setting, so setting it once covers every test class. Screenshots land in the configured directory, `%TEMP%` by default.
 
 ## A complete worked example
 
-[`samples/ConsumerNotepadTests`](samples/ConsumerNotepadTests) is a full test project built entirely on this public API, nothing in it reaches into AutoMancer's own internals. Its [README](samples/ConsumerNotepadTests/README.md) walks through what each file demonstrates, including what an `Expect` failure message actually looks like in practice.
+[`samples/ConsumerNotepadTests`](samples/ConsumerNotepadTests) is a full test project built entirely on this public API. Nothing in it reaches into AutoMancer's own internals. Its [README](samples/ConsumerNotepadTests/README.md) walks through what each file demonstrates, including what a failure message actually looks like in practice.

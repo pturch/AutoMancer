@@ -5,17 +5,17 @@
 
 **A Windows Automation Framework**
 
-Bring older Windows applications back to life: AutoMancer enables modern testing patterns for UIA3 automation with a C# class library and CLI.
+Bring older Windows applications back to life. AutoMancer enables modern testing patterns for UI automation with a C# class library and CLI.
 
-> **Status:** Phase 1 (engine + CLI) is complete and this is what's usable today. Phase 2 (richer locators, resilience, diagnostics, a visual fallback provider, and full UIA pattern coverage) is in progress — its completion is the v1 milestone. The HTTP daemon and Python/TypeScript SDKs are deliberately deferred, long-running future work, picked up once v1 has had real time in the field — not the next thing on the list. See [docs/roadmap-spec.md](docs/roadmap-spec.md) for where things actually stand.
+> **Status:** Phase 1 (engine + CLI) is complete and this is what's usable today. Phase 2 (richer locators, resilience, diagnostics, a visual fallback provider, and full UIA pattern coverage) is in progress. Its completion will be the v1 milestone. The HTTP daemon and Python/TypeScript SDKs are deliberately deferred future work, to be picked up once v1 has had real time in the field. See [docs/roadmap-spec.md](docs/roadmap-spec.md) for where things actually stand.
 
-## What it is
+## Overview:
 
 AutoMancer drives real Windows desktop applications the way a person would. It finds controls in the UI Automation tree and clicks, types, and drags on them, instead of scripting at the pixel or protocol level. The engine (`AutoMancer.Engine`) is a plain class library with no HTTP or process dependency. The CLI (`AutoMancer.Cli`) is a thin console wrapper around it for interactive use and scripting.
 
-Windows automation is harder than web testing: locator rules are more complex, input simulation has more edge cases, and no single UI framework covers every app. Instead of leaving those details to the implementer this application treats provider fallback and flexible locators as first-class concerns. AutoMancer makes Windows automation as easy as modern web automation.
+Windows automation is harder than web testing. Locator rules are more complex, input simulation has more edge cases, and no single UI framework covers every app. Instead of leaving those details to the implementer this application treats provider fallback and flexible locators as first-class concerns. AutoMancer makes Windows automation as easy as modern web automation.
 
-## Why it exists
+## Features:
 
 AutoMancer is built to make Windows desktop automation reliable enough to build real test suites and tooling on top of:
 
@@ -24,41 +24,70 @@ AutoMancer is built to make Windows desktop automation reliable enough to build 
 - **Built to run async.** Every engine call (`LaunchAsync`, `FindAsync`, `ClickAsync`, `TypeAsync`, …) returns a `Task` and accepts a `CancellationToken`, so it drops straight into modern `await`-based test methods.
 - **A natural fit for AI-driven automation.** Each action is a small, self-contained, text-in/text-out operation against a stable session ID. Since this is the same shape an LLM tool call expects, an agent can drive a real desktop app through the same CLI surface a human or script uses.
 
-## Prerequisites
+## Getting Started:
+
+### Prerequisites:
 
 - Windows 10/11
 - [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) — Windows-only, no cross-platform support
 
-## Build
+### Build:
 
 ```bash
 dotnet build AutoMancer.slnx
 ```
 
-## Tests
+Builds everything in the solution: the engine (`AutoMancer.Engine`), the CLI (`AutoMancer.Cli`), and every test project. To build just one project, point `dotnet build` at its `.csproj` instead, e.g. `dotnet build src/AutoMancer.Cli`.
+
+### Tests:
 
 ```bash
 dotnet test tests/AutoMancer.Engine.Tests --filter "Category!=Integration"
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for running the test suite and the code style guide.
+Runs the engine's unit tests. The `Category=Integration` tests and `samples/ConsumerNotepadTests` drive a real Notepad window, so they need an interactive Windows session and aren't part of CI. See [CONTRIBUTING.md](CONTRIBUTING.md#build--test) for more information.
 
-## Run the CLI
+### Running via C#:
 
-```bash
-dotnet run --project src/AutoMancer.Cli -- <command> [args]
+Reference `AutoMancer.Engine` from your own project and drive an app directly:
+
+```csharp
+using AutoMancer.Engine;
+using AutoMancer.Engine.Core;
+
+await using var app = await App.LaunchAsync("notepad.exe");
+
+await app.ClickAsync(Locator.ByControlType("Document"));
+await app.TypeAsync(Locator.ByControlType("Document"), "Hello, world!");
+
+var element = await app.FindAsync(Locator.ByControlType("Document"));
+Console.WriteLine(element.Name);
 ```
 
-Or build once and run the executable directly:
+See [Example: Calculator](#example-calculator) below for a fuller worked example, including UWP/MSIX apps and the rest of the `App` surface.
+
+### Running the CLI:
+
+Once you've built locally, you can run the executable directly:
 
 ```bash
 dotnet build AutoMancer.slnx
-src/AutoMancer.Cli/bin/Debug/net10.0-windows10.0.22621.0/automancer.exe <command> [args]
+src/AutoMancer.Cli/bin/Debug/<net10 version>/automancer.exe <command> [args]
 ```
 
-### Commands
+### CLI Commands:
 
-`launch`, `find`, `tree`, `click`, and `type` all share a session model: `launch` starts an app and prints a session ID, and every command after that takes the ID as its first argument.
+| Command | Arguments | Options | What it does |
+|---|---|---|---|
+| `launch <executable>` | path to the executable | — | Launches the app, registers a session, and prints the session ID, PID, and path |
+| `find <session-id>` | session ID | `--by`, `--value` | Resolves one element and prints its properties (name, automation ID, control type, class name, bounding rect, …) |
+| `tree <session-id>` | session ID | — | Snapshots the whole element tree and prints it as an indented list |
+| `click <session-id>` | session ID | `--by`, `--value`, `--double`, `--right` | Resolves one element and clicks it |
+| `type <session-id> <text>` | session ID, text | `--by`, `--value` | Resolves one element and types the text into it |
+
+`launch` doesn't take a session ID since it creates one. Every other command takes that ID as its first argument to reattach to the running session.
+
+### CLI Example:
 
 ```bash
 # Launch Notepad and capture the session ID it prints
@@ -78,20 +107,27 @@ automancer click <session-id> --by name --value "Text Editor" --right
 # Type text into an element
 automancer type <session-id> "Hello, world!" --by name --value "Text Editor"
 ```
+## Locator Reference:
 
-### Locator strategies
+### Locators:
 
-Every `find`/`click`/`type` command takes `--by <strategy> --value <value>`. The same strategies exist in C# as `Locator.By*` factory methods on `AutoMancer.Engine.Core.Locator`.
+A `Locator` is how you address an element. Every element-resolving operation, in C# or via the CLI, takes one. In C#, `Locator.By*` factory methods on `AutoMancer.Engine.Core.Locator` build one directly; `FindAsync`, `ClickAsync`, `TypeAsync`, and every other resolving `App` method accepts it. The CLI's `find`/`click`/`type` commands build the same `Locator` under the hood from `--by <strategy> --value <value>`.
 
-| `--by` | `Locator` factory | Matches | Match type |
-|---|---|---|---|
-| `name` | `Locator.ByName` | Visible text / accessible name | Exact |
-| `id` | `Locator.ByAutomationId` | Developer-assigned automation ID — stable across relaunches | Exact |
-| `class` | `Locator.ByClassName` | Win32 window class name (e.g. `Edit`, `Button`) | Exact |
-| `control` | `Locator.ByControlType` | UIA semantic control type (e.g. `Button`, `Edit`), regardless of Win32 class | Exact |
-| `runtime` | `Locator.ByRuntimeId` | Re-finds a specific element by the dotted ID from a previous find (`ElementHandle.Id`, e.g. `"42.333896.3.1"`) | Exact |
-| `path` | `Locator.ByPath` | Position in the tree, level by level — see [Path locator syntax](#path-locator-syntax) | Segment-by-segment |
-| `xpath` | `Locator.ByXPath` | XPath evaluated against the UIA tree — see [XPath locator syntax](#xpath-locator-syntax) | XPath 1.0 |
+| Strategy | `Locator` factory (C#) | `--by` value (CLI) | Matches | Match type |
+|---|---|---|---|---|
+| Name | `Locator.ByName` | `name` | Visible text / accessible name | Exact |
+| Automation ID | `Locator.ByAutomationId` | `id` | Developer-assigned automation ID — stable across relaunches | Exact |
+| Class name | `Locator.ByClassName` | `class` | Win32 window class name (e.g. `Edit`, `Button`) | Exact |
+| Control type | `Locator.ByControlType` | `control` | UIA semantic control type (e.g. `Button`, `Edit`), regardless of Win32 class | Exact |
+| Runtime ID | `Locator.ByRuntimeId` | `runtime` | Re-finds an element you've already seen, by its dotted `ElementHandle.Id` (e.g. `"42.333896.3.1"`) | Exact |
+| Path | `Locator.ByPath` | `path` | Position in the tree, level by level — see [Path locators](#path-locators) | Segment-by-segment |
+| XPath | `Locator.ByXPath` | `xpath` | XPath evaluated against the UIA tree — see [XPath locators](#xpath-locators) | XPath 1.0 |
+
+```csharp
+Locator.ByAutomationId("PencilTool")
+Locator.ByControlType("Button")
+Locator.ByRuntimeId("42.333896.3.1")
+```
 
 ```bash
 automancer find <session-id> --by id --value "PencilTool"
@@ -99,22 +135,33 @@ automancer find <session-id> --by control --value "Button"
 automancer find <session-id> --by runtime --value "42.333896.3.1"
 ```
 
-**Provider support:** `name`, `id`, `class`, `control`, and `runtime` all resolve through both the `uia3` and `uia2` providers. `path` and `xpath` only work against UIA3. The `win32` fallback only kicks in when neither UIA provider exposes an accessibility tree, and it only understands `name` (a case-insensitive substring match against the window title) and `class` (exact window class, case-insensitive). Narrow `ProviderChain` down to `["win32"]` alone and `id`, `control`, `runtime`, `path`, and `xpath` simply won't resolve.
+**Provider support:** Name, automation ID, class name, control type, and runtime ID all resolve through both the `uia3` and `uia2` providers. Path and XPath locators only work against UIA3. The `win32` fallback only kicks in when neither UIA provider exposes an accessibility tree, and it only understands name (a case-insensitive substring match against the window title) and class name (exact window class, case-insensitive). Narrow `ProviderChain` down to `["win32"]` alone and automation ID, control type, runtime ID, path, and XPath locators simply won't resolve.
 
-### Path locator syntax
+**A runtime ID only lasts one session.** Unlike automation ID, which is stable across relaunches, a runtime ID is only valid for the lifetime of the app instance that produced it. Use it to confirm you're still looking at the same element after doing something to it — not as a locator you write into a test ahead of time, since you won't have one until you've already found the element once.
 
-`--by path` addresses an element by its exact position in the tree, using `>` to separate levels: `ControlType`, `ControlType["Name"]`, `ControlType[index]`, or a `*` wildcard for any control type. The first segment has to match the session's root window itself, and every segment after that only matches the direct children of the previous match. There's no `//`-style "search anywhere below" like `--by xpath` has, so every level in between has to be spelled out. Leave off `[index]` and every matching child at that level continues; add it (0-based) to pick one specific child, counted only among siblings that already match that segment's control type.
+### Path Locators:
+
+A path locator addresses an element by its exact position in the tree, using `>` to separate levels: `ControlType`, `ControlType["Name"]`, `ControlType[index]`, or a `*` wildcard for any control type. The first segment has to match the root window itself, and every segment after that only matches the direct children of the previous match. There's no `//`-style "search anywhere below" like an XPath locator has, so every level in between has to be spelled out. Leave off `[index]` and every matching child at that level continues; add it (0-based) to pick one specific child, counted only among siblings that already match that segment's control type.
+
+```csharp
+Locator.ByPath("Window > Pane[2] > Pane > MenuBar > MenuItem[\"File\"]")
+```
 
 ```bash
 # Walk from the root window down to Notepad's File menu item
 automancer find <session-id> --by path --value 'Window > Pane[2] > Pane > MenuBar > MenuItem["File"]'
 ```
 
-If you don't want to spell out every intervening level, or need to filter on more than an exact name, reach for `--by xpath` instead. It runs real XPath against the same UIA tree rather than a fixed parent-child chain.
+If you don't want to spell out every intervening level, or need to filter on more than an exact name, reach for an XPath locator instead — it runs real XPath against the same UIA tree rather than a fixed parent-child chain.
 
-### XPath locator syntax
+### XPath Locators:
 
-`--by xpath` runs a real XPath 1.0 expression against the live UIA tree, so `//` can search at any depth instead of naming every level the way `--by path` requires. The tree is exposed as XML, with the control type as the tag name and `Name`/`AutomationId`/`ClassName` as attributes. No other UIA properties are queryable this way.
+An XPath locator runs a real XPath 1.0 expression against the live UIA tree, so `//` can search at any depth instead of naming every level the way a path locator requires. The tree is exposed as XML, with the control type as the tag name and `Name`/`AutomationId`/`ClassName` as attributes. No other UIA properties are queryable this way.
+
+```csharp
+Locator.ByXPath("//MenuItem[@Name='File']")
+Locator.ByXPath("//MenuBar//MenuItem[@Name='File']")
+```
 
 ```bash
 # Find the File menu item anywhere in the tree, regardless of nesting depth
@@ -126,7 +173,7 @@ automancer find <session-id> --by xpath --value "//MenuBar//MenuItem[@Name='File
 
 Positional predicates use 0-based indices, so `//Button[0]` is the first `Button`, matching every other AutoMancer locator even though XPath itself is 1-based under the hood.
 
-### Example: Calculator
+## Example: Calculator
 
 Here's the same kind of interaction from C#, using the engine directly instead of the CLI. This is roughly what a real test looks like:
 
@@ -157,7 +204,7 @@ public class CalculatorTests
 
 `App.LaunchPackagedAsync` activates the app by AUMID, which UWP/MSIX apps like Calculator need. `ClickAsync` and `FindAsync` go through the same retry-driven resolver the CLI uses under the hood, and `app` disposes the session automatically at the end of the `using` block.
 
-### Extended interactions
+### Extended Interactions:
 
 `App` covers the rest of the mouse and keyboard surface too, beyond `ClickAsync`/`TypeAsync`:
 
@@ -170,7 +217,9 @@ await app.DragThroughAsync([(100, 100), (150, 140), (200, 180)]);         // cli
 await app.ScrollWheelAsync(Locator.ByControlType("Document"), deltaX: 0, deltaY: -3);
 ```
 
-### Screenshots and waiting
+### Screenshots and Waiting:
+
+Use these methods to help with test execution and debugging:
 
 ```csharp
 byte[] png = await app.ScreenshotAsync();                                 // full-window PNG capture
@@ -182,7 +231,7 @@ await app.WaitUntilGoneAsync(Locator.ByName("Save changes?"));
 var button = await app.WaitForAsync(Locator.ByAutomationId("SubmitButton"), e => e.IsEnabled == true);
 ```
 
-## Testing your own app
+## Testing Your Own App:
 
 `AutoMancer.Testing` adds a retry-asserting `Expect()` API on top of `App`/`Locator`, so assertions poll instead of racing a single `FindAsync`:
 
@@ -200,20 +249,22 @@ var element = await app.FindAsync(Locator.ByControlType("Document"));
 Expect(element).ToBeVisible();
 ```
 
-`AutoMancer.Testing.XUnit` builds on that for xUnit, with an `AppFixture` for launch/teardown and an `AutoMancerTest` base class that exposes `App` and `Expect` to your test classes. A failed `Expect` captures a screenshot automatically when `AutoMancerTestOptions.CaptureScreenshotsOnFailure` is on, and folds the path into the assertion message.
+`AutoMancer.Testing.XUnit` builds on that for xUnit. It provides an fixture for launch/teardown, plus a base class that exposes `App` and `Expect` to your test classes. When `AutoMancerTestOptions.CaptureScreenshotsOnFailure` is on, a failed validation automatically captures a screenshot and folds the path into the assertion message.
 
 See **[TESTING.md](TESTING.md)** for the full guide, including the fixture pattern, and [`samples/ConsumerNotepadTests`](samples/ConsumerNotepadTests) for a complete working test project built entirely on public API.
 
-## Logging
+## Logging:
 
-`AppOptions.Logger` takes an `IEngineLogger` that traces element resolution and action execution. By default it's a plain-text `EngineLogger` writing JSON lines to `Console.Error` (stderr, so it never mixes into a CLI command's stdout), so every `App` logs out of the box with no setup. Pass `Logger = null` to turn it off, or your own logger to redirect it:
+`AppOptions.Logger` takes an `IEngineLogger` that traces element resolution and action execution. By default, every `App` logs out of the box with no setup: it's a logger writing JSON lines to stderr, so it never mixes into a CLI command's stdout. Pass `Logger = null` to turn it off, or your own logger to redirect it:
 
 ```csharp
 var logger = new EngineLogger(new StreamWriter("automancer.log") { AutoFlush = true }, LogLevel.Debug);
 await using var app = await App.LaunchAsync("notepad.exe", new AppOptions { Logger = logger });
 ```
 
-`IEngineLogger` is a small interface: `Debug`/`Info`/`Warn`/`Error`, each taking a message and optional structured data. `EngineLogger` is just the default implementation, writing JSON lines to a `TextWriter`, whether that's `Console.Error`, a file, or a `StringWriter` in tests, filtered by a minimum `LogLevel`. If you're embedding AutoMancer in a larger app, it's usually easier to implement `IEngineLogger` directly against your own logging stack (`ILogger`, Serilog, xUnit's `ITestOutputHelper`, whatever you've got) than to adapt a `TextWriter`:
+`IEngineLogger` is a small interface of a `LogLevel`, a message, and optional structured data. `EngineLogger` is just the default implementation. It writes JSON lines to a text writer, and filters output by a minimum level.
+
+If you're embedding AutoMancer in a larger app, it's usually easier to implement `IEngineLogger` directly against your own logging stack (`ILogger`, Serilog, xUnit's `ITestOutputHelper`, whatever you've got) than to adapt the existing text writer.
 
 ```csharp
 public sealed class HostLogger(ILogger inner) : IEngineLogger
@@ -229,7 +280,6 @@ Once it's set on `App`, the logger rides along automatically. `ElementResolver` 
 
 See [`samples/ConsumerNotepadTests/EngineLoggerDemoTests.cs`](samples/ConsumerNotepadTests/EngineLoggerDemoTests.cs) for a working example against a live app, including a custom `IEngineLogger` whose entries get asserted against the actual resolve/click/clear/type sequence.
 
-## License
+## License:
 
 Apache License 2.0 — see [LICENSE](LICENSE).
-

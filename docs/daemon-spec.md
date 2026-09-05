@@ -59,12 +59,12 @@ tests/
     │   ├── W3CErrorWriterTests.cs               unit — error response JSON shape
     │   └── SessionEndpointsTests.cs             unit — POST /session capability parsing
     └── Integration/
-        └── DaemonIntegrationTests.cs            [Trait("Category","Integration")] — live HttpListener; see Task 14
+        └── DaemonIntegrationTests.cs            [Trait("Category","Integration")] — live HttpListener; see Task 3.2.7
 ```
 
 ---
 
-### Task 1: Daemon project scaffold
+### Task 3.1.1: Daemon project scaffold
 
 **What:** Creates the `AutoMancer.Daemon` console project and its test project, adds them to the solution. The daemon outputs as `automancerd.exe` and references the Engine library.
 
@@ -90,7 +90,7 @@ dotnet build AutoMancer.slnx
 
 ---
 
-### Task 2: W3C error writer, HTTP context, and daemon config
+### Task 3.1.2: W3C error writer, HTTP context, and daemon config
 
 **What:** The `W3CErrorWriter` produces the W3C-required `{"value":{"error":"...","message":"..."}}` response shape from any exception. `HttpContext` is a thin wrapper around `HttpListenerContext` that provides `ReadBodyAsync` and `WriteJsonAsync`. `DaemonConfig` parses `--port`, `--host`, and `--log-level` from args.
 
@@ -111,7 +111,7 @@ dotnet test tests/AutoMancer.Daemon.Tests/ --filter "W3CErrorWriterTests"
 
 ---
 
-### Task 3: Router and session manager
+### Task 3.1.3: Router and session manager
 
 **What:** `Router` compiles URL templates like `/session/:sessionId/element/:elementId` into named-group regexes and dispatches incoming requests to the matching handler, catching exceptions and writing W3C error responses. `SessionManager` is a thread-safe dictionary. `DaemonSession` holds the HWND, options, element registry, and a per-session serialization lock.
 
@@ -132,7 +132,7 @@ dotnet test tests/AutoMancer.Daemon.Tests/ --filter "SessionManagerTests"
 
 ---
 
-### Task 4: GET /status and Program.cs entry point
+### Task 3.1.4: GET /status and Program.cs entry point
 
 **What:** The daemon's health endpoint returns `{"value":{"ready":true,...}}`. `Program.cs` wires together config, sessions, logger, router, and the `HttpListener` accept loop. Ctrl+C stops the listener cleanly.
 
@@ -157,7 +157,7 @@ curl http://127.0.0.1:27272/status
 
 ---
 
-### Task 5: Session lifecycle — POST /session and DELETE /session/:id
+### Task 3.1.5: Session lifecycle — POST /session and DELETE /session/:id
 
 **What:** `POST /session` parses W3C capabilities (the `automancer:*` namespaced fields), creates an `AppSession` (launch or attach), wraps it in a `DaemonSession`, and returns the `sessionId`. `DELETE /session/:id` disposes the session.
 
@@ -180,7 +180,7 @@ curl -X POST http://127.0.0.1:27272/session \
 
 ---
 
-### Task 6: Element finding endpoints
+### Task 3.1.6: Element finding endpoints
 
 **What:** Implements the four W3C find endpoints: find one/all from a session, find one/all from an element (scoped search). Parses the `{"using":"...","value":"..."}` body and maps strategies to `Locator`. Rejects browser-only strategies (`css selector`, `xpath`, `link text`) with `invalid argument`. Routes two new strategies: `id` → `Locator.ByRuntimeId(value)` and `automancer:xpath` → `Locator.ByXPath(value)` (XPath evaluated against the UIA tree, not a browser DOM).
 
@@ -202,7 +202,7 @@ curl -X POST http://127.0.0.1:27272/session/$SESSION_ID/element \
 
 ---
 
-### Task 7: Route the engine logger into daemon sessions
+### Task 3.1.7: Route the engine logger into daemon sessions
 
 **What:** The engine's structured operational trace (`ElementResolver` retries, `AppSession` launch/attach) is opt-in via `AppOptions.Logger` — `App`/`AppSession` already own this (see core-engine-spec.md Task 4), nothing changes on the engine side. This task wires it into every daemon session: when `SessionEndpoints` builds the `AppOptions` for a new session's `AppSession`, it attaches an `EngineLogger` sink (a file or stdout `TextWriter`, path/target configurable via `DaemonConfig`) so the engine's existing trace reaches daemon request handling instead of going nowhere.
 
@@ -214,7 +214,7 @@ curl -X POST http://127.0.0.1:27272/session/$SESSION_ID/element \
 
 ---
 
-### Task 8: Interaction endpoints
+### Task 3.2.1: Interaction endpoints
 
 **What:** Covers the full interaction surface the engine has grown since the original click/value/clear-only draft of this task (see Stage 1.7–1.8 of roadmap-spec.md): click (with `modifiers` and `button` params, delegating to `ClickAction`), double-click (`DoubleClickAction`), right-click, hover (`HoverAction`), value/type (`TypeAction`), clear (`ClearAction`), drag (`DragAction`), and scroll wheel (`ScrollWheelAction`, `deltaX`/`deltaY`). Also adds coordinate-based click and hover variants that skip element resolution entirely — for targets with no accessible element, like a fill-bucket tool. The click variant delegates to `App.ClickAtAsync(x, y)`, which already exists; there's no `App.HoverAtAsync(x, y)` equivalent today, so the coordinate-based hover endpoint has to bypass the `App` facade and call `NativeMethods.SendInputs`/`HoverAction`'s underlying mouse-move plumbing directly (or add a small `App.HoverAtAsync(x, y)` facade method first — the cheaper, more consistent option). Each element-scoped endpoint resolves the session and element from the URL, reconstructs an `AppSession` via `ToAppSession()`, and executes the action.
 
@@ -232,9 +232,9 @@ dotnet build src/AutoMancer.Daemon/AutoMancer.Daemon.csproj
 
 ---
 
-### Task 9: Property endpoints
+### Task 3.2.2: Property endpoints
 
-**What:** Exposes element state over HTTP: `text`, `name` (control type), `enabled`, `displayed`, `rect`, `attribute/:name`. Each reads from the cached `ElementHandle` or falls through to the live UIA element when the handle doesn't have the data. **`selected` is not included here** — `ElementHandle` has no `IsSelected` field, and no per-item selection read exists anywhere in the engine yet (Stage 2.8's `SelectionAction` only reads the container's full selection via `GetSelectedItemsAsync`, not a single item's own state). Add it once a per-item read (`SelectionItemPattern.CurrentIsSelected`, surfaced as `App.IsSelectedAsync(Locator)`) exists — see extended-coverage-spec.md Task 34.
+**What:** Exposes element state over HTTP: `text`, `name` (control type), `enabled`, `displayed`, `rect`, `attribute/:name`. Each reads from the cached `ElementHandle` or falls through to the live UIA element when the handle doesn't have the data. **`selected` is not included here** — `ElementHandle` has no `IsSelected` field, and no per-item selection read exists anywhere in the engine yet (Stage 2.8's `SelectionAction` only reads the container's full selection via `GetSelectedItemsAsync`, not a single item's own state). Add it once a per-item read (`SelectionItemPattern.CurrentIsSelected`, surfaced as `App.IsSelectedAsync(Locator)`) exists — see extended-coverage-spec.md Task 2.8.4.
 
 **Creates:**
 - `src/AutoMancer.Daemon/Endpoints/PropertyEndpoints.cs` — `Register`; `GetElement` helper; `TryGet`/`TryGetBool` COM-safe accessors
@@ -250,7 +250,7 @@ dotnet build src/AutoMancer.Daemon/AutoMancer.Daemon.csproj
 
 ---
 
-### Task 10: Window management endpoints
+### Task 3.2.3: Window management endpoints
 
 **What:** WinAppDriver lacks these entirely. Implements W3C-compatible window management: get/set window size, maximize, minimize, restore, and close. Maps to `WindowAction` in the Engine — size uses `GetSizeAsync`/`MoveAsync`/`ResizeAsync` (`TransformPattern` falling back to Win32 `SetWindowPos`); maximize/minimize/restore use `SetVisualStateAsync` (`WindowPattern.SetWindowVisualState` falling back to Win32 `ShowWindow`); close uses `CloseAsync` (`WindowPattern.Close()` falling back to posting `WM_CLOSE`). The `:windowHandle` segment accepts `"current"` to target the session's root window.
 
@@ -273,7 +273,7 @@ curl -X DELETE http://127.0.0.1:27272/session/$SESSION_ID/window/current
 
 ---
 
-### Task 11: Keyboard endpoints
+### Task 3.2.4: Keyboard endpoints
 
 **What:** Exposes `KeyboardAction`'s hold/hotkey surface over HTTP: press a modifier+key chord, and hold/release individual keys for sequences a single hotkey can't express (e.g. `Shift`+Arrow selection built up over several requests). Held keys are tracked per `DaemonSession` (mirroring `App`'s own `HeldKeyTracker`) so `DELETE /session/:id` can release anything still held before disposing the session, the same safety net `App.Kill()`/`DisposeAsync()` provide for direct engine consumers.
 
@@ -293,9 +293,9 @@ curl -X POST http://127.0.0.1:27272/session/$SESSION_ID/hotkey -d '{"modifiers":
 
 ---
 
-### Task 12: Screenshot, timeout, and extension endpoints
+### Task 3.2.5: Screenshot, timeout, and extension endpoints
 
-**What:** Completes the daemon's core surface area. Screenshot captures the app window as a base64 PNG. Timeout endpoints read the session's current wait settings and let a client change them mid-session — `DaemonSession` holds `ImplicitWaitMs`/`PollIntervalMs` as mutable fields rather than baking them into an immutable resolver at creation, so `ToAppSession()` (Task 3) always builds the resolver from whatever the session's settings are *right now*. This matches Appium's `/session/:id/appium/settings`, which actually mutates live session config, instead of silently discarding the write. Extension endpoints expose AutoMancer-specific capabilities: provider info, scroll-to, PID, kill app, and annotated snapshot.
+**What:** Completes the daemon's core surface area. Screenshot captures the app window as a base64 PNG. Timeout endpoints read the session's current wait settings and let a client change them mid-session — `DaemonSession` holds `ImplicitWaitMs`/`PollIntervalMs` as mutable fields rather than baking them into an immutable resolver at creation, so `ToAppSession()` (Task 3.1.3) always builds the resolver from whatever the session's settings are *right now*. This matches Appium's `/session/:id/appium/settings`, which actually mutates live session config, instead of silently discarding the write. Extension endpoints expose AutoMancer-specific capabilities: provider info, scroll-to, PID, kill app, and annotated snapshot.
 
 **Creates:**
 - `src/AutoMancer.Daemon/Endpoints/ScreenshotEndpoint.cs` — calls the session's `App.ScreenshotAsync()` (already returns PNG `byte[]` via the engine's `ScreenshotAction`) and base64-encodes the result; `CaptureBase64Internal` for extension endpoint reuse — no new screenshot capture code, no new package
@@ -320,9 +320,9 @@ dotnet test tests/AutoMancer.Daemon.Tests/ -v
 
 ---
 
-### Task 13: Clipboard, pattern, and grid endpoints
+### Task 3.2.6: Clipboard, pattern, and grid endpoints
 
-**What:** Three extension surfaces beyond the W3C-standard endpoints. Clipboard endpoints (bare `/clipboard` path, treated as core session surface) read/write the system clipboard as text, for workflows that copy/paste between the target app and the outside world. Pattern and grid endpoints live under each element's `windows/` path segment per the WebDriver extension-command convention (like Appium's `appium:*`) — pattern endpoints expose toggle/expand-collapse/selection, grid endpoints expose row/column counts and cell lookup for `DataGrid`-style controls. **Depends on Phase 2 Stage 2.8 having shipped `ClipboardAction`/`ToggleAction`/`ExpandCollapseAction`/`SelectionAction`/`GridAction` — skip or defer this task entirely if Phase 2 hasn't reached that stage yet.** Each handler is a thin delegation to the matching `App` method, same shape as `InteractionEndpoints` (Task 8) — no direct COM/native-pattern access from the daemon layer, keeping the daemon a pure consumer of the engine's public API.
+**What:** Three extension surfaces beyond the W3C-standard endpoints. Clipboard endpoints (bare `/clipboard` path, treated as core session surface) read/write the system clipboard as text, for workflows that copy/paste between the target app and the outside world. Pattern and grid endpoints live under each element's `windows/` path segment per the WebDriver extension-command convention (like Appium's `appium:*`) — pattern endpoints expose toggle/expand-collapse/selection, grid endpoints expose row/column counts and cell lookup for `DataGrid`-style controls. **Depends on Phase 2 Stage 2.8 having shipped `ClipboardAction`/`ToggleAction`/`ExpandCollapseAction`/`SelectionAction`/`GridAction` — skip or defer this task entirely if Phase 2 hasn't reached that stage yet.** Each handler is a thin delegation to the matching `App` method, same shape as `InteractionEndpoints` (Task 3.2.1) — no direct COM/native-pattern access from the daemon layer, keeping the daemon a pure consumer of the engine's public API.
 
 **Creates:**
 - `src/AutoMancer.Daemon/Endpoints/ClipboardEndpoints.cs` — `Register`; `GET /session/:id/clipboard` → `App.GetClipboardTextAsync()`; `POST /session/:id/clipboard` (body: `{text}`) → `SetClipboardTextAsync`
@@ -344,7 +344,7 @@ curl "http://127.0.0.1:27272/session/$SESSION_ID/element/$ELEMENT_ID/windows/cel
 
 ---
 
-### Task 14: C# daemon integration tests
+### Task 3.2.7: C# daemon integration tests
 
 **What:** End-to-end C# tests that spin up a live `HttpListener`-backed daemon on a random port, create a real session against Notepad, and exercise the full HTTP surface. These run in `AutoMancer.Daemon.Tests` under `[Trait("Category","Integration")]` — no Python or TypeScript toolchain required. They are the single C# proof that the daemon speaks correct W3C wire protocol before the SDK integration tests are written.
 
@@ -379,7 +379,7 @@ dotnet test tests/AutoMancer.Daemon.Tests/ --filter "Category=Integration" -v
 
 ---
 
-### Task 15: Expose the Visual Provider over HTTP
+### Task 3.2.8: Expose the Visual Provider over HTTP
 
 **What:** Wires the engine's OCR/template-matching fallback (`VisualProvider`, roadmap-spec.md Stage 2.6) into `FindEndpoints`' resolver builder, so a session can opt into it via an `automancer:resolverChain` capability the same way `AppOptions.ProviderChain` works in C#. Routes **both** `automancer:text` (OCR, Stage 2.6.2) and `automancer:image` (template match against a base64 PNG, Stage 2.6.3) — the two are separate `LocatorStrategy` cases with different request shapes (`value` is the text to find vs. a base64 template image), don't treat them as one. **Depends on Phase 2 Stage 2.6 having shipped the engine-side `VisualProvider` — skip or defer this task entirely if Phase 2 hasn't reached that stage yet; there is nothing for the daemon to wire up before then.**
 
@@ -416,4 +416,4 @@ curl -X POST http://127.0.0.1:27272/session/$SESSION_ID/element \
 - Sessions are in-memory only — no persistence between daemon restarts
 - `DELETE /session/:id` disposes the session and its element registry cleanly, releasing any keys still held via `POST .../keydown` without a matching `.../keyup`
 - Default port is 27272; `--port 4723` enables Appium-compatible mode for teams already using Appium client libraries
-- Non-W3C-standard endpoints are grouped two ways: AutoMancer-specific capabilities live under the bare `/automancer/*` prefix (provider info, scroll-to, PID, kill, snapshot); UIA pattern/grid actions (`Task 13`'s expand/collapse/toggle/select/grid endpoints) live under a `windows/` path segment per element (`.../element/:id/windows/toggle`, etc.), matching the WebDriver extension-command convention (cf. Appium's `appium:*`). Window management (`/window/...`) and clipboard (`/clipboard`) are bare, unnamespaced paths — they're treated as core session surface, not extensions, since WinAppDriver's own gap in window management is one of the reasons this daemon exists
+- Non-W3C-standard endpoints are grouped two ways: AutoMancer-specific capabilities live under the bare `/automancer/*` prefix (provider info, scroll-to, PID, kill, snapshot); UIA pattern/grid actions (`Task 3.2.6`'s expand/collapse/toggle/select/grid endpoints) live under a `windows/` path segment per element (`.../element/:id/windows/toggle`, etc.), matching the WebDriver extension-command convention (cf. Appium's `appium:*`). Window management (`/window/...`) and clipboard (`/clipboard`) are bare, unnamespaced paths — they're treated as core session surface, not extensions, since WinAppDriver's own gap in window management is one of the reasons this daemon exists

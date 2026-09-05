@@ -14,7 +14,7 @@
 
 **Tech Stack:** Python 3.10+, `httpx`, `pyproject.toml`, `mypy --strict`, `pytest` | TypeScript / Node 18+, native `fetch`, `tsconfig`, `tsc --noEmit`, `vitest`
 
-**Test language boundary:** SDK tests are written in the SDK's own language (pytest for Python, vitest for TypeScript). C# end-to-end coverage of the daemon HTTP surface is handled in `AutoMancer.Daemon.Tests` (see [daemon-spec.md](./daemon-spec.md) Task 14). The SDK integration tests assume `automancerd` is already running.
+**Test language boundary:** SDK tests are written in the SDK's own language (pytest for Python, vitest for TypeScript). C# end-to-end coverage of the daemon HTTP surface is handled in `AutoMancer.Daemon.Tests` (see [daemon-spec.md](./daemon-spec.md) Task 3.2.7). The SDK integration tests assume `automancerd` is already running.
 
 **Prerequisite:** Phase 3 daemon complete (see [daemon-spec.md](./daemon-spec.md)) and `automancerd` reachable at `http://127.0.0.1:27272` before integration tests can pass. Phase 1 (engine + CLI) must be done first.
 
@@ -69,7 +69,7 @@ sdk/
 
 ---
 
-### Task 1: Python SDK scaffold
+### Task 3.3.1: Python SDK scaffold
 
 **What:** Creates the Python package with `pyproject.toml`, installs it in editable mode, and defines the error hierarchy. Errors carry machine-readable fields (`locator`, `elapsed_ms`, `closest_match`) so tests can assert on them.
 
@@ -91,11 +91,11 @@ pytest tests/test_errors.py -v
 
 ---
 
-### Task 2: Python locator builder and session client
+### Task 3.3.2: Python locator builder and session client
 
 **What:** `build_locator` maps keyword arguments to the W3C `{"using":"...","value":"..."}` format — the single translation point between the Python API and the wire protocol. Supports all standard strategies plus `runtime_id` (maps to `id` strategy → RuntimeId lookup), `xpath` (maps to `automancer:xpath` → XPath on the UIA tree), `text` (maps to `automancer:text` → OCR), and `image` (maps to `automancer:image` → template match against a base64 PNG). `Session` is the low-level HTTP client: it wraps every HTTP response, extracts the `value` field, and raises the correct Python exception when the W3C error shape appears.
 
-**`text`/`image` depend on Phase 2's Visual Provider (roadmap-spec.md Stage 2.6) and the daemon's `automancer:resolverChain` wiring (daemon-spec.md Task 15) — both must have shipped, and the session must opt into the visual chain, before `find(text=...)`/`find(image=...)` resolve anything. Implement the kwargs here regardless (they're pure request-shape mappings); their integration tests are gated the same way daemon-spec.md's Task 15 is.**
+**`text`/`image` depend on Phase 2's Visual Provider (roadmap-spec.md Stage 2.6) and the daemon's `automancer:resolverChain` wiring (daemon-spec.md Task 3.2.8) — both must have shipped, and the session must opt into the visual chain, before `find(text=...)`/`find(image=...)` resolve anything. Implement the kwargs here regardless (they're pure request-shape mappings); their integration tests are gated the same way daemon-spec.md's Task 3.2.8 is.**
 
 **Creates:**
 - `sdk/python/automancer/locator.py` — `build_locator(*, name, automation_id, control, path, runtime_id, xpath, text, image, class_name)` → `dict`; raises `ValueError` if no strategy given
@@ -113,7 +113,7 @@ cd sdk/python && pytest tests/test_locator.py -v
 
 ---
 
-### Task 3: Python App and Element classes
+### Task 3.3.3: Python App and Element classes
 
 **What:** `App` is the user-facing entry point: `App.launch("notepad.exe")` creates a session, `app.find(name="Submit")` finds an element. `Element` exposes properties (`text`, `enabled`, `visible`, `rect`) and actions (`click`, `double_click`, `right_click`, `hover`, `type`, `clear`, `drag`, `scroll_wheel`) by delegating to `Session`. `App` supports the context manager protocol for automatic cleanup, plus keyboard methods that aren't element-scoped (`hotkey(modifiers, keys)`, `key_down(key)`, `key_up(key)`). Also adds window management missing from WinAppDriver: `window_size()` → `(width, height)`, `set_window_size(w, h)`, `maximize()`, `minimize()`, `restore()`, `close()`.
 
@@ -132,9 +132,9 @@ cd sdk/python && mypy automancer/ --strict
 
 ---
 
-### Task 4: Python clipboard, pattern, and grid methods
+### Task 3.3.4: Python clipboard, pattern, and grid methods
 
-**What:** Thin wrappers over the daemon's `windows:*` extension endpoints (daemon-spec.md Task 13) — not W3C-standard, so kept separate from the core `Element`/`App` surface rather than implied to be portable to another WebDriver-compatible server. `App.get_clipboard()`/`set_clipboard(text)` read/write the system clipboard. `Element` gains `expand()`, `collapse()`, `toggle()`, `select()`, `add_to_selection()`, `remove_from_selection()`, `all_selected_items()`, and grid access — `row_count()`, `column_count()`, `cell(row, col)` → `Element`. **Depends on Phase 2 Stage 2.8 having shipped `ClipboardAction`/`ToggleAction`/`ExpandCollapseAction`/`SelectionAction`/`GridAction` and daemon-spec.md Task 13 — skip or defer this task entirely if Phase 2 hasn't reached that stage yet.** This is what `ComboBox.select`/`options` and `DataGrid.rows`/`cell` (Task 5) actually delegate to.
+**What:** Thin wrappers over the daemon's `windows:*` extension endpoints (daemon-spec.md Task 3.2.6) — not W3C-standard, so kept separate from the core `Element`/`App` surface rather than implied to be portable to another WebDriver-compatible server. `App.get_clipboard()`/`set_clipboard(text)` read/write the system clipboard. `Element` gains `expand()`, `collapse()`, `toggle()`, `select()`, `add_to_selection()`, `remove_from_selection()`, `all_selected_items()`, and grid access — `row_count()`, `column_count()`, `cell(row, col)` → `Element`. **Depends on Phase 2 Stage 2.8 having shipped `ClipboardAction`/`ToggleAction`/`ExpandCollapseAction`/`SelectionAction`/`GridAction` and daemon-spec.md Task 3.2.6 — skip or defer this task entirely if Phase 2 hasn't reached that stage yet.** This is what `ComboBox.select`/`options` and `DataGrid.rows`/`cell` (Task 3.3.5) actually delegate to.
 
 **Creates:**
 - `sdk/python/automancer/app.py` — extend with `get_clipboard()`, `set_clipboard(text)`
@@ -151,9 +151,9 @@ cd sdk/python && mypy automancer/ --strict
 
 ---
 
-### Task 5: Python control subclasses
+### Task 3.3.5: Python control subclasses
 
-**What:** Thin subclasses of `Element` that add control-type-specific methods: `TextBox.set_value`, `ComboBox.select`/`options` (delegating to Task 4's `select()`/`toggle()`/`all_selected_items()`), `DataGrid.rows`/`cell` (delegating to Task 4's `row_count()`/`column_count()`/`cell()`). They're returned by `find()` when the daemon reports the matching control type.
+**What:** Thin subclasses of `Element` that add control-type-specific methods: `TextBox.set_value`, `ComboBox.select`/`options` (delegating to Task 3.3.4's `select()`/`toggle()`/`all_selected_items()`), `DataGrid.rows`/`cell` (delegating to Task 3.3.4's `row_count()`/`column_count()`/`cell()`). They're returned by `find()` when the daemon reports the matching control type.
 
 **Creates:**
 - `sdk/python/automancer/controls/__init__.py`
@@ -173,7 +173,7 @@ cd sdk/python && mypy automancer/ --strict
 
 ---
 
-### Task 6: Python integration tests
+### Task 3.3.6: Python integration tests
 
 **What:** End-to-end tests against a live daemon. Covers launch+find+type, file menu click, closest-match error, attach by PID, screenshot PNG verification, a double-click/drag round trip, and a clipboard round trip.
 
@@ -194,7 +194,7 @@ mypy automancer/ --strict
 
 ---
 
-### Task 7: TypeScript SDK scaffold
+### Task 3.4.1: TypeScript SDK scaffold
 
 **What:** Creates the Node 18+ package with strict TypeScript config (`ES2020`, `Node16` module resolution), installs `vitest` for testing, and defines the error class hierarchy matching the Python SDK.
 
@@ -216,9 +216,9 @@ npm run typecheck
 
 ---
 
-### Task 8: TypeScript types, Locator, and Session
+### Task 3.4.2: TypeScript types, Locator, and Session
 
-**What:** `types.ts` defines the public interfaces (`Locator`, `LaunchOptions`, `AttachOptions`, `Rect`). `buildLocator` is the single translation point from the typed `Locator` to the W3C wire format — adds `runtimeId` (maps to `id` strategy), `xpath` (maps to `automancer:xpath`), `text` (maps to `automancer:text`), and `image` (maps to `automancer:image`; `text`/`image` depend on Phase 2's Visual Provider and daemon-spec.md Task 15 — see the note on the Python SDK's Task 2). `Session` is the HTTP client: creates sessions, finds elements, interacts (click, doubleClick, rightClick, hover, type, clear, drag, scrollWheel, hotkey, keyDown, keyUp), reads properties, and maps W3C error responses to TypeScript exceptions. Also adds `getWindowSize()`, `setWindowSize(w, h)`, `maximize()`, `minimize()`, `restore()`, `close()`, `getClipboard()`/`setClipboard(text)` session methods.
+**What:** `types.ts` defines the public interfaces (`Locator`, `LaunchOptions`, `AttachOptions`, `Rect`). `buildLocator` is the single translation point from the typed `Locator` to the W3C wire format — adds `runtimeId` (maps to `id` strategy), `xpath` (maps to `automancer:xpath`), `text` (maps to `automancer:text`), and `image` (maps to `automancer:image`; `text`/`image` depend on Phase 2's Visual Provider and daemon-spec.md Task 3.2.8 — see the note on the Python SDK's Task 3.3.2). `Session` is the HTTP client: creates sessions, finds elements, interacts (click, doubleClick, rightClick, hover, type, clear, drag, scrollWheel, hotkey, keyDown, keyUp), reads properties, and maps W3C error responses to TypeScript exceptions. Also adds `getWindowSize()`, `setWindowSize(w, h)`, `maximize()`, `minimize()`, `restore()`, `close()`, `getClipboard()`/`setClipboard(text)` session methods.
 
 **Creates:**
 - `sdk/typescript/src/types.ts` — all public interfaces + `W3CLocator` internal type
@@ -237,7 +237,7 @@ cd sdk/typescript && npm test -- locator.test.ts
 
 ---
 
-### Task 9: TypeScript App and Element
+### Task 3.4.3: TypeScript App and Element
 
 **What:** `Element` exposes async getter properties (`text`, `enabled`, `visible`, `rect`) and async action methods (`click`, `doubleClick`, `rightClick`, `hover`, `type`, `clear`, `drag`, `scrollWheel`, `find`, `findAll`). `App` mirrors the Python SDK API: `App.launch`, `App.attach`, `find`, `findAll`, `waitUntilGone`, `screenshot`, `close`, plus non-element-scoped keyboard methods (`hotkey`, `keyDown`, `keyUp`). Adds window management filling the WinAppDriver gap: `windowSize()`, `setWindowSize(w, h)`, `maximize()`, `minimize()`, `restore()`.
 
@@ -256,9 +256,9 @@ cd sdk/typescript && npm run typecheck
 
 ---
 
-### Task 10: TypeScript clipboard, pattern, and grid methods
+### Task 3.4.4: TypeScript clipboard, pattern, and grid methods
 
-**What:** Mirrors the Python SDK's Task 4 — thin wrappers over the daemon's `windows:*` extension endpoints (daemon-spec.md Task 13), kept off the core `Element`/`App` surface since they aren't W3C-standard. `App.getClipboard()`/`setClipboard(text)`; `Element` gains `expand()`, `collapse()`, `toggle()`, `select()`, `addToSelection()`, `removeFromSelection()`, `allSelectedItems()`, and grid access — `rowCount()`, `columnCount()`, `cell(row, col)` → `Element`. **Depends on Phase 2 Stage 2.8 having shipped `ClipboardAction`/`ToggleAction`/`ExpandCollapseAction`/`SelectionAction`/`GridAction` and daemon-spec.md Task 13 — skip or defer this task entirely if Phase 2 hasn't reached that stage yet.** This is what `ComboBox.select`/`options` and `DataGrid.rows`/`cell` (Task 11) actually delegate to.
+**What:** Mirrors the Python SDK's Task 3.3.4 — thin wrappers over the daemon's `windows:*` extension endpoints (daemon-spec.md Task 3.2.6), kept off the core `Element`/`App` surface since they aren't W3C-standard. `App.getClipboard()`/`setClipboard(text)`; `Element` gains `expand()`, `collapse()`, `toggle()`, `select()`, `addToSelection()`, `removeFromSelection()`, `allSelectedItems()`, and grid access — `rowCount()`, `columnCount()`, `cell(row, col)` → `Element`. **Depends on Phase 2 Stage 2.8 having shipped `ClipboardAction`/`ToggleAction`/`ExpandCollapseAction`/`SelectionAction`/`GridAction` and daemon-spec.md Task 3.2.6 — skip or defer this task entirely if Phase 2 hasn't reached that stage yet.** This is what `ComboBox.select`/`options` and `DataGrid.rows`/`cell` (Task 3.4.5) actually delegate to.
 
 **Creates:**
 - `sdk/typescript/src/App.ts` — extend with `getClipboard()`, `setClipboard(text)`
@@ -275,9 +275,9 @@ cd sdk/typescript && npm run typecheck
 
 ---
 
-### Task 11: TypeScript controls and integration tests
+### Task 3.4.5: TypeScript controls and integration tests
 
-**What:** Control subclasses mirror the Python SDK — `ComboBox.select`/`options` and `DataGrid.rows`/`cell` delegate to Task 10's pattern/grid methods. Integration tests verify the full stack: launch Notepad, type text, get closest-match error on typo, verify screenshot is a PNG buffer, a double-click/drag round trip, and a clipboard round trip.
+**What:** Control subclasses mirror the Python SDK — `ComboBox.select`/`options` and `DataGrid.rows`/`cell` delegate to Task 3.4.4's pattern/grid methods. Integration tests verify the full stack: launch Notepad, type text, get closest-match error on typo, verify screenshot is a PNG buffer, a double-click/drag round trip, and a clipboard round trip.
 
 **Creates:**
 - `sdk/typescript/src/controls/Button.ts`
@@ -308,7 +308,7 @@ npm run typecheck
 - No global state in either SDK — multiple `App` instances can coexist in the same process
 - Both SDKs use the W3C wire protocol for the core surface, plus the daemon's extensions: the bare `automancer/*` prefix (provider info, scroll-to, PID, kill, snapshot), the per-element `windows/` path segment (UIA patterns — toggle, expand/collapse, selection, grid), and bare (unnamespaced) window-management/clipboard/keyboard-hold routes treated as core session surface — document in each method's docstring that it's an AutoMancer/Windows-specific extension, not portable to another WebDriver-compatible server
 - `find(xpath="//Button[@Name='OK']")` maps to `automancer:xpath`, NOT to the W3C `xpath` strategy — document this distinction in docstrings so users who migrate from WinAppDriver/Selenium understand the difference
-- `find(text="Submit Order")`/`find(image=<base64 PNG>)` map to `automancer:text`/`automancer:image` and only resolve once the session opts into the visual resolver chain — depends on Phase 2's Visual Provider and daemon-spec.md Task 15 having shipped; implement the kwargs/params regardless, but their integration tests are gated the same way
+- `find(text="Submit Order")`/`find(image=<base64 PNG>)` map to `automancer:text`/`automancer:image` and only resolve once the session opts into the visual resolver chain — depends on Phase 2's Visual Provider and daemon-spec.md Task 3.2.8 having shipped; implement the kwargs/params regardless, but their integration tests are gated the same way
 - `find(runtime_id="42.333896.3.1")` maps to the `id` strategy — this is a UIA RuntimeId, not a DOM id or element-6066 reference
 - Window management methods (`window_size`, `set_window_size`, `maximize`) operate on the session's root window; they are not element-scoped
-- Clipboard/pattern/grid methods (`get_clipboard`, `toggle`, `select`, `row_count`, `cell`, …) depend on Phase 2 Stage 2.8 and daemon-spec.md Task 13 having shipped — same skip-or-defer gating as the visual-locator kwargs above
+- Clipboard/pattern/grid methods (`get_clipboard`, `toggle`, `select`, `row_count`, `cell`, …) depend on Phase 2 Stage 2.8 and daemon-spec.md Task 3.2.6 having shipped — same skip-or-defer gating as the visual-locator kwargs above

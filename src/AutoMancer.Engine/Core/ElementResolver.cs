@@ -131,19 +131,34 @@ public sealed class ElementResolver
         return Array.Empty<ElementHandle>();
     }
 
-    // Snapshots the tree from the first provider that returns a non-empty result; null if every provider returns empty.
+    // Snapshots the tree from the first provider whose result has descendants beneath the root.
     public async Task<IReadOnlyList<ElementSnapshot>?> TrySnapshotAsync(AppSession session, CancellationToken ct = default)
     {
+        IReadOnlyList<ElementSnapshot>? rootOnlyFallback = null;
+        string? rootOnlyProviderName = null;
+
         foreach (var provider in _providers)
         {
             var snapshot = await provider.SnapshotTreeAsync(session, ct).ConfigureAwait(false);
-            if (snapshot.Count > 0)
+            if (snapshot.Count == 0)
+                continue;
+
+            if (snapshot.Any(s => s.Children.Count > 0))
             {
                 _logger?.Info("Snapshot taken", new { provider = provider.ProviderName, count = snapshot.Count });
                 return snapshot;
             }
+
+            // A childless root (e.g. UIA3 seeing the window but none of its content) doesn't count as success —
+            // keep trying later providers for one that actually sees content, but remember this in case none do.
+            rootOnlyFallback ??= snapshot;
+            rootOnlyProviderName ??= provider.ProviderName;
         }
 
-        return null;
+        // No provider ever found descendants — settle for the first root-only result rather than null.
+        if (rootOnlyFallback is not null)
+            _logger?.Info("Snapshot taken (root only — no descendants found by any provider)", new { provider = rootOnlyProviderName, count = rootOnlyFallback.Count });
+
+        return rootOnlyFallback;
     }
 }

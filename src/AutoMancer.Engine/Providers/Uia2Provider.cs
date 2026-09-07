@@ -60,6 +60,13 @@ public sealed class Uia2Provider : IElementProvider
     private static readonly Dictionary<int, string> ControlTypeNames =
         ControlTypeMap.GroupBy(kv => kv.Value.Id).ToDictionary(g => g.Key, g => g.First().Key);
 
+    // Resolves the root element for the session's window; null if the handle is invalid or the window has been destroyed — never throws (FromHandle itself can throw ElementNotAvailableException for a destroyed HWND).
+    private static AutomationElement? TryGetRoot(AppSession session)
+    {
+        try { return AutomationElement.FromHandle(session.RootWindowHandle); }
+        catch (Exception ex) when (ex is InvalidOperationException or ElementNotAvailableException) { return null; }
+    }
+
     // Finds the first descendant of the session's root window matching the locator; null if none match — never throws.
     public Task<ElementHandle?> FindElementAsync(Locator locator, AppSession session, CancellationToken ct = default)
     {
@@ -69,7 +76,7 @@ public sealed class Uia2Provider : IElementProvider
             if (condition is null)
                 return (ElementHandle?)null;
 
-            var root = AutomationElement.FromHandle(session.RootWindowHandle);
+            var root = TryGetRoot(session);
             if (root is null) return (ElementHandle?)null;
 
             // A stale element mid-search can abort FindFirst entirely — treat that as not-found instead of throwing.
@@ -81,7 +88,7 @@ public sealed class Uia2Provider : IElementProvider
 
                 return Wrap(found); // a match was located, but Wrap can still be null if it went stale before we could read it
             }
-            catch (InvalidOperationException)
+            catch (Exception ex) when (ex is InvalidOperationException or ElementNotAvailableException)
             {
                 return null;
             }
@@ -97,7 +104,7 @@ public sealed class Uia2Provider : IElementProvider
             if (condition is null)
                 return (IReadOnlyList<ElementHandle>)Array.Empty<ElementHandle>();
 
-            var root = AutomationElement.FromHandle(session.RootWindowHandle);
+            var root = TryGetRoot(session);
             if (root is null)
                 return (IReadOnlyList<ElementHandle>)Array.Empty<ElementHandle>();
 
@@ -111,7 +118,7 @@ public sealed class Uia2Provider : IElementProvider
 
                 return (IReadOnlyList<ElementHandle>)results;
             }
-            catch (InvalidOperationException)
+            catch (Exception ex) when (ex is InvalidOperationException or ElementNotAvailableException)
             {
                 return (IReadOnlyList<ElementHandle>)Array.Empty<ElementHandle>();
             }
@@ -123,7 +130,7 @@ public sealed class Uia2Provider : IElementProvider
     {
         return Task.Run(() =>
         {
-            var root = AutomationElement.FromHandle(session.RootWindowHandle);
+            var root = TryGetRoot(session);
             if (root is null)
                 return (IReadOnlyList<ElementSnapshot>)Array.Empty<ElementSnapshot>();
 
@@ -208,7 +215,7 @@ public sealed class Uia2Provider : IElementProvider
             isEnabled = props.IsEnabled;
             isOffscreen = props.IsOffscreen;
         }
-        catch (InvalidOperationException) { }
+        catch (Exception ex) when (ex is InvalidOperationException or ElementNotAvailableException) { }
 
         if (id.Length == 0)
             return null; // couldn't even establish identity — treat the same as not found

@@ -77,7 +77,7 @@ public sealed class Win32Provider : IElementProvider
             ClassName = GetClass(windowHandle),
             BoundingRect = rect,
             IsEnabled = NativeMethods.IsWindowEnabled(windowHandle),
-            // GetWindowRect failing (e.g. a stale handle from a window that closed mid-enumeration) can't be surfaced as an exception — providers never throw — so it's signaled as IsOffscreen=true instead of a silently-zeroed rect, which ClickAction.GetCenter's interactability guard already checks for.
+            // GetWindowRect failing (e.g. a stale handle from a window that closed mid-enumeration) can't be surfaced as an exception — providers never throw — so it's signaled as IsOffscreen=true instead of a silently-zeroed rect, which ElementInputHelpers.GetCenter's interactability guard already checks for.
             IsOffscreen = rectOk ? null : true,
             Provider = this,
         };

@@ -3,13 +3,6 @@ using AutoMancer.Engine.Diagnostics;
 
 namespace AutoMancer.Engine.Core;
 
-// A logical-pixel bounding box, used for element rects and window geometry.
-public readonly record struct Rect(double X, double Y, double Width, double Height)
-{
-    // The midpoint of this rect, in the same coordinate space as X/Y.
-    public (double X, double Y) Center => (X + Width / 2, Y + Height / 2);
-}
-
 // An opaque, resolved reference to a found UI element; Id, NativeHandle, and read-only metadata are public, but Provider/Operator/Logger stay internal per the daemon's storage contract.
 public sealed class ElementHandle
 {
@@ -35,6 +28,9 @@ public sealed class ElementHandle
 
     // The logger this element was resolved with, if any — stamped by ElementResolver so actions can log without taking a separate logger parameter.
     internal IEngineLogger? Logger { get; set; }
+
+    // How long actions should retry foregrounding this element's window before giving up — stamped by ElementResolver from AppOptions.ForegroundActivationTimeoutMs, so actions can read it without taking a separate parameter.
+    internal int ForegroundActivationTimeoutMs { get; set; } = 3_000;
 
     // Constructed by providers only — callers receive handles exclusively from the resolver.
     internal ElementHandle(string id, string resolvedVia, object nativeHandle)

@@ -22,9 +22,10 @@ public sealed class TaskManagerFixture : IAsyncLifetime
         }
     }
 
-    // Kills Task Manager; doesn't wait for confirmed exit since Task Manager can throw "Access is denied" right after Kill().
+    // Kills Task Manager; doesn't wait for confirmed exit since Task Manager can throw "Access is denied" right after Kill(). No-ops if InitializeAsync itself failed to launch, so that failure surfaces on its own instead of being masked by a NullReferenceException here.
     public async Task DisposeAsync()
     {
+        if (App is null) return;
         App.Kill();
         await App.DisposeAsync();
     }

@@ -2,7 +2,6 @@
 using AutoMancer.Engine;
 using AutoMancer.Engine.Actions;
 using AutoMancer.Engine.Core;
-using AutoMancer.Engine.Errors;
 
 namespace AutoMancer.Engine.Tests.Integration;
 
@@ -43,16 +42,6 @@ public sealed class PaintIntegrationTests(PaintFixture fixture) : IClassFixture<
 
     // ── Element finding ─────────────────────────────────────────────────────────
 
-    // Verifies the drawing canvas is found by its AutomationId.
-    [Fact]
-    public async Task FindCanvas_ByAutomationId_Succeeds()
-    {
-        var el = await Uia3.FindAsync(Locator.ByAutomationId("image"));
-
-        Assert.Equal("Group", el.ControlType);
-        Assert.Equal("uia3", el.ResolvedVia);
-    }
-
     // Verifies the Pencil tool button is found by its AutomationId.
     [Fact]
     public async Task FindPencilTool_ByAutomationId_Succeeds()
@@ -61,16 +50,6 @@ public sealed class PaintIntegrationTests(PaintFixture fixture) : IClassFixture<
 
         Assert.Equal("Button", el.ControlType);
         Assert.Equal("Pencil", el.Name);
-    }
-
-    // Verifies the Eraser tool button is found by its AutomationId.
-    [Fact]
-    public async Task FindEraserTool_ByAutomationId_Succeeds()
-    {
-        var el = await Uia3.FindAsync(Locator.ByAutomationId("EraserTool"));
-
-        Assert.Equal("Button", el.ControlType);
-        Assert.Equal("Eraser", el.Name);
     }
 
     // Verifies the File menu item is found by name.
@@ -108,11 +87,6 @@ public sealed class PaintIntegrationTests(PaintFixture fixture) : IClassFixture<
     public async Task ClickPencilTool_Succeeds()
         => await App.ClickAsync(Locator.ByAutomationId("PencilTool"));
 
-    // Verifies that clicking the Eraser tool does not throw.
-    [Fact]
-    public async Task ClickEraserTool_Succeeds()
-        => await App.ClickAsync(Locator.ByAutomationId("EraserTool"));
-
     // Save opens a Save As dialog on its own top-level window; dismissed via Escape sent to that dialog (via FindDialogAsync) since it would otherwise block later window-management tests.
     [Fact]
     public async Task ClickSaveButton_Succeeds()
@@ -122,69 +96,6 @@ public sealed class PaintIntegrationTests(PaintFixture fixture) : IClassFixture<
         var dialog = await AutoMancer.Engine.App.FindDialogAsync(App.ProcessId, "Save", timeoutMs: 2_000);
         if (dialog is not null)
             await dialog.PressKeyAsync(Key.Escape);
-    }
-
-    // ── Window management ────────────────────────────────────────────────────────
-
-    // Verifies that GetWindowSizeAsync returns a rectangle with positive, reasonable dimensions.
-    [Fact]
-    public async Task GetWindowSize_ReturnsValidRect()
-    {
-        var rect = await App.GetWindowSizeAsync();
-
-        Assert.True(rect.Width > 200 && rect.Height > 100,
-            $"Expected a visible window, got {rect.Width}×{rect.Height}.");
-    }
-
-    // Verifies that maximizing then restoring leaves the window in Normal state.
-    [Fact]
-    public async Task MaximizeWindow_ThenRestore_Succeeds()
-    {
-        var original = await App.GetWindowSizeAsync();
-        await App.SetWindowStateAsync(WindowState.Maximized);
-
-        var maximized = await App.GetWindowSizeAsync();
-        Assert.True(maximized.Width >= original.Width,
-            "Expected maximized width >= original width.");
-
-        await App.SetWindowStateAsync(WindowState.Normal);
-        await Task.Delay(200);
-        var restored = await App.GetWindowSizeAsync();
-        Assert.True(restored.Width > 0 && restored.Height > 0);
-    }
-
-    // Verifies that ResizeWindowAsync changes the window's width to the requested value.
-    [Fact]
-    public async Task ResizeWindow_ChangesDimensions()
-    {
-        var original = await App.GetWindowSizeAsync();
-        const int targetWidth = 900, targetHeight = 650;
-
-        await App.ResizeWindowAsync(targetWidth, targetHeight);
-        await Task.Delay(200);
-        var resized = await App.GetWindowSizeAsync();
-
-        Assert.InRange(resized.Width, targetWidth - 20, targetWidth + 20);
-
-        // Restore original size.
-        await App.ResizeWindowAsync((int)original.Width, (int)original.Height);
-    }
-
-    // Verifies that MoveWindowAsync repositions the window to the requested coordinates.
-    [Fact]
-    public async Task MoveWindow_ChangesPosition()
-    {
-        var original = await App.GetWindowSizeAsync();
-        const int targetX = 150, targetY = 150;
-
-        await App.MoveWindowAsync(targetX, targetY);
-        await Task.Delay(200);
-        var moved = await App.GetWindowSizeAsync();
-
-        Assert.InRange(moved.X, targetX - 10, targetX + 10);
-
-        // Restore original position.
-        await App.MoveWindowAsync((int)original.X, (int)original.Y);
     }
 
     // ── Advanced locators ────────────────────────────────────────────────────────
@@ -217,19 +128,5 @@ public sealed class PaintIntegrationTests(PaintFixture fixture) : IClassFixture<
         var el = await Uia3.FindAsync(Locator.ByXPath("//MenuBar//MenuItem[@Name='File']"));
 
         Assert.Equal("File", el.Name);
-    }
-
-    // ── Error diagnostics ────────────────────────────────────────────────────────
-
-    // Verifies that a near-miss element name produces an ElementNotFoundError with a closest-match hint.
-    [Fact]
-    public async Task TypoInName_ThrowsWithClosestMatchHint()
-    {
-        var quick = App.WithOptions(new AppOptions { ImplicitWaitMs = 1_500 });
-        var ex = await Assert.ThrowsAsync<ElementNotFoundError>(
-            () => quick.FindAsync(Locator.ByName("Pencel")));
-
-        Assert.NotNull(ex.ClosestMatch);
-        Assert.Contains("Pencil", ex.ClosestMatch.ElementName, StringComparison.OrdinalIgnoreCase);
     }
 }

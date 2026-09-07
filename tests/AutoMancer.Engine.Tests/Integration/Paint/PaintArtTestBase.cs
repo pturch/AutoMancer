@@ -27,10 +27,11 @@ public abstract class PaintArtTestBase : IAsyncLifetime
         await SetCanvasSizeAsync(800);
     }
 
-    // Kills Paint without triggering the save dialog.
+    // Kills Paint without triggering the save dialog; no-ops if InitializeAsync itself failed to launch, so that failure surfaces on its own instead of being masked by a NullReferenceException here.
     public async Task DisposeAsync()
     {
-        await _app.KillAsync();
+        if (_app is not null)
+            await _app.KillAsync();
     }
 
     // Opens the Resize and Skew flyout and sets the canvas to an exact square pixel size, so "Maintain aspect ratio" can't matter.

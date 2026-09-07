@@ -25,24 +25,21 @@ public static class TypeAction
 
         await Task.Run(() =>
         {
-            ClickAction.EnsureForeground(element);
-            ClickAction.EnsureInteractable(element);
+            ElementInputHelpers.EnsureForeground(element);
+            ElementInputHelpers.EnsureInteractable(element);
             SendUnicodeText(text, logger);
         }, ct).ConfigureAwait(false);
         logger?.Info("Typed via synthesized input", new { elementId = element.Id, textLength = text.Length });
     }
 
-    // Sends each UTF-16 code unit as a Unicode keyboard event pair; KEYEVENTF_UNICODE with wScan=codeunit is layout-agnostic.
+    // Sends each UTF-16 code unit as its own paced Unicode keyboard event pair; KEYEVENTF_UNICODE with wScan=codeunit is layout-agnostic.
     internal static void SendUnicodeText(string text, IEngineLogger? logger = null)
     {
-        var inputs = new NativeMethods.INPUT[text.Length * 2];
-        for (var i = 0; i < text.Length; i++)
+        foreach (var c in text)
         {
-            inputs[i * 2] = UnicodeKeyInput((ushort)text[i], isKeyUp: false);
-            inputs[i * 2 + 1] = UnicodeKeyInput((ushort)text[i], isKeyUp: true);
+            NativeMethods.SendInputs([UnicodeKeyInput(c, isKeyUp: false), UnicodeKeyInput(c, isKeyUp: true)], logger);
+            Thread.Sleep(15); // one SendInput batch for the whole string isn't reliably processed by WinUI3 (Notepad's Document control silently drops/repeats characters around word boundaries under load)
         }
-
-        NativeMethods.SendInputs(inputs, logger);
     }
 
     // Builds a single KEYBDINPUT event; Vk=0, Scan=codeUnit per the KEYEVENTF_UNICODE contract.

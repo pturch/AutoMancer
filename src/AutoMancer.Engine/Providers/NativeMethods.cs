@@ -1,6 +1,7 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 using AutoMancer.Engine.Diagnostics;
 using AutoMancer.Engine.Errors;
 
@@ -40,9 +41,28 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     internal static extern bool IsZoomed(IntPtr windowHandle);
 
-    // Brings windowHandle to the foreground so synthesized input is delivered to it.
+    // Brings windowHandle to the foreground so synthesized input is delivered to it; return value is documented as unreliable, so callers should verify via GetForegroundWindow rather than trust it.
     [DllImport("user32.dll", SetLastError = true)]
     internal static extern bool SetForegroundWindow(IntPtr windowHandle);
+
+    // Returns the handle of whichever window currently actually has focus — the ground truth SetForegroundWindow's own return value can't be trusted to reflect.
+    [DllImport("user32.dll")]
+    internal static extern IntPtr GetForegroundWindow();
+
+    // Foregrounds windowHandle, retrying against GetForegroundWindow until it lands or timeoutMs elapses; throws WindowActivationError if it never lands.
+    internal static void EnsureForegroundOrThrow(IntPtr windowHandle, int timeoutMs = 3_000, int pollIntervalMs = 100)
+    {
+        var deadline = Environment.TickCount64 + timeoutMs;
+        while (true)
+        {
+            SetForegroundWindow(windowHandle);
+            if (GetForegroundWindow() == windowHandle)
+                return;
+            if (Environment.TickCount64 >= deadline)
+                throw new WindowActivationError(windowHandle);
+            Thread.Sleep(pollIntervalMs);
+        }
+    }
 
     // Returns the DPI associated with windowHandle's monitor (Windows 10 1607+); 96 means 100% scaling.
     [DllImport("user32.dll")]

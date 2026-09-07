@@ -65,6 +65,13 @@ public sealed class Uia3Provider : IElementProvider
     private static readonly Dictionary<int, string> ControlTypeNames =
         ControlTypeMap.GroupBy(kv => kv.Value).ToDictionary(g => g.Key, g => g.First().Key);
 
+    // Resolves the root element for the session's window; null if the handle is invalid or the window has been destroyed — never throws (ElementFromHandle itself can throw COMException for a destroyed HWND).
+    private static IUIAutomationElement? TryGetRoot(AppSession session)
+    {
+        try { return Automation.ElementFromHandle(session.RootWindowHandle); }
+        catch (COMException) { return null; }
+    }
+
     // Finds the first descendant of the session's root window matching the locator; null if none match or the strategy is unsupported.
     public Task<ElementHandle?> FindElementAsync(Locator locator, AppSession session, CancellationToken ct = default)
     {
@@ -79,7 +86,7 @@ public sealed class Uia3Provider : IElementProvider
             if (condition is null)
                 return (ElementHandle?)null;
 
-            var root = Automation.ElementFromHandle(session.RootWindowHandle);
+            var root = TryGetRoot(session);
             if (root is null) return (ElementHandle?)null;
 
             // A stale element mid-search can abort FindFirst entirely — treat that as not-found instead of throwing.
@@ -112,7 +119,7 @@ public sealed class Uia3Provider : IElementProvider
             if (condition is null)
                 return (IReadOnlyList<ElementHandle>)Array.Empty<ElementHandle>();
 
-            var root = Automation.ElementFromHandle(session.RootWindowHandle);
+            var root = TryGetRoot(session);
             if (root is null)
                 return (IReadOnlyList<ElementHandle>)Array.Empty<ElementHandle>();
 
@@ -136,7 +143,7 @@ public sealed class Uia3Provider : IElementProvider
     // Snapshots the tree, evaluates the XPath expression, then re-walks the live tree to find the first matching element.
     private ElementHandle? FindByXPath(string xpath, AppSession session)
     {
-        var root = Automation.ElementFromHandle(session.RootWindowHandle);
+        var root = TryGetRoot(session);
         if (root is null) return null;
         var snapshot = WalkTree(root, Automation.ControlViewWalker, 0);
         var indices = XPathEvaluator.Evaluate(xpath, [snapshot]);
@@ -148,7 +155,7 @@ public sealed class Uia3Provider : IElementProvider
     // Snapshots the tree, evaluates the XPath expression, then re-walks the live tree to find all matching elements.
     private List<ElementHandle> FindAllByXPath(string xpath, AppSession session)
     {
-        var root = Automation.ElementFromHandle(session.RootWindowHandle);
+        var root = TryGetRoot(session);
         if (root is null) return [];
         var snapshot = WalkTree(root, Automation.ControlViewWalker, 0);
         var indices = XPathEvaluator.Evaluate(xpath, [snapshot]);
@@ -173,7 +180,7 @@ public sealed class Uia3Provider : IElementProvider
     // Walks the tree from the root (which the first segment must match) through each later segment against direct children of every prior match — all matches when Index is unset, only the one at Index when it is.
     private static List<IUIAutomationElement> ResolvePathCandidates(IReadOnlyList<PathSegment> segments, AppSession session)
     {
-        var root = Automation.ElementFromHandle(session.RootWindowHandle);
+        var root = TryGetRoot(session);
         if (root is null || segments.Count == 0 || !SegmentMatches(root, segments[0]))
             return [];
 
@@ -257,7 +264,7 @@ public sealed class Uia3Provider : IElementProvider
     {
         return Task.Run(() =>
         {
-            var root = Automation.ElementFromHandle(session.RootWindowHandle);
+            var root = TryGetRoot(session);
             if (root is null)
                 return (IReadOnlyList<ElementSnapshot>)Array.Empty<ElementSnapshot>();
 

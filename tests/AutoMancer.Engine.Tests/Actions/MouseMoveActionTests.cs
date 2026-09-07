@@ -6,7 +6,7 @@ namespace AutoMancer.Engine.Tests.Actions;
 
 public sealed class MouseMoveActionTests
 {
-    // Relative moves must omit MouseEventAbsolute — its presence is what turns Dx/Dy from a delta into a normalized screen coordinate (see ClickAction.MouseInputAt).
+    // Relative moves must omit MouseEventAbsolute — its presence is what turns Dx/Dy from a delta into a normalized screen coordinate (see SendInputBuilders.MouseInputAt).
     [Theory]
     [InlineData(10, -5)]
     [InlineData(0, 0)]

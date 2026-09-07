@@ -18,6 +18,12 @@ public sealed class AppOptions
     // Milliseconds to pause after each ClickAsync/TypeAsync so the UI can settle (SendInput latency + render time); 0 disables it.
     public int ActionDelayMs { get; init; } = 150;
 
+    // Milliseconds to retry foregrounding the target window (verified via GetForegroundWindow) before actions throw WindowActivationError.
+    public int ForegroundActivationTimeoutMs { get; init; } = 3_000;
+
+    // Milliseconds to wait for a launched/activated process's window to appear before LaunchAsync/LaunchPackagedAsync throw AppLaunchError.
+    public int LaunchTimeoutMs { get; init; } = 15_000;
+
     // Trace of the engine's own retry/resolve process, e.g. for debugging flaky element timing. Defaults to plain text on stderr so it never pollutes a CLI command's stdout; pass null to disable, or your own IEngineLogger to redirect it.
     public IEngineLogger? Logger { get; init; } = new EngineLogger(Console.Error);
 

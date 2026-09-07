@@ -28,7 +28,7 @@ public static class KeyboardAction
         var inputs = new List<NativeMethods.INPUT>();
 
         foreach (var vk in modifierKeys)
-            inputs.Add(ClickAction.VkInput(vk, isKeyUp: false));
+            inputs.Add(SendInputBuilders.VkInput(vk, isKeyUp: false));
 
         // All key-downs happen before any key-up, so multi-key chords (e.g. Ctrl+A+K) register as held together.
         foreach (var key in keys)
@@ -39,7 +39,7 @@ public static class KeyboardAction
             inputs.Add(KeyInput(keys[i], isKeyUp: true));
 
         for (var i = modifierKeys.Count - 1; i >= 0; i--)
-            inputs.Add(ClickAction.VkInput(modifierKeys[i], isKeyUp: true));
+            inputs.Add(SendInputBuilders.VkInput(modifierKeys[i], isKeyUp: true));
 
         NativeMethods.SendInputs(inputs.ToArray(), logger);
     }, ct);
@@ -71,5 +71,5 @@ public static class KeyboardAction
 
     // Builds a keyboard INPUT event for a named Key, applying the extended-key flag where the VK contract requires it.
     private static NativeMethods.INPUT KeyInput(Key key, bool isKeyUp) =>
-        ClickAction.VkInput(key.ToVirtualKey(), isKeyUp);
+        SendInputBuilders.VkInput(key.ToVirtualKey(), isKeyUp);
 }

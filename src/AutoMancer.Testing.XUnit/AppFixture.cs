@@ -12,9 +12,12 @@ public abstract class AppFixture : IAsyncLifetime
     // Launches the app under test via the derived fixture's CreateAppAsync.
     public async Task InitializeAsync() => App = await CreateAppAsync();
 
-    // Kills the app and waits for it to actually exit, runs any app-specific teardown, then releases the process handle.
+    // Runs app-specific pre-kill cleanup, kills the app and waits for it to actually exit, runs any post-kill teardown, then releases the process handle.
+    // No-ops if InitializeAsync itself failed to launch, so that failure surfaces on its own instead of being masked by a NullReferenceException here.
     public async Task DisposeAsync()
     {
+        if (App is null) return;
+        await OnBeforeKillAsync();
         await App.KillAsync();
         await OnKilledAsync();
         await App.DisposeAsync();
@@ -25,6 +28,9 @@ public abstract class AppFixture : IAsyncLifetime
 
     // Defaults to the process-wide AutoMancerTestOptions policy; override only for a fixture that needs to diverge from it.
     protected virtual string LogDirectory => AutoMancerTestOptions.LogDirectory;
+
+    // Runs while the app is still alive, right before it's killed; override for cleanup that needs a live app, e.g. discarding unsaved state.
+    protected virtual Task OnBeforeKillAsync() => Task.CompletedTask;
 
     // Runs after the app has exited and before the process handle is released; override for app-specific teardown beyond waiting for exit.
     protected virtual Task OnKilledAsync() => Task.CompletedTask;

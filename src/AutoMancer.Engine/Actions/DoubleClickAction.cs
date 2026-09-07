@@ -20,16 +20,16 @@ public static class DoubleClickAction
     // Same as ExecuteAsync, with an explicit logger override — for App and the test suite to inject/inspect logging directly.
     internal static Task ExecuteCoreAsync(ElementHandle element, IEngineLogger? logger, CancellationToken ct) => Task.Run(() =>
     {
-        ClickAction.EnsureForeground(element);
+        ElementInputHelpers.EnsureForeground(element);
 
         // Leading move required — see NativeMethods.SendMouseClick's comment on WinUI3 hit-testing.
-        var (x, y) = ClickAction.GetCenter(element);
-        var (normX, normY) = ClickAction.Normalize(x, y);
+        var (x, y) = ElementInputHelpers.GetCenter(element);
+        var (normX, normY) = SendInputBuilders.Normalize(x, y);
         NativeMethods.INPUT[] click =
         [
-            ClickAction.MouseInputAt(normX, normY, NativeMethods.MouseEventFlags.Move),
-            ClickAction.MouseInputAt(normX, normY, NativeMethods.MouseEventFlags.LeftDown),
-            ClickAction.MouseInputAt(normX, normY, NativeMethods.MouseEventFlags.LeftUp),
+            SendInputBuilders.MouseInputAt(normX, normY, NativeMethods.MouseEventFlags.Move),
+            SendInputBuilders.MouseInputAt(normX, normY, NativeMethods.MouseEventFlags.LeftDown),
+            SendInputBuilders.MouseInputAt(normX, normY, NativeMethods.MouseEventFlags.LeftUp),
         ];
 
         NativeMethods.SendInputs(click, logger);

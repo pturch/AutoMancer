@@ -39,11 +39,11 @@ public static class DragAction
         return Task.Run(() =>
         {
             // Move to the start without pressing so the cursor is in the right place before the button goes down.
-            var (nx0, ny0) = ClickAction.Normalize(waypoints[0].X, waypoints[0].Y);
-            NativeMethods.SendInputs([ClickAction.MouseInputAt(nx0, ny0, NativeMethods.MouseEventFlags.Move)], logger);
+            var (nx0, ny0) = SendInputBuilders.Normalize(waypoints[0].X, waypoints[0].Y);
+            NativeMethods.SendInputs([SendInputBuilders.MouseInputAt(nx0, ny0, NativeMethods.MouseEventFlags.Move)], logger);
             Thread.Sleep(30);
 
-            NativeMethods.SendInputs([ClickAction.MouseInputAt(nx0, ny0, NativeMethods.MouseEventFlags.LeftDown)], logger);
+            NativeMethods.SendInputs([SendInputBuilders.MouseInputAt(nx0, ny0, NativeMethods.MouseEventFlags.LeftDown)], logger);
             tracker?.SetLeftDown();
             Thread.Sleep(20);
 
@@ -52,16 +52,16 @@ public static class DragAction
             {
                 foreach (var (wx, wy) in waypoints)
                 {
-                    var (nx, ny) = ClickAction.Normalize(wx, wy);
-                    NativeMethods.SendInputs([ClickAction.MouseInputAt(nx, ny, NativeMethods.MouseEventFlags.Move)], logger);
+                    var (nx, ny) = SendInputBuilders.Normalize(wx, wy);
+                    NativeMethods.SendInputs([SendInputBuilders.MouseInputAt(nx, ny, NativeMethods.MouseEventFlags.Move)], logger);
                     Thread.Sleep(5);
                 }
             }
             finally
             {
                 var last = waypoints[waypoints.Count - 1];
-                var (nxL, nyL) = ClickAction.Normalize(last.X, last.Y);
-                NativeMethods.SendInputs([ClickAction.MouseInputAt(nxL, nyL, NativeMethods.MouseEventFlags.LeftUp)], logger);
+                var (nxL, nyL) = SendInputBuilders.Normalize(last.X, last.Y);
+                NativeMethods.SendInputs([SendInputBuilders.MouseInputAt(nxL, nyL, NativeMethods.MouseEventFlags.LeftUp)], logger);
                 tracker?.DrainLeftDown();
             }
         }, ct);

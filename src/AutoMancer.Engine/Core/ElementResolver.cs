@@ -11,12 +11,14 @@ public sealed class ElementResolver
     private readonly IReadOnlyList<IElementProvider> _providers;
     private readonly ElementProviderOptions _options;
     private readonly IEngineLogger? _logger;
+    private readonly int _foregroundActivationTimeoutMs;
 
     // Orders providers by ElementProviderOptions.ProviderChain, dropping any chain entry with no matching provider.
-    public ElementResolver(IEnumerable<IElementProvider> providers, ElementProviderOptions? options = null, IEngineLogger? logger = null)
+    public ElementResolver(IEnumerable<IElementProvider> providers, ElementProviderOptions? options = null, IEngineLogger? logger = null, int foregroundActivationTimeoutMs = 3_000)
     {
         _options = options ?? ElementProviderOptions.Default;
         _logger = logger;
+        _foregroundActivationTimeoutMs = foregroundActivationTimeoutMs;
 
         var byName = providers.ToDictionary(p => p.ProviderName, StringComparer.OrdinalIgnoreCase);
         _providers = _options.ProviderChain
@@ -42,6 +44,7 @@ public sealed class ElementResolver
                 if (found is not null)
                 {
                     found.Logger = _logger;
+                    found.ForegroundActivationTimeoutMs = _foregroundActivationTimeoutMs;
                     _logger?.Info("Element resolved", new { provider = provider.ProviderName, locator.Strategy, locator.Value, elapsedMs = stopwatch.ElapsedMilliseconds });
                     return found;
                 }
@@ -101,6 +104,7 @@ public sealed class ElementResolver
                 if (found is not null && condition(found))
                 {
                     found.Logger = _logger;
+                    found.ForegroundActivationTimeoutMs = _foregroundActivationTimeoutMs;
                     _logger?.Info("Wait condition met", new { provider = provider.ProviderName, locator.Strategy, locator.Value, elapsedMs = stopwatch.ElapsedMilliseconds });
                     return found;
                 }
@@ -122,7 +126,10 @@ public sealed class ElementResolver
             if (matches.Count > 0)
             {
                 foreach (var match in matches)
+                {
                     match.Logger = _logger;
+                    match.ForegroundActivationTimeoutMs = _foregroundActivationTimeoutMs;
+                }
                 _logger?.Info("Elements found", new { provider = provider.ProviderName, locator.Strategy, locator.Value, count = matches.Count });
                 return matches;
             }

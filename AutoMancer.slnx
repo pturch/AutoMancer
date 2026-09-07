@@ -11,5 +11,6 @@
   </Folder>
   <Folder Name="/samples/">
     <Project Path="samples/ConsumerNotepadTests/ConsumerNotepadTests.csproj" />
+    <Project Path="samples/ConsumerVsCodeTests/ConsumerVsCodeTests.csproj" />
   </Folder>
 </Solution>

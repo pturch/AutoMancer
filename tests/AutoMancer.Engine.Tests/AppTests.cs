@@ -43,4 +43,14 @@ public sealed class AppTests
 
         Assert.Equal(bogusHandle, App.GetTopLevelWindow(bogusHandle));
     }
+
+    // Regression coverage for AppOptions.KillEntireProcessTree threading through to AppSession.KillApp(bool) — the already-exited process here means KillApp is a no-op either way, so this only proves the option doesn't crash the Kill/Dispose path, not that Process.Kill(true) actually reaches child processes (that's exercised for real in samples/ConsumerVsCodeTests, against an app that actually spawns helper processes).
+    [Fact]
+    public async Task KillAsync_WithKillEntireProcessTree_DoesNotThrow()
+    {
+        var session = AppSession.CreateForTesting(ExitedProcess(), (IntPtr)42);
+        var app = App.CreateForTesting(session, [], new AppOptions { Logger = null, KillEntireProcessTree = true });
+
+        await app.KillAsync();
+    }
 }

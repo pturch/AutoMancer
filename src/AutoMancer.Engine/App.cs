@@ -15,6 +15,7 @@ public sealed class App : IAsyncDisposable
     private readonly ElementResolver _resolver;
     private readonly int _actionDelayMs;
     private readonly int _foregroundActivationTimeoutMs;
+    private readonly bool _killEntireProcessTree;
     private readonly HeldKeyTracker _heldKeys = new();
     private readonly HeldMouseButtonTracker _heldMouseButtons = new();
     private readonly IEngineLogger? _logger;
@@ -46,6 +47,7 @@ public sealed class App : IAsyncDisposable
         _session = session;
         _actionDelayMs = options.ActionDelayMs;
         _foregroundActivationTimeoutMs = options.ForegroundActivationTimeoutMs;
+        _killEntireProcessTree = options.KillEntireProcessTree;
         _logger = options.Logger;
         _windowsEventLogger = options.WindowsEventLogger;
         _combinedLogger = options.CombinedLogger;
@@ -67,7 +69,7 @@ public sealed class App : IAsyncDisposable
     public static async Task<App> LaunchAsync(string executablePath, AppOptions? options = null, WindowMatchOptions? windowMatch = null, CancellationToken ct = default)
     {
         options ??= AppOptions.Default;
-        var session = await AppSession.LaunchAsync(executablePath, timeoutMs: options.LaunchTimeoutMs, windowMatch: windowMatch, logger: options.Logger, ct: ct);
+        var session = await AppSession.LaunchAsync(executablePath, arguments: options.Arguments, timeoutMs: options.LaunchTimeoutMs, windowMatch: windowMatch, logger: options.Logger, ct: ct);
         return new App(session, BuildProviders(options.ProviderChain), options);
     }
 
@@ -95,7 +97,7 @@ public sealed class App : IAsyncDisposable
     public static async Task<App> LaunchPackagedAsync(string aumid, AppOptions? options = null, WindowMatchOptions? windowMatch = null, CancellationToken ct = default)
     {
         options ??= AppOptions.Default;
-        var session = await AppSession.LaunchPackagedAsync(aumid, timeoutMs: options.LaunchTimeoutMs, windowMatch: windowMatch, logger: options.Logger, ct: ct);
+        var session = await AppSession.LaunchPackagedAsync(aumid, arguments: options.Arguments, timeoutMs: options.LaunchTimeoutMs, windowMatch: windowMatch, logger: options.Logger, ct: ct);
         return new App(session, BuildProviders(options.ProviderChain), options);
     }
 
@@ -378,7 +380,7 @@ public sealed class App : IAsyncDisposable
     // Kills the underlying process, swallowing a failure to terminate it (e.g. access denied against an elevated target) so that alone can never block the rest of Kill/KillAsync/DisposeAsync from running.
     private void KillAppBestEffort()
     {
-        try { _session.KillApp(); }
+        try { _session.KillApp(_killEntireProcessTree); }
         catch (Exception ex) when (ex is Win32Exception or InvalidOperationException) { _logger?.Warn("KillApp failed to terminate the process", new { error = ex.Message }); }
     }
 

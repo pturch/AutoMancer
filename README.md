@@ -45,7 +45,7 @@ Builds everything in the solution: the engine (`AutoMancer.Engine`), the CLI (`A
 dotnet test tests/AutoMancer.Engine.Tests --filter "Category!=Integration"
 ```
 
-Runs the engine's unit tests. The `Category=Integration` tests and `samples/ConsumerNotepadTests` drive a real Notepad window, so they need an interactive Windows session and aren't part of CI. See [CONTRIBUTING.md](CONTRIBUTING.md#build--test) for more information.
+Runs the engine's unit tests. The `Category=Integration` tests and `samples/ConsumerNotepadTests` drive a real Notepad window, so they need an interactive Windows session and aren't part of CI. `samples/ConsumerVsCodeTests` needs Windows + Visual Studio Code installed instead, and launches its own isolated instance rather than sharing a window — but like the others, it still drives real keyboard/mouse input, so it shouldn't run concurrently with them either. See [CONTRIBUTING.md](CONTRIBUTING.md#build--test) for more information.
 
 ### Running via C#:
 
@@ -79,7 +79,7 @@ src/AutoMancer.Cli/bin/Debug/<net10 version>/automancer.exe <command> [args]
 
 | Command | Arguments | Options | What it does |
 |---|---|---|---|
-| `launch <executable>` | path to the executable | — | Launches the app, registers a session, and prints the session ID, PID, and path |
+| `launch <executable>` | path to the executable | `--args` | Launches the app, registers a session, and prints the session ID, PID, and path |
 | `find <session-id>` | session ID | `--by`, `--value` | Resolves one element and prints its properties (name, automation ID, control type, class name, bounding rect, …) |
 | `tree <session-id>` | session ID | — | Snapshots the whole element tree and prints it as an indented list |
 | `click <session-id>` | session ID | `--by`, `--value`, `--double`, `--right` | Resolves one element and clicks it |
@@ -92,6 +92,9 @@ src/AutoMancer.Cli/bin/Debug/<net10 version>/automancer.exe <command> [args]
 ```bash
 # Launch Notepad and capture the session ID it prints
 automancer launch "C:\Windows\System32\notepad.exe"
+
+# --args passes command-line arguments straight through to the launched process
+automancer launch "C:\...\Code.exe" --args "--new-window \"C:\my-project\""
 
 # Snapshot the element tree
 automancer tree <session-id>
@@ -229,6 +232,10 @@ await app.WaitUntilGoneAsync(Locator.ByName("Save changes?"));
 
 // Waits for an arbitrary predicate against the resolved element, not just "found".
 var button = await app.WaitForAsync(Locator.ByAutomationId("SubmitButton"), e => e.IsEnabled == true);
+
+// Snapshots the whole element tree as nested ElementSnapshot roots; DescendantsAndSelf flattens it to search or LINQ over.
+var roots = await app.SnapshotAsync();
+var everyButton = roots!.DescendantsAndSelf().Where(e => e.ControlType == "Button");
 ```
 
 ## Testing Your Own App:
@@ -251,7 +258,7 @@ Expect(element).ToBeVisible();
 
 `AutoMancer.Testing.XUnit` builds on that for xUnit. It provides an fixture for launch/teardown, plus a base class that exposes `App` and `Expect` to your test classes. When `AutoMancerTestOptions.CaptureScreenshotsOnFailure` is on, a failed validation automatically captures a screenshot and folds the path into the assertion message.
 
-See **[TESTING.md](TESTING.md)** for the full guide, including the fixture pattern, and [`samples/ConsumerNotepadTests`](samples/ConsumerNotepadTests) for a complete working test project built entirely on public API.
+See **[TESTING.md](TESTING.md)** for the full guide, including the fixture pattern, and [`samples/ConsumerNotepadTests`](samples/ConsumerNotepadTests) for a complete working test project built entirely on public API. [`samples/ConsumerVsCodeTests`](samples/ConsumerVsCodeTests) is a second one against a more complex, actively-changing Electron app — a useful second data point for what driving a real app beyond a simple native control actually takes.
 
 ## Logging:
 

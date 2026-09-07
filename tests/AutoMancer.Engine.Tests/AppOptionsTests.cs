@@ -17,6 +17,8 @@ public sealed class AppOptionsTests
         Assert.NotNull(options.Logger);
         Assert.Null(options.WindowsEventLogger);
         Assert.Null(options.CombinedLogger);
+        Assert.Null(options.Arguments);
+        Assert.False(options.KillEntireProcessTree);
     }
 
     // TestDefaults trades a longer implicit wait (tolerate slow CI) for a shorter action delay

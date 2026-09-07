@@ -12,14 +12,17 @@ internal static class LaunchCommand
     internal static Command Build()
     {
         var execArg = new Argument<string>("executable", "Path to the executable to launch.");
+        var argsOpt = new Option<string?>("--args", "Command-line arguments to pass to the executable.");
         var command = new Command("launch", "Launch an application and register it as a session.");
         command.AddArgument(execArg);
+        command.AddOption(argsOpt);
         command.SetHandler(async (InvocationContext ctx) =>
         {
             var exe = ctx.ParseResult.GetValueForArgument(execArg);
+            var arguments = ctx.ParseResult.GetValueForOption(argsOpt);
             try
             {
-                var app = await App.LaunchAsync(exe, ct: ctx.GetCancellationToken());
+                var app = await App.LaunchAsync(exe, new AppOptions { Arguments = arguments }, ct: ctx.GetCancellationToken());
                 var sessionId = Guid.NewGuid().ToString("N");
                 SessionStore.Save(new SessionEntry(sessionId, app.ProcessId, exe));
                 Console.WriteLine($"Session: {sessionId}");

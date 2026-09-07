@@ -9,9 +9,10 @@ dotnet build AutoMancer.slnx
 dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category!=Integration"
 dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration"   # requires Windows + Notepad
 dotnet test samples/ConsumerNotepadTests/                                   # requires Windows + Notepad
+dotnet test samples/ConsumerVsCodeTests/                                    # requires Windows + Visual Studio Code
 ```
 
-**Never run `dotnet test AutoMancer.slnx`** to exercise the integration suites. It runs every test project in the solution concurrently, and Windows 11 Notepad is single-instance — `AutoMancer.Engine.Tests`'s Notepad integration tests and `samples/ConsumerNotepadTests`'s demo tests will fight over the same OS-level window, producing flaky, non-reproducible failures. Run each Notepad-touching project one at a time via the commands above. `AutoMancer.Cli.Tests` has no live-UI dependency and is safe to run alongside anything.
+**Never run `dotnet test AutoMancer.slnx`** to exercise the integration suites. It runs every test project in the solution concurrently, and Windows 11 Notepad is single-instance — `AutoMancer.Engine.Tests`'s Notepad integration tests and `samples/ConsumerNotepadTests`'s demo tests will fight over the same OS-level window, producing flaky, non-reproducible failures. Run each Notepad-touching project one at a time via the commands above. `AutoMancer.Cli.Tests` has no live-UI dependency and is safe to run alongside anything. `samples/ConsumerVsCodeTests` launches its own fully isolated VS Code instance (own `--user-data-dir`), so it's exempt from the single-instance window-handoff problem specifically — but it still drives SendInput/SetForegroundWindow like every other live-UI project here, so don't run it concurrently with the Notepad projects (or anything else touching a real window) either; the same foreground-window contention applies regardless of which app is targeted.
 
 The solution file is `.slnx` (not `.sln`) — that is the .NET 10 SDK default.
 

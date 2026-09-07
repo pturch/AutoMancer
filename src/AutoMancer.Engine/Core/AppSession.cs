@@ -170,11 +170,11 @@ public sealed class AppSession : IAsyncDisposable
         return Task.FromResult(FromProcess(match));
     }
 
-    // Terminates the target process immediately; no-op if it has already exited.
-    public void KillApp()
+    // Terminates the target process immediately; no-op if it has already exited. When entireProcessTree is true, also terminates every process it spawned.
+    public void KillApp(bool entireProcessTree = false)
     {
         if (!_process.HasExited)
-            _process.Kill();
+            _process.Kill(entireProcessTree);
     }
 
     // Waits until the process has actually exited (event-based, not polled), or timeoutMs elapses
@@ -250,6 +250,7 @@ public sealed class AppSession : IAsyncDisposable
     // Activates a UWP/MSIX packaged app by AUMID and waits until its host process shows a window matching windowMatch (if given).
     public static async Task<AppSession> LaunchPackagedAsync(
         string aumid,
+        string? arguments = null,
         int timeoutMs = 15_000,
         WindowMatchOptions? windowMatch = null,
         IEngineLogger? logger = null,
@@ -259,7 +260,7 @@ public sealed class AppSession : IAsyncDisposable
             ?? throw new AppLaunchError($"ApplicationActivationManager COM class not registered on this system.");
         var manager = (IApplicationActivationManager)Activator.CreateInstance(managerType)!;
 
-        var hr = manager.ActivateApplication(aumid, null, 0, out var pid);
+        var hr = manager.ActivateApplication(aumid, arguments, 0, out var pid);
         if (hr < 0)
             throw new AppLaunchError($"ActivateApplication failed for AUMID '{aumid}' (HRESULT 0x{hr:X8}).");
 

@@ -14,11 +14,12 @@ public abstract class AppFixture : IAsyncLifetime
 
     // Runs app-specific pre-kill cleanup, kills the app and waits for it to actually exit, runs any post-kill teardown, then releases the process handle.
     // No-ops if InitializeAsync itself failed to launch, so that failure surfaces on its own instead of being masked by a NullReferenceException here.
+    // OnBeforeKillAsync throwing must not skip the kill itself — leaving the process running would leak it into the next test run.
     public async Task DisposeAsync()
     {
         if (App is null) return;
-        await OnBeforeKillAsync();
-        await App.KillAsync();
+        try { await OnBeforeKillAsync(); }
+        finally { await App.KillAsync(); }
         await OnKilledAsync();
         await App.DisposeAsync();
     }

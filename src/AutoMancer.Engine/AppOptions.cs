@@ -19,6 +19,7 @@ public sealed class AppOptions
     public int ActionDelayMs { get; init; } = 150;
 
     // Milliseconds to retry foregrounding the target window (verified via GetForegroundWindow) before actions throw WindowActivationError.
+    // 0 skips the check entirely, for apps whose window hierarchy defeats it — pair with App.RootWindowHandle to manage activation yourself.
     public int ForegroundActivationTimeoutMs { get; init; } = 3_000;
 
     // Milliseconds to wait for a launched/activated process's window to appear before LaunchAsync/LaunchPackagedAsync throw AppLaunchError.

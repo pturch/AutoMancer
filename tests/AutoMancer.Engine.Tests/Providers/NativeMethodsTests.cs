@@ -17,4 +17,15 @@ public sealed class NativeMethodsTests
 
         Assert.Equal("SomeOperation", ex.Operation);
     }
+
+    [Fact]
+    public void EnsureForegroundOrThrow_WindowNeverBecomesForeground_ThrowsWindowActivationError()
+    {
+        // Not a real window, so it can never equal GetForegroundWindow()'s result.
+        var bogusHandle = (IntPtr)0x7FFFFFFF;
+
+        var ex = Assert.Throws<WindowActivationError>(() => NativeMethods.EnsureForegroundOrThrow(bogusHandle, timeoutMs: 50, pollIntervalMs: 10));
+
+        Assert.Equal(bogusHandle, ex.WindowHandle);
+    }
 }

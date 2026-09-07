@@ -25,6 +25,12 @@ public sealed class App : IAsyncDisposable
     // The PID of the target process — useful for re-attaching after a session change.
     public int ProcessId => _session.ProcessId;
 
+    // The target app's top-level window handle — for driving foreground activation yourself (e.g. via your own SetForegroundWindow/GetAncestor calls) on an app whose window hierarchy defeats the built-in check; pair with AppOptions.ForegroundActivationTimeoutMs = 0 to disable that check.
+    public IntPtr RootWindowHandle => _session.RootWindowHandle;
+
+    // Resolves windowHandle to its top-level ancestor — useful when managing foreground activation yourself for an element whose NativeHandle (cast to IUIAutomationElement).CurrentNativeWindowHandle is a child window rather than the app's own top-level window.
+    public static IntPtr GetTopLevelWindow(IntPtr windowHandle) => NativeMethods.GetTopLevelWindow(windowHandle);
+
     // The logger this App was configured with (via AppOptions.Logger), if any — lets a test bridge it into its own output/DI logging.
     public IEngineLogger? Logger => _logger;
 
@@ -334,6 +340,9 @@ public sealed class App : IAsyncDisposable
     public Task SetWindowStateAsync(WindowState state, CancellationToken ct = default)
         => WindowAction.SetVisualStateCoreAsync(_session.RootWindowHandle, state, _logger, ct);
 
+    // Reports whether the window is currently minimized — lets a caller check and recover (e.g. via SetWindowStateAsync) before an action would otherwise throw WindowMinimizedError.
+    public bool IsWindowMinimized() => NativeMethods.IsIconic(_session.RootWindowHandle);
+
     // Closes the root window; tries WindowPattern.Close() first, falls back to posting WM_CLOSE.
     public Task CloseWindowAsync(CancellationToken ct = default)
         => WindowAction.CloseCoreAsync(_session.RootWindowHandle, _logger, ct);
@@ -400,11 +409,12 @@ public sealed class App : IAsyncDisposable
             NativeMethods.SendInputs([SendInputBuilders.MouseInputAt(0, 0, NativeMethods.MouseEventFlags.LeftUp)], _logger);
     }
 
-    // Throws WindowMinimizedError if minimized, else foregrounds the root window (throwing WindowActivationError if that fails); used where there's no resolved element to foreground instead.
+    // Throws WindowMinimizedError if minimized, else foregrounds the root window (throwing WindowActivationError if that fails); used where there's no resolved element to foreground instead. Skips the foreground check when ForegroundActivationTimeoutMs is 0 — see RootWindowHandle for managing activation yourself.
     private void EnsureWindowReady()
     {
         EnsureWindowNotMinimized();
-        NativeMethods.EnsureForegroundOrThrow(_session.RootWindowHandle, _foregroundActivationTimeoutMs);
+        if (_foregroundActivationTimeoutMs > 0)
+            NativeMethods.EnsureForegroundOrThrow(_session.RootWindowHandle, _foregroundActivationTimeoutMs);
     }
 
     // Throws WindowMinimizedError if the root window is minimized; SendInput can't target its client area.

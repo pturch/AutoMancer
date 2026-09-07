@@ -63,4 +63,35 @@ public sealed class AppFixtureTests
 
         Assert.Equal(["CreateApp", "OnKilled"], fixture.Events);
     }
+
+    private sealed class ThrowingBeforeKillFixture : AppFixture
+    {
+        public Process? Process { get; private set; }
+
+        protected override Task<App> CreateAppAsync()
+        {
+            Process = Process.Start(new ProcessStartInfo("cmd.exe", "/c ping -n 30 127.0.0.1 >nul")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            })!;
+            var session = AppSession.CreateForTesting(Process, (IntPtr)1);
+            return Task.FromResult(App.CreateForTesting(session, [], new AppOptions { Logger = null }));
+        }
+
+        protected override Task OnBeforeKillAsync() => throw new InvalidOperationException("boom");
+    }
+
+    // OnBeforeKillAsync throwing must not skip the kill itself, or a live-running process leaks past DisposeAsync.
+    [Fact]
+    public async Task DisposeAsync_StillKillsTheProcess_WhenOnBeforeKillAsyncThrows()
+    {
+        var fixture = new ThrowingBeforeKillFixture();
+        await fixture.InitializeAsync();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.DisposeAsync());
+
+        fixture.Process!.Refresh();
+        Assert.True(fixture.Process.HasExited);
+    }
 }

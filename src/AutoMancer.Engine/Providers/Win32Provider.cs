@@ -1,5 +1,4 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
-using System.Text;
 using AutoMancer.Engine.Core;
 
 namespace AutoMancer.Engine.Providers;
@@ -62,8 +61,8 @@ public sealed class Win32Provider : IElementProvider
     // Returns true when the windowHandle's title (Name strategy) or class name (ClassName strategy) matches the locator value.
     private static bool Matches(IntPtr windowHandle, Locator locator) => locator.Strategy switch
     {
-        LocatorStrategy.Name => GetTitle(windowHandle).Contains(locator.Value, StringComparison.OrdinalIgnoreCase),
-        LocatorStrategy.ClassName => GetClass(windowHandle).Equals(locator.Value, StringComparison.OrdinalIgnoreCase),
+        LocatorStrategy.Name => NativeMethods.GetWindowTitle(windowHandle).Contains(locator.Value, StringComparison.OrdinalIgnoreCase),
+        LocatorStrategy.ClassName => NativeMethods.GetWindowClassName(windowHandle).Equals(locator.Value, StringComparison.OrdinalIgnoreCase),
         _ => false,
     };
 
@@ -73,8 +72,8 @@ public sealed class Win32Provider : IElementProvider
         var (rect, rectOk) = GetRect(windowHandle);
         return new($"hwnd:{windowHandle}", "win32", windowHandle)
         {
-            Name = GetTitle(windowHandle),
-            ClassName = GetClass(windowHandle),
+            Name = NativeMethods.GetWindowTitle(windowHandle),
+            ClassName = NativeMethods.GetWindowClassName(windowHandle),
             BoundingRect = rect,
             IsEnabled = NativeMethods.IsWindowEnabled(windowHandle),
             // GetWindowRect failing (e.g. a stale handle from a window that closed mid-enumeration) can't be surfaced as an exception — providers never throw — so it's signaled as IsOffscreen=true instead of a silently-zeroed rect, which ElementInputHelpers.GetCenter's interactability guard already checks for.
@@ -85,28 +84,12 @@ public sealed class Win32Provider : IElementProvider
 
     // Builds an ElementSnapshot for windowHandle with the given children list.
     private static ElementSnapshot BuildSnapshot(IntPtr windowHandle, IReadOnlyList<ElementSnapshot> children) =>
-        new($"hwnd:{windowHandle}", GetTitle(windowHandle), null, GetClass(windowHandle), null, GetRect(windowHandle).Rect, children);
+        new($"hwnd:{windowHandle}", NativeMethods.GetWindowTitle(windowHandle), null, NativeMethods.GetWindowClassName(windowHandle), null, GetRect(windowHandle).Rect, children);
 
     // Returns windowHandle's current bounding rectangle in physical screen coordinates, and whether GetWindowRect actually succeeded — a stale/closed handle returns false with a zeroed rect.
     private static (Rect Rect, bool Success) GetRect(IntPtr windowHandle)
     {
         var ok = NativeMethods.GetWindowRect(windowHandle, out var rect);
         return (new Rect(rect.Left, rect.Top, rect.Right - rect.Left, rect.Bottom - rect.Top), ok);
-    }
-
-    // Returns the window title text via GetWindowText.
-    private static string GetTitle(IntPtr windowHandle)
-    {
-        var sb = new StringBuilder(512);
-        NativeMethods.GetWindowText(windowHandle, sb, sb.Capacity);
-        return sb.ToString();
-    }
-
-    // Returns the window class name via GetClassName.
-    private static string GetClass(IntPtr windowHandle)
-    {
-        var sb = new StringBuilder(256);
-        NativeMethods.GetClassName(windowHandle, sb, sb.Capacity);
-        return sb.ToString();
     }
 }

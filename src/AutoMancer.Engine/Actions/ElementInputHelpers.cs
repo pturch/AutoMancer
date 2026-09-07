@@ -28,7 +28,7 @@ internal static class ElementInputHelpers
             return;
         }
 
-        if (windowHandle != IntPtr.Zero)
+        if (windowHandle != IntPtr.Zero && element.ForegroundActivationTimeoutMs > 0)
             NativeMethods.EnsureForegroundOrThrow(windowHandle, element.ForegroundActivationTimeoutMs);
     }
 

@@ -1,7 +1,6 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
 using System.Diagnostics;
 using System.Runtime.InteropServices;
-using System.Text;
 using AutoMancer.Engine.Diagnostics;
 using AutoMancer.Engine.Dpi;
 using AutoMancer.Engine.Errors;
@@ -116,29 +115,13 @@ public sealed class AppSession : IAsyncDisposable
         if (criteria.ExpectedPid is not null && pid != criteria.ExpectedPid) // Rule out this window if it's the wrong process
             return false;
 
-        if (criteria.TitleContains is not null && !GetWindowTitle(windowHandle).Contains(criteria.TitleContains, StringComparison.OrdinalIgnoreCase)) // Rule out this window if the title doesn't match
+        if (criteria.TitleContains is not null && !NativeMethods.GetWindowTitle(windowHandle).Contains(criteria.TitleContains, StringComparison.OrdinalIgnoreCase)) // Rule out this window if the title doesn't match
             return false;
 
-        if (criteria.ClassName is not null && !string.Equals(GetWindowClassName(windowHandle), criteria.ClassName, StringComparison.OrdinalIgnoreCase)) // Rule out this window if the class doesn't match
+        if (criteria.ClassName is not null && !string.Equals(NativeMethods.GetWindowClassName(windowHandle), criteria.ClassName, StringComparison.OrdinalIgnoreCase)) // Rule out this window if the class doesn't match
             return false;
 
         return true; // This window works
-    }
-
-    // Reads a window's title via GetWindowText; the single source of truth every title-matching call site reads through.
-    private static string GetWindowTitle(IntPtr windowHandle)
-    {
-        var sb = new StringBuilder(512);
-        NativeMethods.GetWindowText(windowHandle, sb, sb.Capacity);
-        return sb.ToString();
-    }
-
-    // Reads a window's class name via GetClassName.
-    private static string GetWindowClassName(IntPtr windowHandle)
-    {
-        var sb = new StringBuilder(256);
-        NativeMethods.GetClassName(windowHandle, sb, sb.Capacity);
-        return sb.ToString();
     }
 
     // Wraps an already-running process identified by PID; windowMatch optionally verifies its main window's title/class before accepting it.

@@ -60,7 +60,14 @@ public sealed class Uia2Provider : IElementProvider
     private static readonly Dictionary<int, string> ControlTypeNames =
         ControlTypeMap.GroupBy(kv => kv.Value.Id).ToDictionary(g => g.Key, g => g.First().Key);
 
-    // Finds the first descendant of the session's root window matching the locator; null if none match or the strategy is unsupported.
+    // Resolves the root element for the session's window; null if the handle is invalid or the window has been destroyed — never throws (FromHandle itself can throw ElementNotAvailableException for a destroyed HWND).
+    private static AutomationElement? TryGetRoot(AppSession session)
+    {
+        try { return AutomationElement.FromHandle(session.RootWindowHandle); }
+        catch (Exception ex) when (ex is InvalidOperationException or ElementNotAvailableException) { return null; }
+    }
+
+    // Finds the first descendant of the session's root window matching the locator; null if none match — never throws.
     public Task<ElementHandle?> FindElementAsync(Locator locator, AppSession session, CancellationToken ct = default)
     {
         return Task.Run(() =>
@@ -69,13 +76,26 @@ public sealed class Uia2Provider : IElementProvider
             if (condition is null)
                 return (ElementHandle?)null;
 
-            var root = AutomationElement.FromHandle(session.RootWindowHandle);
-            var found = root?.FindFirst(TreeScope.Descendants, condition);
-            return found is null ? null : Wrap(found);
+            var root = TryGetRoot(session);
+            if (root is null) return (ElementHandle?)null;
+
+            // A stale element mid-search can abort FindFirst entirely — treat that as not-found instead of throwing.
+            try
+            {
+                var found = root.FindFirst(TreeScope.Descendants, condition);
+                if (found is null)
+                    return null; // no element in the tree matched the locator
+
+                return Wrap(found); // a match was located, but Wrap can still be null if it went stale before we could read it
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or ElementNotAvailableException)
+            {
+                return null;
+            }
         }, ct);
     }
 
-    // Finds every descendant of the session's root window matching the locator; empty if none match.
+    // Finds every descendant of the session's root window matching the locator; empty if none match or a dynamic app invalidates an element mid-search.
     public Task<IReadOnlyList<ElementHandle>> FindElementsAsync(Locator locator, AppSession session, CancellationToken ct = default)
     {
         return Task.Run(() =>
@@ -84,16 +104,24 @@ public sealed class Uia2Provider : IElementProvider
             if (condition is null)
                 return (IReadOnlyList<ElementHandle>)Array.Empty<ElementHandle>();
 
-            var root = AutomationElement.FromHandle(session.RootWindowHandle);
+            var root = TryGetRoot(session);
             if (root is null)
                 return (IReadOnlyList<ElementHandle>)Array.Empty<ElementHandle>();
 
-            var matches = root.FindAll(TreeScope.Descendants, condition);
-            var results = new List<ElementHandle>(matches.Count);
-            foreach (AutomationElement element in matches)
-                results.Add(Wrap(element));
+            try
+            {
+                var matches = root.FindAll(TreeScope.Descendants, condition);
+                var results = new List<ElementHandle>(matches.Count);
+                foreach (AutomationElement element in matches)
+                    if (Wrap(element) is { } wrapped)
+                        results.Add(wrapped);
 
-            return (IReadOnlyList<ElementHandle>)results;
+                return (IReadOnlyList<ElementHandle>)results;
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or ElementNotAvailableException)
+            {
+                return (IReadOnlyList<ElementHandle>)Array.Empty<ElementHandle>();
+            }
         }, ct);
     }
 
@@ -102,7 +130,7 @@ public sealed class Uia2Provider : IElementProvider
     {
         return Task.Run(() =>
         {
-            var root = AutomationElement.FromHandle(session.RootWindowHandle);
+            var root = TryGetRoot(session);
             if (root is null)
                 return (IReadOnlyList<ElementSnapshot>)Array.Empty<ElementSnapshot>();
 
@@ -110,29 +138,39 @@ public sealed class Uia2Provider : IElementProvider
         }, ct);
     }
 
-    // Recursively builds a snapshot of an element and its children, stopping at MaxTreeDepth.
+    // Recursively builds a snapshot of an element and its children (defensive reads, since dynamic apps like Task Manager can invalidate elements mid-walk), stopping at MaxTreeDepth.
     private static ElementSnapshot WalkTree(AutomationElement element, TreeWalker walker, int depth)
     {
         var children = new List<ElementSnapshot>();
         if (depth < MaxTreeDepth)
         {
-            var child = walker.GetFirstChild(element);
+            AutomationElement? child = null;
+            try { child = walker.GetFirstChild(element); } catch { }
             while (child is not null)
             {
-                children.Add(WalkTree(child, walker, depth + 1));
-                child = walker.GetNextSibling(child);
+                try { children.Add(WalkTree(child, walker, depth + 1)); } catch { }
+                AutomationElement? next = null;
+                try { next = walker.GetNextSibling(child); } catch { }
+                child = next;
             }
         }
 
-        var props = element.Current;
-        return new ElementSnapshot(
-            GetRuntimeId(element),
-            props.Name,
-            props.AutomationId,
-            props.ClassName,
-            ControlTypeNames.GetValueOrDefault(props.ControlType.Id, "Unknown"),
-            ToRect(props.BoundingRectangle),
-            children);
+        // Read all properties in one block; if the element goes stale partway through, use whatever was captured.
+        string id = "", name = "", automationId = "", className = "", controlTypeName = "Unknown";
+        Rect rect = default;
+        try
+        {
+            id = GetRuntimeId(element);
+            var props = element.Current;
+            name = props.Name;
+            automationId = props.AutomationId;
+            className = props.ClassName;
+            controlTypeName = ControlTypeNames.GetValueOrDefault(props.ControlType.Id, "Unknown");
+            rect = ToRect(props.BoundingRectangle);
+        }
+        catch { }
+
+        return new ElementSnapshot(id, name, automationId, className, controlTypeName, rect, children);
     }
 
     // Builds a UIA2 property condition for the locator's strategy; null if the strategy or control type name isn't recognized.
@@ -159,19 +197,38 @@ public sealed class Uia2Provider : IElementProvider
 
     private static readonly Uia2Operator _op = new();
 
-    // Wraps a live UIA2 element as an opaque ElementHandle, capturing its display metadata at resolve time.
-    private ElementHandle Wrap(AutomationElement element)
+    // Wraps a live UIA2 element as an ElementHandle; null only if identity can't be read — a single failed property just leaves that field blank.
+    private ElementHandle? Wrap(AutomationElement element)
     {
-        var props = element.Current;
-        return new ElementHandle(GetRuntimeId(element), "uia2", element)
+        string id = "", name = "", automationId = "", className = "", controlTypeName = "Unknown";
+        Rect rect = default;
+        bool isEnabled = false, isOffscreen = false;
+        try
         {
-            Name = props.Name,
-            AutomationId = props.AutomationId,
-            ClassName = props.ClassName,
-            ControlType = ControlTypeNames.GetValueOrDefault(props.ControlType.Id, "Unknown"),
-            BoundingRect = ToRect(props.BoundingRectangle),
-            IsEnabled = props.IsEnabled,
-            IsOffscreen = props.IsOffscreen,
+            id = GetRuntimeId(element);
+            var props = element.Current;
+            name = props.Name;
+            automationId = props.AutomationId;
+            className = props.ClassName;
+            controlTypeName = ControlTypeNames.GetValueOrDefault(props.ControlType.Id, "Unknown");
+            rect = ToRect(props.BoundingRectangle);
+            isEnabled = props.IsEnabled;
+            isOffscreen = props.IsOffscreen;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ElementNotAvailableException) { }
+
+        if (id.Length == 0)
+            return null; // couldn't even establish identity — treat the same as not found
+
+        return new ElementHandle(id, "uia2", element)
+        {
+            Name = name,
+            AutomationId = automationId,
+            ClassName = className,
+            ControlType = controlTypeName,
+            BoundingRect = rect,
+            IsEnabled = isEnabled,
+            IsOffscreen = isOffscreen,
             Provider = this,
             Operator = _op,
         };

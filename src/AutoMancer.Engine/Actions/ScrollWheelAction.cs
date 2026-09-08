@@ -15,19 +15,19 @@ public static class ScrollWheelAction
     // Same as ExecuteAsync, with an explicit logger override — for App and the test suite to inject/inspect logging directly.
     internal static Task ExecuteCoreAsync(ElementHandle element, int deltaX, int deltaY, IEngineLogger? logger, CancellationToken ct) => Task.Run(() =>
     {
-        ClickAction.EnsureForeground(element);
+        ElementInputHelpers.EnsureForeground(element);
 
-        var (x, y) = ClickAction.GetCenter(element);
-        var (normX, normY) = ClickAction.Normalize(x, y);
+        var (x, y) = ElementInputHelpers.GetCenter(element);
+        var (normX, normY) = SendInputBuilders.Normalize(x, y);
         var inputs = new List<NativeMethods.INPUT>
         {
-            ClickAction.MouseInputAt(normX, normY, NativeMethods.MouseEventFlags.Move),
+            SendInputBuilders.MouseInputAt(normX, normY, NativeMethods.MouseEventFlags.Move),
         };
 
         if (deltaY != 0)
-            inputs.Add(ClickAction.MouseInputAt(normX, normY, NativeMethods.MouseEventFlags.Wheel, unchecked((uint)(deltaY * NativeMethods.WheelDelta))));
+            inputs.Add(SendInputBuilders.MouseInputAt(normX, normY, NativeMethods.MouseEventFlags.Wheel, unchecked((uint)(deltaY * NativeMethods.WheelDelta))));
         if (deltaX != 0)
-            inputs.Add(ClickAction.MouseInputAt(normX, normY, NativeMethods.MouseEventFlags.HWheel, unchecked((uint)(deltaX * NativeMethods.WheelDelta))));
+            inputs.Add(SendInputBuilders.MouseInputAt(normX, normY, NativeMethods.MouseEventFlags.HWheel, unchecked((uint)(deltaX * NativeMethods.WheelDelta))));
 
         NativeMethods.SendInputs(inputs.ToArray(), logger);
     }, ct);

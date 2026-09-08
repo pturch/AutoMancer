@@ -15,10 +15,10 @@ public static class HoverAction
     // Same as ExecuteAsync, with an explicit logger override — for App and the test suite to inject/inspect logging directly.
     internal static Task ExecuteCoreAsync(ElementHandle element, IEngineLogger? logger, CancellationToken ct) => Task.Run(() =>
     {
-        ClickAction.EnsureForeground(element);
+        ElementInputHelpers.EnsureForeground(element);
 
-        var (x, y) = ClickAction.GetCenter(element);
-        var input = ClickAction.MouseInput(x, y, NativeMethods.MouseEventFlags.Move);
+        var (x, y) = ElementInputHelpers.GetCenter(element);
+        var input = SendInputBuilders.MouseInput(x, y, NativeMethods.MouseEventFlags.Move);
         NativeMethods.SendInputs([input], logger);
     }, ct);
 }

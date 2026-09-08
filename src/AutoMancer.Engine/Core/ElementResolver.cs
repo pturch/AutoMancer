@@ -11,12 +11,14 @@ public sealed class ElementResolver
     private readonly IReadOnlyList<IElementProvider> _providers;
     private readonly ElementProviderOptions _options;
     private readonly IEngineLogger? _logger;
+    private readonly int _foregroundActivationTimeoutMs;
 
     // Orders providers by ElementProviderOptions.ProviderChain, dropping any chain entry with no matching provider.
-    public ElementResolver(IEnumerable<IElementProvider> providers, ElementProviderOptions? options = null, IEngineLogger? logger = null)
+    public ElementResolver(IEnumerable<IElementProvider> providers, ElementProviderOptions? options = null, IEngineLogger? logger = null, int foregroundActivationTimeoutMs = 3_000)
     {
         _options = options ?? ElementProviderOptions.Default;
         _logger = logger;
+        _foregroundActivationTimeoutMs = foregroundActivationTimeoutMs;
 
         var byName = providers.ToDictionary(p => p.ProviderName, StringComparer.OrdinalIgnoreCase);
         _providers = _options.ProviderChain
@@ -42,6 +44,7 @@ public sealed class ElementResolver
                 if (found is not null)
                 {
                     found.Logger = _logger;
+                    found.ForegroundActivationTimeoutMs = _foregroundActivationTimeoutMs;
                     _logger?.Info("Element resolved", new { provider = provider.ProviderName, locator.Strategy, locator.Value, elapsedMs = stopwatch.ElapsedMilliseconds });
                     return found;
                 }
@@ -101,6 +104,7 @@ public sealed class ElementResolver
                 if (found is not null && condition(found))
                 {
                     found.Logger = _logger;
+                    found.ForegroundActivationTimeoutMs = _foregroundActivationTimeoutMs;
                     _logger?.Info("Wait condition met", new { provider = provider.ProviderName, locator.Strategy, locator.Value, elapsedMs = stopwatch.ElapsedMilliseconds });
                     return found;
                 }
@@ -122,7 +126,10 @@ public sealed class ElementResolver
             if (matches.Count > 0)
             {
                 foreach (var match in matches)
+                {
                     match.Logger = _logger;
+                    match.ForegroundActivationTimeoutMs = _foregroundActivationTimeoutMs;
+                }
                 _logger?.Info("Elements found", new { provider = provider.ProviderName, locator.Strategy, locator.Value, count = matches.Count });
                 return matches;
             }
@@ -131,19 +138,34 @@ public sealed class ElementResolver
         return Array.Empty<ElementHandle>();
     }
 
-    // Snapshots the tree from the first provider that returns a non-empty result; null if every provider returns empty.
+    // Snapshots the tree from the first provider whose result has descendants beneath the root.
     public async Task<IReadOnlyList<ElementSnapshot>?> TrySnapshotAsync(AppSession session, CancellationToken ct = default)
     {
+        IReadOnlyList<ElementSnapshot>? rootOnlyFallback = null;
+        string? rootOnlyProviderName = null;
+
         foreach (var provider in _providers)
         {
             var snapshot = await provider.SnapshotTreeAsync(session, ct).ConfigureAwait(false);
-            if (snapshot.Count > 0)
+            if (snapshot.Count == 0)
+                continue;
+
+            if (snapshot.Any(s => s.Children.Count > 0))
             {
                 _logger?.Info("Snapshot taken", new { provider = provider.ProviderName, count = snapshot.Count });
                 return snapshot;
             }
+
+            // A childless root (e.g. UIA3 seeing the window but none of its content) doesn't count as success —
+            // keep trying later providers for one that actually sees content, but remember this in case none do.
+            rootOnlyFallback ??= snapshot;
+            rootOnlyProviderName ??= provider.ProviderName;
         }
 
-        return null;
+        // No provider ever found descendants — settle for the first root-only result rather than null.
+        if (rootOnlyFallback is not null)
+            _logger?.Info("Snapshot taken (root only — no descendants found by any provider)", new { provider = rootOnlyProviderName, count = rootOnlyFallback.Count });
+
+        return rootOnlyFallback;
     }
 }

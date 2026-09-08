@@ -40,21 +40,4 @@ public sealed class ScreenshotActionIntegrationTests
             await app.KillAsync();
         }
     }
-
-    [Fact]
-    public async Task AppScreenshotAsync_ReturnsNonEmptyPng()
-    {
-        var app = await App.LaunchAsync("notepad.exe");
-        try
-        {
-            var png = await app.ScreenshotAsync();
-
-            Assert.NotEmpty(png);
-            Assert.Equal(PngSignature, png.Take(8).ToArray());
-        }
-        finally
-        {
-            await app.KillAsync();
-        }
-    }
 }

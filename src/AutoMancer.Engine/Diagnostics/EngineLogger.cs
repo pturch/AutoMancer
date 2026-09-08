@@ -5,9 +5,6 @@ using System.Text.Json.Nodes;
 
 namespace AutoMancer.Engine.Diagnostics;
 
-// Severity of an EngineLogger entry, also used as the minimum-level filter.
-public enum LogLevel { Debug = 0, Info = 1, Warn = 2, Error = 3 }
-
 // Default IEngineLogger: writes structured JSON-line log entries to an injectable TextWriter, filtered by minimum severity.
 // The sole implementation of PullIssuesSince, so other loggers (XunitEngineLogger, a consumer's own) delegate to an inner instance rather than reimplementing it.
 public sealed class EngineLogger : IEngineLogger

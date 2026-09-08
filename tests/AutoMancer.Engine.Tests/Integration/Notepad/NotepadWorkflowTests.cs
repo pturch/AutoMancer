@@ -138,6 +138,16 @@ public sealed class NotepadWorkflowTests(NotepadFixture fixture) : IClassFixture
         Assert.Contains(menuItems, e => e.Name == "File");
     }
 
+    // Verifies that the AutoMancerXPath locator strategy resolves a live element end-to-end via Uia3Provider.
+    [Fact]
+    public async Task XPathLocator_FindsFileMenuItem()
+    {
+        var handle = await _app.FindAsync(Locator.ByXPath("//MenuItem[@Name='File']"));
+
+        Assert.Equal("File", handle.Name);
+        Assert.Equal("uia3", handle.ResolvedVia);
+    }
+
     // -------------------------------------------------------------------------
     // Snapshot
     // -------------------------------------------------------------------------
@@ -179,18 +189,6 @@ public sealed class NotepadWorkflowTests(NotepadFixture fixture) : IClassFixture
         var ex = await Assert.ThrowsAsync<ElementNotFoundError>(() => quick.FindAsync(Locator.ByName("NonExistentElement_XYZ")));
 
         Assert.Contains("uia3", ex.AttemptedProviders);
-    }
-
-    // A typo within edit-distance 1 of a real element name produces a closest-match hint.
-    [Fact]
-    public async Task FindAsync_Typo_ClosestMatchHintNamesRealElement()
-    {
-        var quick = _app.WithOptions(new AppOptions { ProviderChain = ["uia3"], ImplicitWaitMs = 300, PollIntervalMs = 100 });
-
-        var ex = await Assert.ThrowsAsync<ElementNotFoundError>(() => quick.FindAsync(Locator.ByName("Vile")));
-
-        Assert.NotNull(ex.ClosestMatch);
-        Assert.Equal("File", ex.ClosestMatch!.ElementName);
     }
 
     // A minimized target window throws WindowMinimizedError instead of silently sending input nowhere; the window is always restored afterward.

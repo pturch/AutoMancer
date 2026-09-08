@@ -1,4 +1,5 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
+using System.ComponentModel;
 using AutoMancer.Engine.Actions;
 using AutoMancer.Engine.Core;
 using AutoMancer.Engine.Diagnostics;
@@ -13,6 +14,8 @@ public sealed class App : IAsyncDisposable
     private readonly AppSession _session;
     private readonly ElementResolver _resolver;
     private readonly int _actionDelayMs;
+    private readonly int _foregroundActivationTimeoutMs;
+    private readonly bool _killEntireProcessTree;
     private readonly HeldKeyTracker _heldKeys = new();
     private readonly HeldMouseButtonTracker _heldMouseButtons = new();
     private readonly IEngineLogger? _logger;
@@ -22,6 +25,12 @@ public sealed class App : IAsyncDisposable
 
     // The PID of the target process — useful for re-attaching after a session change.
     public int ProcessId => _session.ProcessId;
+
+    // The target app's top-level window handle — for driving foreground activation yourself (e.g. via your own SetForegroundWindow/GetAncestor calls) on an app whose window hierarchy defeats the built-in check; pair with AppOptions.ForegroundActivationTimeoutMs = 0 to disable that check.
+    public IntPtr RootWindowHandle => _session.RootWindowHandle;
+
+    // Resolves windowHandle to its top-level ancestor — useful when managing foreground activation yourself for an element whose NativeHandle (cast to IUIAutomationElement).CurrentNativeWindowHandle is a child window rather than the app's own top-level window.
+    public static IntPtr GetTopLevelWindow(IntPtr windowHandle) => NativeMethods.GetTopLevelWindow(windowHandle);
 
     // The logger this App was configured with (via AppOptions.Logger), if any — lets a test bridge it into its own output/DI logging.
     public IEngineLogger? Logger => _logger;
@@ -37,6 +46,8 @@ public sealed class App : IAsyncDisposable
     {
         _session = session;
         _actionDelayMs = options.ActionDelayMs;
+        _foregroundActivationTimeoutMs = options.ForegroundActivationTimeoutMs;
+        _killEntireProcessTree = options.KillEntireProcessTree;
         _logger = options.Logger;
         _windowsEventLogger = options.WindowsEventLogger;
         _combinedLogger = options.CombinedLogger;
@@ -50,46 +61,55 @@ public sealed class App : IAsyncDisposable
                 ImplicitWaitMs = options.ImplicitWaitMs,
                 PollIntervalMs = options.PollIntervalMs,
             },
-            logger: options.Logger);
+            logger: options.Logger,
+            foregroundActivationTimeoutMs: options.ForegroundActivationTimeoutMs);
     }
 
-    // Starts the target executable and waits until its main window is visible.
-    public static async Task<App> LaunchAsync(string executablePath, AppOptions? options = null, CancellationToken ct = default)
+    // Starts the target executable and waits until its main window is visible; windowMatch disambiguates which window counts as "launched" when the executable might have multiple candidate windows.
+    public static async Task<App> LaunchAsync(string executablePath, AppOptions? options = null, WindowMatchOptions? windowMatch = null, CancellationToken ct = default)
     {
         options ??= AppOptions.Default;
-        var session = await AppSession.LaunchAsync(executablePath, logger: options.Logger, ct: ct);
+        var session = await AppSession.LaunchAsync(executablePath, arguments: options.Arguments, timeoutMs: options.LaunchTimeoutMs, windowMatch: windowMatch, logger: options.Logger, ct: ct);
         return new App(session, BuildProviders(options.ProviderChain), options);
     }
 
-    // Wraps an already-running process identified by PID.
-    public static async Task<App> AttachByPidAsync(int pid, AppOptions? options = null, CancellationToken ct = default)
+    // Wraps an already-running process identified by PID; windowMatch optionally verifies its main window's title/class before accepting it.
+    public static async Task<App> AttachByPidAsync(int pid, AppOptions? options = null, WindowMatchOptions? windowMatch = null, CancellationToken ct = default)
     {
         options ??= AppOptions.Default;
-        var session = await AppSession.AttachByPidAsync(pid, options.Logger, ct);
+        var session = await AppSession.AttachByPidAsync(pid, windowMatch, options.Logger, ct);
         return new App(session, BuildProviders(options.ProviderChain), options);
     }
 
     // Polls for a dialog owned by ownerPid whose title contains titleContains; use for modal dialogs, which don't change Process.MainWindowTitle.
-    public static async Task<App?> FindDialogAsync(int ownerPid, string titleContains, AppOptions? options = null, int timeoutMs = 3_000, CancellationToken ct = default)
+    public static Task<App?> FindDialogAsync(int ownerPid, string titleContains, AppOptions? options = null, int timeoutMs = 3_000, CancellationToken ct = default) =>
+        FindDialogAsync(new WindowMatchOptions { ExpectedPid = ownerPid, TitleContains = titleContains }, options, timeoutMs, ct);
+
+    // Polls for a dialog matching windowMatch (must set ExpectedPid + TitleContains); use this overload for extra disambiguation (e.g. ClassName) beyond owner + title.
+    public static async Task<App?> FindDialogAsync(WindowMatchOptions windowMatch, AppOptions? options = null, int timeoutMs = 3_000, CancellationToken ct = default)
     {
         options ??= AppOptions.Default;
-        var session = await AppSession.FindDialogAsync(ownerPid, titleContains, timeoutMs, options.Logger, ct);
+        var session = await AppSession.FindDialogAsync(windowMatch, timeoutMs, options.Logger, ct);
         return session is null ? null : new App(session, BuildProviders(options.ProviderChain), options);
     }
 
-    // Activates a UWP/MSIX packaged app by its Application User Model ID (AUMID) and waits for its window.
-    public static async Task<App> LaunchPackagedAsync(string aumid, AppOptions? options = null, CancellationToken ct = default)
+    // Activates a UWP/MSIX packaged app by its Application User Model ID (AUMID) and waits for a window matching windowMatch (if given).
+    public static async Task<App> LaunchPackagedAsync(string aumid, AppOptions? options = null, WindowMatchOptions? windowMatch = null, CancellationToken ct = default)
     {
         options ??= AppOptions.Default;
-        var session = await AppSession.LaunchPackagedAsync(aumid, logger: options.Logger, ct: ct);
+        var session = await AppSession.LaunchPackagedAsync(aumid, arguments: options.Arguments, timeoutMs: options.LaunchTimeoutMs, windowMatch: windowMatch, logger: options.Logger, ct: ct);
         return new App(session, BuildProviders(options.ProviderChain), options);
     }
 
     // Finds the first windowed process whose title contains the given string (case-insensitive).
-    public static async Task<App> AttachByTitleAsync(string title, AppOptions? options = null, CancellationToken ct = default)
+    public static Task<App> AttachByTitleAsync(string title, AppOptions? options = null, CancellationToken ct = default) =>
+        AttachByTitleAsync(new WindowMatchOptions { TitleContains = title }, options, ct);
+
+    // Finds the first windowed process whose window matches windowMatch (must set TitleContains — that's this method's whole purpose); use this overload for extra disambiguation (e.g. ClassName) beyond a bare title.
+    public static async Task<App> AttachByTitleAsync(WindowMatchOptions windowMatch, AppOptions? options = null, CancellationToken ct = default)
     {
         options ??= AppOptions.Default;
-        var session = await AppSession.AttachByTitleAsync(title, options.Logger, ct);
+        var session = await AppSession.AttachByTitleAsync(windowMatch, options.Logger, ct);
         return new App(session, BuildProviders(options.ProviderChain), options);
     }
 
@@ -194,7 +214,7 @@ public sealed class App : IAsyncDisposable
     public async Task ClickAtAsync(Locator locator, CancellationToken ct = default)
     {
         var element = await _resolver.FindAsync(locator, _session, ct);
-        var (x, y) = ClickAction.GetCenter(element);
+        var (x, y) = ElementInputHelpers.GetCenter(element);
         await ClickAtAsync(x, y, ct);
         _logger?.Info("Clicked at element center", new { locator.Strategy, locator.Value });
     }
@@ -221,23 +241,23 @@ public sealed class App : IAsyncDisposable
     // Presses a named key against the root window, optionally with modifiers held down (e.g. Ctrl+A).
     public async Task PressKeyAsync(Key key, KeyModifiers modifiers = default, CancellationToken ct = default)
     {
-        EnsureWindowReady();
+        await Task.Run(EnsureWindowReady, ct);
         await KeyboardAction.PressKeyCoreAsync(key, modifiers, _logger, ct);
     }
 
     // Presses modifiers plus every key in keys simultaneously against the root window — for chords needing more than one non-modifier key (e.g. Ctrl+A+K).
     public async Task HotkeyAsync(KeyModifiers modifiers, IReadOnlyList<Key> keys, CancellationToken ct = default)
     {
-        EnsureWindowReady();
+        await Task.Run(EnsureWindowReady, ct);
         await KeyboardAction.HotkeyCoreAsync(modifiers, keys, _logger, ct);
     }
 
     // Presses a key down without releasing it; tracked so Kill/Dispose can release it even if KeyUpAsync is never called. The send and the tracking happen in the same synchronous unit — no async-continuation gap where Kill/Dispose could drain an untracked-but-already-physically-down key.
-    public Task KeyDownAsync(Key key, CancellationToken ct = default)
+    public async Task KeyDownAsync(Key key, CancellationToken ct = default)
     {
-        EnsureWindowReady();
-        return Task.Run(() =>
+        await Task.Run(() =>
         {
+            EnsureWindowReady();
             KeyboardAction.KeyDownNow(key, _logger);
             _heldKeys.Add(key);
         }, ct);
@@ -253,14 +273,14 @@ public sealed class App : IAsyncDisposable
     // Moves the mouse by a relative (dx, dy) pixel offset against the root window — for camera-look style input rather than absolute positioning.
     public async Task MoveMouseRelativeAsync(int dx, int dy, CancellationToken ct = default)
     {
-        EnsureWindowReady();
+        await Task.Run(EnsureWindowReady, ct);
         await MouseMoveAction.MoveRelativeCoreAsync(dx, dy, _logger, ct);
     }
 
     // Drags in a straight line between two physical screen coordinates; waits ActionDelayMs after completion.
     public async Task DragAsync(int fromX, int fromY, int toX, int toY, CancellationToken ct = default)
     {
-        EnsureWindowReady();
+        await Task.Run(EnsureWindowReady, ct);
         await DragAction.DragCoreAsync(fromX, fromY, toX, toY, 20, _logger, ct, _heldMouseButtons);
         if (_actionDelayMs > 0) await Task.Delay(_actionDelayMs, ct);
     }
@@ -268,7 +288,7 @@ public sealed class App : IAsyncDisposable
     // Drags through a sequence of physical screen coordinates in one continuous press; waits ActionDelayMs after completion.
     public async Task DragThroughAsync(IReadOnlyList<(int X, int Y)> waypoints, CancellationToken ct = default)
     {
-        EnsureWindowReady();
+        await Task.Run(EnsureWindowReady, ct);
         await DragAction.DragThroughCoreAsync(waypoints, _logger, ct, _heldMouseButtons);
         if (_actionDelayMs > 0) await Task.Delay(_actionDelayMs, ct);
     }
@@ -322,6 +342,9 @@ public sealed class App : IAsyncDisposable
     public Task SetWindowStateAsync(WindowState state, CancellationToken ct = default)
         => WindowAction.SetVisualStateCoreAsync(_session.RootWindowHandle, state, _logger, ct);
 
+    // Reports whether the window is currently minimized — lets a caller check and recover (e.g. via SetWindowStateAsync) before an action would otherwise throw WindowMinimizedError.
+    public bool IsWindowMinimized() => NativeMethods.IsIconic(_session.RootWindowHandle);
+
     // Closes the root window; tries WindowPattern.Close() first, falls back to posting WM_CLOSE.
     public Task CloseWindowAsync(CancellationToken ct = default)
         => WindowAction.CloseCoreAsync(_session.RootWindowHandle, _logger, ct);
@@ -330,14 +353,14 @@ public sealed class App : IAsyncDisposable
     public void Kill()
     {
         ReleaseHeldInputBestEffort();
-        _session.KillApp();
+        KillAppBestEffort();
     }
 
     // Terminates the target process and waits until it has actually exited — use in test teardown instead of Kill() plus a guessed settle delay, since a single-instance app's next launch can otherwise reuse this process's still-closing window as a new tab.
     public async Task KillAsync(int timeoutMs = 5_000, CancellationToken ct = default)
     {
         ReleaseHeldInputBestEffort();
-        _session.KillApp();
+        KillAppBestEffort();
         await _session.WaitForExitAsync(timeoutMs, ct);
     }
 
@@ -349,9 +372,16 @@ public sealed class App : IAsyncDisposable
     public ValueTask DisposeAsync()
     {
         ReleaseHeldInputBestEffort();
-        _session.KillApp();
+        KillAppBestEffort();
         TryWriteWindowsEventLogArtifact();
         return _session.DisposeAsync();
+    }
+
+    // Kills the underlying process, swallowing a failure to terminate it (e.g. access denied against an elevated target) so that alone can never block the rest of Kill/KillAsync/DisposeAsync from running.
+    private void KillAppBestEffort()
+    {
+        try { _session.KillApp(_killEntireProcessTree); }
+        catch (Exception ex) when (ex is Win32Exception or InvalidOperationException) { _logger?.Warn("KillApp failed to terminate the process", new { error = ex.Message }); }
     }
 
     // Writes the Windows Event Log / combined-timeline artifacts if configured, swallowing any failure (no permission to read the Application/System logs, a transient Event Log service issue, etc.) so a diagnostics-only step can never prevent _session.DisposeAsync() from running and releasing the process handle.
@@ -378,15 +408,15 @@ public sealed class App : IAsyncDisposable
     private void ReleaseHeldMouseButtons()
     {
         if (_heldMouseButtons.DrainLeftDown())
-            NativeMethods.SendInputs([ClickAction.MouseInputAt(0, 0, NativeMethods.MouseEventFlags.LeftUp)], _logger);
+            NativeMethods.SendInputs([SendInputBuilders.MouseInputAt(0, 0, NativeMethods.MouseEventFlags.LeftUp)], _logger);
     }
 
-    // Throws WindowMinimizedError if minimized, else foregrounds the root window; used where there's no resolved element to foreground instead.
+    // Throws WindowMinimizedError if minimized, else foregrounds the root window (throwing WindowActivationError if that fails); used where there's no resolved element to foreground instead. Skips the foreground check when ForegroundActivationTimeoutMs is 0 — see RootWindowHandle for managing activation yourself.
     private void EnsureWindowReady()
     {
         EnsureWindowNotMinimized();
-        if (!NativeMethods.SetForegroundWindow(_session.RootWindowHandle))
-            _logger?.Warn("SetForegroundWindow declined");
+        if (_foregroundActivationTimeoutMs > 0)
+            NativeMethods.EnsureForegroundOrThrow(_session.RootWindowHandle, _foregroundActivationTimeoutMs);
     }
 
     // Throws WindowMinimizedError if the root window is minimized; SendInput can't target its client area.
@@ -407,5 +437,29 @@ public sealed class App : IAsyncDisposable
             ["win32"] = new Win32Provider(),
         };
         return chain.Where(all.ContainsKey).Select(n => all[n]).ToList();
+    }
+
+    // Tracks keys held via KeyDownAsync so Kill/Dispose can release them all even after a crash; locked since App's key methods can be called concurrently. Private to App — no other class needs to see a held key mid-hold.
+    internal sealed class HeldKeyTracker
+    {
+        private readonly object _gate = new();
+        private readonly HashSet<Key> _held = [];
+
+        // Records key as held.
+        public void Add(Key key) { lock (_gate) _held.Add(key); }
+
+        // Forgets key — call after releasing it normally via KeyUpAsync.
+        public void Remove(Key key) { lock (_gate) _held.Remove(key); }
+
+        // Returns every key still recorded as held and forgets them all; returns empty on a second call.
+        public IReadOnlyList<Key> DrainHeld()
+        {
+            lock (_gate)
+            {
+                var keys = _held.ToList();
+                _held.Clear();
+                return keys;
+            }
+        }
     }
 }

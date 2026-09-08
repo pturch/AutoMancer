@@ -1,6 +1,7 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 using AutoMancer.Engine.Diagnostics;
 using AutoMancer.Engine.Errors;
 
@@ -40,9 +41,59 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     internal static extern bool IsZoomed(IntPtr windowHandle);
 
-    // Brings windowHandle to the foreground so synthesized input is delivered to it.
+    // Brings windowHandle to the foreground so synthesized input is delivered to it; return value is documented as unreliable, so callers should verify via GetForegroundWindow rather than trust it.
     [DllImport("user32.dll", SetLastError = true)]
     internal static extern bool SetForegroundWindow(IntPtr windowHandle);
+
+    // Returns the handle of whichever window currently actually has focus — the ground truth SetForegroundWindow's own return value can't be trusted to reflect.
+    [DllImport("user32.dll")]
+    internal static extern IntPtr GetForegroundWindow();
+
+    // Walks up from windowHandle to its top-level owning window; GetForegroundWindow only ever reports top-level windows, so a child HWND must be resolved to this before comparing against it.
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetAncestor(IntPtr windowHandle, uint gaFlags);
+
+    // GetAncestor's GA_ROOT flag: walk parent windows only (not owners) and return the top-level result.
+    private const uint GaRoot = 2;
+
+    // Resolves windowHandle to its top-level ancestor (itself, if GetAncestor can't resolve one) — exposed publicly via App.GetTopLevelWindow.
+    internal static IntPtr GetTopLevelWindow(IntPtr windowHandle)
+    {
+        var ancestor = GetAncestor(windowHandle, GaRoot);
+        return ancestor != IntPtr.Zero ? ancestor : windowHandle;
+    }
+
+    // Foregrounds windowHandle, retrying against GetForegroundWindow until it lands or timeoutMs elapses; throws WindowActivationError if it never lands.
+    // Compares exactly the handle it's given, with no ancestor resolution — callers skip calling this altogether (via a 0 ForegroundActivationTimeoutMs) for a window whose hierarchy defeats a direct comparison.
+    internal static void EnsureForegroundOrThrow(IntPtr windowHandle, int timeoutMs = 3_000, int pollIntervalMs = 100)
+    {
+        var deadline = Environment.TickCount64 + timeoutMs;
+        while (true)
+        {
+            SetForegroundWindow(windowHandle);
+            if (GetForegroundWindow() == windowHandle)
+                return;
+            if (Environment.TickCount64 >= deadline)
+                throw new WindowActivationError(windowHandle);
+            Thread.Sleep(pollIntervalMs);
+        }
+    }
+
+    // Reads a window's title via GetWindowText; shared by every title-matching call site.
+    internal static string GetWindowTitle(IntPtr windowHandle)
+    {
+        var sb = new StringBuilder(512);
+        GetWindowText(windowHandle, sb, sb.Capacity);
+        return sb.ToString();
+    }
+
+    // Reads a window's class name via GetClassName; shared by every class-matching call site.
+    internal static string GetWindowClassName(IntPtr windowHandle)
+    {
+        var sb = new StringBuilder(256);
+        GetClassName(windowHandle, sb, sb.Capacity);
+        return sb.ToString();
+    }
 
     // Returns the DPI associated with windowHandle's monitor (Windows 10 1607+); 96 means 100% scaling.
     [DllImport("user32.dll")]

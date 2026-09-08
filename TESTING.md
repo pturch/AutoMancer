@@ -95,3 +95,5 @@ It's a process-wide switch, not a per-class setting, so setting it once covers e
 ## A complete worked example
 
 [`samples/ConsumerNotepadTests`](samples/ConsumerNotepadTests) is a full test project built entirely on this public API. Nothing in it reaches into AutoMancer's own internals. Its [README](samples/ConsumerNotepadTests/README.md) walks through what each file demonstrates, including what a failure message actually looks like in practice.
+
+[`samples/ConsumerVsCodeTests`](samples/ConsumerVsCodeTests) is a second worked example, against a more complex app: Visual Studio Code, a full Electron app rather than a single native control. Its own [README](samples/ConsumerVsCodeTests/README.md) covers what that difference actually demands — a lazily-activated UI Automation tree, a panel that steals keyboard focus, and other gotchas a simple native app doesn't have.

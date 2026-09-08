@@ -24,8 +24,8 @@ public static class ClearAction
 
         await Task.Run(() =>
         {
-            ClickAction.EnsureForeground(element);
-            ClickAction.EnsureInteractable(element);
+            ElementInputHelpers.EnsureForeground(element);
+            ElementInputHelpers.EnsureInteractable(element);
             SendCtrlADelete(logger);
         }, ct).ConfigureAwait(false);
         logger?.Info("Cleared via synthesized input", new { elementId = element.Id });

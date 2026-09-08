@@ -13,10 +13,11 @@ public sealed class WindowActionIntegrationTests
 {
     private const string CalculatorAumid = "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App";
 
-    // Launches a fresh Notepad instance and resolves its window handle for direct Win32 assertions.
+    // Launches a fresh Notepad instance, resolves its window handle for direct Win32 assertions, and clears any text left over from a reused single-instance window.
     private static async Task<(App App, IntPtr WindowHandle)> LaunchNotepadAsync()
     {
         var app = await App.LaunchAsync("notepad.exe");
+        await NotepadFixture.ClearDocumentAsync(app);
         return (app, Process.GetProcessById(app.ProcessId).MainWindowHandle);
     }
 

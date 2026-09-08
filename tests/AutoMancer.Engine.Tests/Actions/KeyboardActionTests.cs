@@ -22,7 +22,7 @@ public sealed class KeyboardActionTests
     [InlineData(true, true, (uint)(NativeMethods.KeyEventFlags.ExtendedKey | NativeMethods.KeyEventFlags.KeyUp))]
     public void VkInput_CombinesKeyUpAndExtendedFlags(bool isKeyUp, bool extended, uint expectedFlags)
     {
-        var input = ClickAction.VkInput(new VirtualKey(0x41, extended), isKeyUp);
+        var input = SendInputBuilders.VkInput(new VirtualKey(0x41, extended), isKeyUp);
 
         Assert.Equal(NativeMethods.InputTypeKeyboard, input.Type);
         Assert.Equal((ushort)0x41, input.Data.Keyboard.Vk);

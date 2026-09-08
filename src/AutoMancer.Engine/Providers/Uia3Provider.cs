@@ -1,4 +1,5 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
+using System.Runtime.InteropServices;
 using AutoMancer.Engine.Core;
 using AutoMancer.Engine.Operators;
 using Interop.UIAutomationClient;
@@ -64,6 +65,13 @@ public sealed class Uia3Provider : IElementProvider
     private static readonly Dictionary<int, string> ControlTypeNames =
         ControlTypeMap.GroupBy(kv => kv.Value).ToDictionary(g => g.Key, g => g.First().Key);
 
+    // Resolves the root element for the session's window; null if the handle is invalid or the window has been destroyed — never throws (ElementFromHandle itself can throw COMException for a destroyed HWND).
+    private static IUIAutomationElement? TryGetRoot(AppSession session)
+    {
+        try { return Automation.ElementFromHandle(session.RootWindowHandle); }
+        catch (COMException) { return null; }
+    }
+
     // Finds the first descendant of the session's root window matching the locator; null if none match or the strategy is unsupported.
     public Task<ElementHandle?> FindElementAsync(Locator locator, AppSession session, CancellationToken ct = default)
     {
@@ -78,13 +86,26 @@ public sealed class Uia3Provider : IElementProvider
             if (condition is null)
                 return (ElementHandle?)null;
 
-            var root = Automation.ElementFromHandle(session.RootWindowHandle);
-            var found = root?.FindFirst(TreeScope.TreeScope_Descendants, condition);
-            return found is null ? null : Wrap(found);
+            var root = TryGetRoot(session);
+            if (root is null) return (ElementHandle?)null;
+
+            // A stale element mid-search can abort FindFirst entirely — treat that as not-found instead of throwing.
+            try
+            {
+                var found = root.FindFirst(TreeScope.TreeScope_Descendants, condition);
+                if (found is null)
+                    return null; // no element in the tree matched the locator
+
+                return Wrap(found); // a match was located, but Wrap can still be null if it went stale before we could read it
+            }
+            catch (Exception ex) when (ex is COMException or InvalidOperationException)
+            {
+                return null;
+            }
         }, ct);
     }
 
-    // Finds every descendant of the session's root window matching the locator; empty if none match.
+    // Finds every descendant of the session's root window matching the locator; empty if none match or a dynamic app invalidates an element mid-search.
     public Task<IReadOnlyList<ElementHandle>> FindElementsAsync(Locator locator, AppSession session, CancellationToken ct = default)
     {
         return Task.Run(() =>
@@ -95,23 +116,34 @@ public sealed class Uia3Provider : IElementProvider
                 return (IReadOnlyList<ElementHandle>)FindAllByPath(locator.Value, session);
 
             var condition = BuildCondition(locator);
-            var root = condition is null ? null : Automation.ElementFromHandle(session.RootWindowHandle);
-            if (root is null || condition is null)
+            if (condition is null)
                 return (IReadOnlyList<ElementHandle>)Array.Empty<ElementHandle>();
 
-            var matches = root.FindAll(TreeScope.TreeScope_Descendants, condition);
-            var results = new List<ElementHandle>(matches.Length);
-            for (var i = 0; i < matches.Length; i++)
-                results.Add(Wrap(matches.GetElement(i)));
+            var root = TryGetRoot(session);
+            if (root is null)
+                return (IReadOnlyList<ElementHandle>)Array.Empty<ElementHandle>();
 
-            return (IReadOnlyList<ElementHandle>)results;
+            try
+            {
+                var matches = root.FindAll(TreeScope.TreeScope_Descendants, condition);
+                var results = new List<ElementHandle>(matches.Length);
+                for (var i = 0; i < matches.Length; i++)
+                    if (Wrap(matches.GetElement(i)) is { } wrapped)
+                        results.Add(wrapped);
+
+                return (IReadOnlyList<ElementHandle>)results;
+            }
+            catch (Exception ex) when (ex is COMException or InvalidOperationException)
+            {
+                return (IReadOnlyList<ElementHandle>)Array.Empty<ElementHandle>();
+            }
         }, ct);
     }
 
     // Snapshots the tree, evaluates the XPath expression, then re-walks the live tree to find the first matching element.
     private ElementHandle? FindByXPath(string xpath, AppSession session)
     {
-        var root = Automation.ElementFromHandle(session.RootWindowHandle);
+        var root = TryGetRoot(session);
         if (root is null) return null;
         var snapshot = WalkTree(root, Automation.ControlViewWalker, 0);
         var indices = XPathEvaluator.Evaluate(xpath, [snapshot]);
@@ -123,12 +155,12 @@ public sealed class Uia3Provider : IElementProvider
     // Snapshots the tree, evaluates the XPath expression, then re-walks the live tree to find all matching elements.
     private List<ElementHandle> FindAllByXPath(string xpath, AppSession session)
     {
-        var root = Automation.ElementFromHandle(session.RootWindowHandle);
+        var root = TryGetRoot(session);
         if (root is null) return [];
         var snapshot = WalkTree(root, Automation.ControlViewWalker, 0);
         var indices = XPathEvaluator.Evaluate(xpath, [snapshot]);
         if (indices.Count == 0) return [];
-        return CollectElements(root, [.. indices]).Select(Wrap).ToList();
+        return CollectElements(root, [.. indices]).Select(Wrap).OfType<ElementHandle>().ToList();
     }
 
     // Resolves a tree-path locator ("Window > Pane[2] > Button[\"OK\"]") by walking live children segment by segment; returns the first match at the deepest level.
@@ -142,13 +174,13 @@ public sealed class Uia3Provider : IElementProvider
     private List<ElementHandle> FindAllByPath(string path, AppSession session)
     {
         var candidates = ResolvePathCandidates(AutoMancerPathParser.Parse(path), session);
-        return candidates.Select(Wrap).ToList();
+        return candidates.Select(Wrap).OfType<ElementHandle>().ToList();
     }
 
     // Walks the tree from the root (which the first segment must match) through each later segment against direct children of every prior match — all matches when Index is unset, only the one at Index when it is.
     private static List<IUIAutomationElement> ResolvePathCandidates(IReadOnlyList<PathSegment> segments, AppSession session)
     {
-        var root = Automation.ElementFromHandle(session.RootWindowHandle);
+        var root = TryGetRoot(session);
         if (root is null || segments.Count == 0 || !SegmentMatches(root, segments[0]))
             return [];
 
@@ -183,15 +215,18 @@ public sealed class Uia3Provider : IElementProvider
         return segment.Name is null || element.CurrentName == segment.Name;
     }
 
-    // Returns parent's direct children whose control type/name satisfy segment, in tree order.
+    // Returns parent's direct children whose control type/name satisfy segment, in tree order (defensive reads — a dynamic app can invalidate a child mid-walk).
     private static List<IUIAutomationElement> ChildrenMatching(IUIAutomationElement parent, PathSegment segment)
     {
         var result = new List<IUIAutomationElement>();
-        var child = Automation.ControlViewWalker.GetFirstChildElement(parent);
+        IUIAutomationElement? child = null;
+        try { child = Automation.ControlViewWalker.GetFirstChildElement(parent); } catch (Exception ex) when (ex is COMException or InvalidOperationException) { return result; }
         while (child is not null)
         {
-            if (SegmentMatches(child, segment)) result.Add(child);
-            child = Automation.ControlViewWalker.GetNextSiblingElement(child);
+            try { if (SegmentMatches(child, segment)) result.Add(child); } catch (Exception ex) when (ex is COMException or InvalidOperationException) { }
+            IUIAutomationElement? next = null;
+            try { next = Automation.ControlViewWalker.GetNextSiblingElement(child); } catch (Exception ex) when (ex is COMException or InvalidOperationException) { }
+            child = next;
         }
         return result;
     }
@@ -205,7 +240,7 @@ public sealed class Uia3Provider : IElementProvider
         return results;
     }
 
-    // Recursive depth-first walk matching the snapshot order in WalkTree; adds elements whose flat index is a target.
+    // Recursive depth-first walk matching the snapshot order in WalkTree; adds elements whose flat index is a target (defensive reads — a dynamic app can invalidate an element mid-walk).
     private static void CollectWalk(IUIAutomationElement element, IUIAutomationTreeWalker walker,
         HashSet<int> targets, List<IUIAutomationElement> results, ref int idx, int depth)
     {
@@ -213,11 +248,14 @@ public sealed class Uia3Provider : IElementProvider
             results.Add(element);
         idx++;
         if (depth >= MaxTreeDepth) return;
-        var child = walker.GetFirstChildElement(element);
+        IUIAutomationElement? child = null;
+        try { child = walker.GetFirstChildElement(element); } catch (Exception ex) when (ex is COMException or InvalidOperationException) { }
         while (child is not null)
         {
-            CollectWalk(child, walker, targets, results, ref idx, depth + 1);
-            child = walker.GetNextSiblingElement(child);
+            try { CollectWalk(child, walker, targets, results, ref idx, depth + 1); } catch (Exception ex) when (ex is COMException or InvalidOperationException) { }
+            IUIAutomationElement? next = null;
+            try { next = walker.GetNextSiblingElement(child); } catch (Exception ex) when (ex is COMException or InvalidOperationException) { }
+            child = next;
         }
     }
 
@@ -226,7 +264,7 @@ public sealed class Uia3Provider : IElementProvider
     {
         return Task.Run(() =>
         {
-            var root = Automation.ElementFromHandle(session.RootWindowHandle);
+            var root = TryGetRoot(session);
             if (root is null)
                 return (IReadOnlyList<ElementSnapshot>)Array.Empty<ElementSnapshot>();
 
@@ -300,19 +338,41 @@ public sealed class Uia3Provider : IElementProvider
 
     private static readonly Uia3Operator _op = new();
 
-    // Wraps a live UIA element as an opaque ElementHandle, capturing its display metadata at resolve time.
-    private ElementHandle Wrap(IUIAutomationElement element) => new(GetRuntimeId(element), "uia3", element)
+    // Wraps a live UIA3 element as an ElementHandle; null only if identity can't be read — a single failed property just leaves that field blank.
+    private ElementHandle? Wrap(IUIAutomationElement element)
     {
-        Name = element.CurrentName,
-        AutomationId = element.CurrentAutomationId,
-        ClassName = element.CurrentClassName,
-        ControlType = ControlTypeNames.GetValueOrDefault(element.CurrentControlType, "Unknown"),
-        BoundingRect = ToRect(element.CurrentBoundingRectangle),
-        IsEnabled = element.CurrentIsEnabled != 0,
-        IsOffscreen = element.CurrentIsOffscreen != 0,
-        Provider = this,
-        Operator = _op,
-    };
+        string id = "", name = "", automationId = "", className = "", controlTypeName = "Unknown";
+        Rect rect = default;
+        bool isEnabled = false, isOffscreen = false;
+        try
+        {
+            id = GetRuntimeId(element);
+            name = element.CurrentName;
+            automationId = element.CurrentAutomationId;
+            className = element.CurrentClassName;
+            controlTypeName = ControlTypeNames.GetValueOrDefault(element.CurrentControlType, "Unknown");
+            rect = ToRect(element.CurrentBoundingRectangle);
+            isEnabled = element.CurrentIsEnabled != 0;
+            isOffscreen = element.CurrentIsOffscreen != 0;
+        }
+        catch (Exception ex) when (ex is COMException or InvalidOperationException) { }
+
+        if (id.Length == 0)
+            return null; // couldn't even establish identity — treat the same as not found
+
+        return new ElementHandle(id, "uia3", element)
+        {
+            Name = name,
+            AutomationId = automationId,
+            ClassName = className,
+            ControlType = controlTypeName,
+            BoundingRect = rect,
+            IsEnabled = isEnabled,
+            IsOffscreen = isOffscreen,
+            Provider = this,
+            Operator = _op,
+        };
+    }
 
     // Converts a UIA RuntimeId (an int array, opaque per-session) into the dotted string ID AutoMancer uses for ElementHandle.Id.
     private static string GetRuntimeId(IUIAutomationElement element) => string.Join(".", element.GetRuntimeId());

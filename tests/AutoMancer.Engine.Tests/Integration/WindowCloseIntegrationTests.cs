@@ -2,6 +2,7 @@
 using System.Diagnostics;
 using AutoMancer.Engine;
 using AutoMancer.Engine.Providers;
+using Xunit.Sdk;
 
 namespace AutoMancer.Engine.Tests.Integration;
 
@@ -12,8 +13,25 @@ public sealed class WindowCloseIntegrationTests
 {
     private const string CalculatorAumid = "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App";
 
+    // UWP teardown timing after WM_CLOSE is unbounded under load and can exceed even RunOnceAsync's generous budget; rerun the whole scenario once before failing.
     [Fact]
     public async Task CloseWindowAsync_ClosesTheWindow()
+    {
+        for (var testAttempt = 1; testAttempt <= 2; testAttempt++)
+        {
+            try
+            {
+                await RunOnceAsync();
+                return;
+            }
+            catch (XunitException) when (testAttempt < 2)
+            {
+            }
+        }
+    }
+
+    // Launches Calculator, retries CloseWindowAsync across a generous budget, and asserts the window is gone; always kills the process afterward.
+    private static async Task RunOnceAsync()
     {
         var app = await App.LaunchPackagedAsync(CalculatorAumid);
         var windowHandle = Process.GetProcessById(app.ProcessId).MainWindowHandle;

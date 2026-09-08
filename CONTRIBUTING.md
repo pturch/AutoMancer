@@ -14,6 +14,9 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category!=Integration"
 # Integration Tests (requires Windows + Notepad):
 dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration"   
 dotnet test samples/ConsumerNotepadTests/                                   
+
+# Consumer sample against VS Code (requires Windows + Visual Studio Code installed; launches its own isolated instance):
+dotnet test samples/ConsumerVsCodeTests/
 ```
 
 CI runs the build and the non-integration suite on every push and pull request to `main`. Integration tests need a real interactive desktop session, so they're local-only.

@@ -6,6 +6,12 @@ namespace AutoMancer.Engine;
 // Configures the App façade: which providers to use, how long to wait for elements, and how long to pause after each action.
 public sealed class AppOptions
 {
+    // Command-line arguments passed to the launched process by LaunchAsync/LaunchPackagedAsync; null launches with none. Has no effect on AttachByPidAsync/AttachByTitleAsync/FindDialogAsync — nothing to launch.
+    public string? Arguments { get; init; }
+
+    // When true, KillAsync/Kill/DisposeAsync terminate the entire process tree rather than just the tracked process — needed for apps (Electron, some Java apps) that spawn helper processes otherwise left running. Default false preserves the single-process kill every existing caller already gets.
+    public bool KillEntireProcessTree { get; init; } = false;
+
     // Provider lookup order — each name must match a known IElementProvider.ProviderName.
     public IReadOnlyList<string> ProviderChain { get; init; } = ["uia3", "uia2", "win32"];
 
@@ -17,6 +23,13 @@ public sealed class AppOptions
 
     // Milliseconds to pause after each ClickAsync/TypeAsync so the UI can settle (SendInput latency + render time); 0 disables it.
     public int ActionDelayMs { get; init; } = 150;
+
+    // Milliseconds to retry foregrounding the target window (verified via GetForegroundWindow) before actions throw WindowActivationError.
+    // 0 skips the check entirely, for apps whose window hierarchy defeats it — pair with App.RootWindowHandle to manage activation yourself.
+    public int ForegroundActivationTimeoutMs { get; init; } = 3_000;
+
+    // Milliseconds to wait for a launched/activated process's window to appear before LaunchAsync/LaunchPackagedAsync throw AppLaunchError.
+    public int LaunchTimeoutMs { get; init; } = 15_000;
 
     // Trace of the engine's own retry/resolve process, e.g. for debugging flaky element timing. Defaults to plain text on stderr so it never pollutes a CLI command's stdout; pass null to disable, or your own IEngineLogger to redirect it.
     public IEngineLogger? Logger { get; init; } = new EngineLogger(Console.Error);

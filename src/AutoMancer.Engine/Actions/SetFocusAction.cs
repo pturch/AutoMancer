@@ -17,7 +17,7 @@ public static class SetFocusAction
     {
         if (element.NativeHandle is not IUIAutomationElement uiaElement)
             return;
-        ClickAction.EnsureForeground(element);
+        ElementInputHelpers.EnsureForeground(element);
         uiaElement.SetFocus();
         logger?.Info("Focused via SetFocus", new { elementId = element.Id });
     }, ct);

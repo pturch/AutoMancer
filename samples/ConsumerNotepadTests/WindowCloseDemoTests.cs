@@ -13,9 +13,14 @@ public sealed class WindowCloseDemoTests
     public async Task CloseWindowAsync_ClosesTheLaunchedWindow()
     {
         var app = await App.LaunchAsync("notepad.exe");
-        await app.FindAsync(Locator.ByControlType("Document"));
-
-        await app.CloseWindowAsync();
-        await app.DisposeAsync();
+        try
+        {
+            await app.FindAsync(Locator.ByControlType("Document"));
+            await app.CloseWindowAsync();
+        }
+        finally
+        {
+            await app.DisposeAsync();
+        }
     }
 }

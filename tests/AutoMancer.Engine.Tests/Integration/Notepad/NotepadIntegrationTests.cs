@@ -35,6 +35,33 @@ public sealed class NotepadIntegrationTests(NotepadFixture fixture) : IClassFixt
     }
 
     [Fact]
+    public async Task AttachByPidAsync_WindowMatchMatchesRealWindow_Succeeds()
+    {
+        var title = Process.GetProcessById(fixture.App.ProcessId).MainWindowTitle;
+
+        var attached = await AppSession.AttachByPidAsync(fixture.App.ProcessId, new WindowMatchOptions { TitleContains = title });
+
+        Assert.Equal(fixture.App.ProcessId, attached.ProcessId);
+    }
+
+    [Fact]
+    public async Task AttachByPidAsync_WindowMatchDoesNotMatch_ThrowsAppLaunchError()
+    {
+        var impossibleTitle = $"__AutoMancer_NoSuchWindow_{Guid.NewGuid()}";
+
+        await Assert.ThrowsAsync<AppLaunchError>(() =>
+            AppSession.AttachByPidAsync(fixture.App.ProcessId, new WindowMatchOptions { TitleContains = impossibleTitle }));
+    }
+
+    // Notepad is single-instance, so a plain LaunchAsync would hand off to fixture's already-running window; RequireNewWindow must reject that hand-off instead of returning it.
+    [Fact]
+    public async Task LaunchAsync_RequireNewWindow_RejectsHandoffToExistingWindow_ThrowsAppLaunchError()
+    {
+        await Assert.ThrowsAsync<AppLaunchError>(() =>
+            AppSession.LaunchAsync("notepad.exe", timeoutMs: 2_000, windowMatch: new WindowMatchOptions { RequireNewWindow = true }));
+    }
+
+    [Fact]
     public async Task FindAsync_TypoInName_ThrowsWithClosestMatchHint()
     {
         var snapshot = await _app.SnapshotAsync();

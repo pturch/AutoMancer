@@ -1,4 +1,5 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
+using AutoMancer.Engine;
 using AutoMancer.Engine.Actions;
 
 namespace AutoMancer.Engine.Tests.Actions;
@@ -8,7 +9,7 @@ public sealed class HeldKeyTrackerTests
     [Fact]
     public void DrainHeld_ReturnsAddedKeys_ThenEmptyOnNextCall()
     {
-        var tracker = new HeldKeyTracker();
+        var tracker = new App.HeldKeyTracker();
         tracker.Add(Key.W);
         tracker.Add(Key.A);
 
@@ -23,7 +24,7 @@ public sealed class HeldKeyTrackerTests
     [Fact]
     public void Remove_ExcludesKeyFromNextDrain()
     {
-        var tracker = new HeldKeyTracker();
+        var tracker = new App.HeldKeyTracker();
         tracker.Add(Key.W);
         tracker.Add(Key.A);
 
@@ -35,7 +36,7 @@ public sealed class HeldKeyTrackerTests
     [Fact]
     public void Add_SameKeyTwice_DrainsOnce()
     {
-        var tracker = new HeldKeyTracker();
+        var tracker = new App.HeldKeyTracker();
         tracker.Add(Key.W);
         tracker.Add(Key.W);
 
@@ -46,7 +47,7 @@ public sealed class HeldKeyTrackerTests
     [Fact]
     public void ConcurrentAddAndRemove_DoesNotThrowOrCorruptState()
     {
-        var tracker = new HeldKeyTracker();
+        var tracker = new App.HeldKeyTracker();
         var keys = Enum.GetValues<Key>();
 
         Parallel.ForEach(keys, key =>

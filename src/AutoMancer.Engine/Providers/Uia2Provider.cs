@@ -173,8 +173,8 @@ public sealed class Uia2Provider : IElementProvider
         return new ElementSnapshot(id, name, automationId, className, controlTypeName, rect, children);
     }
 
-    // Builds a UIA2 property condition for the locator's strategy; null if the strategy or control type name isn't recognized.
-    private static Condition? BuildCondition(Locator locator) => locator.Strategy switch
+    // Builds a UIA2 property condition for the locator's strategy; null if the strategy or control type name isn't recognized. Internal (not private) so BuildConditionParityTests can call it directly.
+    internal static Condition? BuildCondition(Locator locator) => locator.Strategy switch
     {
         LocatorStrategy.Name => new PropertyCondition(AutomationElement.NameProperty, locator.Value),
         LocatorStrategy.AutomationId => new PropertyCondition(AutomationElement.AutomationIdProperty, locator.Value),
@@ -184,6 +184,9 @@ public sealed class Uia2Provider : IElementProvider
             : null,
         LocatorStrategy.RuntimeId => ParseRuntimeId(locator.Value) is int[] id
             ? new PropertyCondition(AutomationElement.RuntimeIdProperty, id)
+            : null,
+        LocatorStrategy.Property => int.TryParse(locator.Value, out var propertyId)
+            ? new PropertyCondition(AutomationProperty.LookupById(propertyId), locator.PropertyValue)
             : null,
         _ => null,
     };

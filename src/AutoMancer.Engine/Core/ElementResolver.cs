@@ -30,6 +30,9 @@ public sealed class ElementResolver
     // Polls the provider chain every PollIntervalMs until a match is found or ImplicitWaitMs elapses; throws ElementNotFoundError with a closest-match hint on timeout.
     public async Task<ElementHandle> FindAsync(Locator locator, AppSession session, CancellationToken ct = default)
     {
+        if (locator.Strategy == LocatorStrategy.Spatial)
+            return await FindSpatialAsync(locator, session, ct).ConfigureAwait(false);
+
         var stopwatch = Stopwatch.StartNew();
         var attempted = new List<string>();
 
@@ -59,6 +62,33 @@ public sealed class ElementResolver
         var tree = await TrySnapshotAsync(session, ct).ConfigureAwait(false);
         var closestMatch = tree is null ? null : ClosestMatchFinder.Find(locator, tree);
         throw new ElementNotFoundError(locator, attempted.ToArray(), (int)stopwatch.ElapsedMilliseconds, closestMatch);
+    }
+
+    // Resolves LocatorStrategy.Spatial: finds the anchor through the normal chain, snapshots the tree for candidates, and picks the nearest one via SpatialMatcher. The winner is re-resolved by RuntimeId so the caller gets a fully interactable handle rather than the snapshot-backed stand-in used only for rect matching.
+    private async Task<ElementHandle> FindSpatialAsync(Locator locator, AppSession session, CancellationToken ct)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var anchor = await FindAsync(locator.Anchor!, session, ct).ConfigureAwait(false);
+        var tree = await TrySnapshotAsync(session, ct).ConfigureAwait(false);
+
+        var candidates = (tree ?? Array.Empty<ElementSnapshot>())
+            .DescendantsAndSelf()
+            .Where(s => s.Id != anchor.Id)
+            .Select(s => new ElementHandle(s.Id, "snapshot", new object())
+            {
+                Name = s.Name,
+                AutomationId = s.AutomationId,
+                ClassName = s.ClassName,
+                ControlType = s.ControlType,
+                BoundingRect = s.BoundingRect,
+            })
+            .ToList();
+
+        var nearest = SpatialMatcher.FindNearest(anchor.BoundingRect, candidates, locator.Direction!.Value, locator.MaxDistancePx!.Value);
+        if (nearest is null)
+            throw new ElementNotFoundError(locator, new[] { "spatial" }, (int)stopwatch.ElapsedMilliseconds);
+
+        return await FindAsync(Locator.ByRuntimeId(nearest.Id), session, ct).ConfigureAwait(false);
     }
 
     // Polls the provider chain every PollIntervalMs until every provider returns null for the locator, or ImplicitWaitMs elapses; throws ElementStillPresentError on timeout.

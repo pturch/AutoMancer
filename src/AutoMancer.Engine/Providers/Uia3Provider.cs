@@ -314,8 +314,8 @@ public sealed class Uia3Provider : IElementProvider
             children);
     }
 
-    // Builds a UIA property condition for the locator's strategy; null if the strategy or control type name isn't recognized.
-    private static IUIAutomationCondition? BuildCondition(Locator locator) => locator.Strategy switch
+    // Builds a UIA property condition for the locator's strategy; null if the strategy or control type name isn't recognized. Internal (not private) so BuildConditionParityTests can call it directly.
+    internal static IUIAutomationCondition? BuildCondition(Locator locator) => locator.Strategy switch
     {
         LocatorStrategy.Name => Automation.CreatePropertyCondition(UIA_PropertyIds.UIA_NamePropertyId, locator.Value),
         LocatorStrategy.AutomationId => Automation.CreatePropertyCondition(UIA_PropertyIds.UIA_AutomationIdPropertyId, locator.Value),
@@ -325,6 +325,9 @@ public sealed class Uia3Provider : IElementProvider
             : null,
         LocatorStrategy.RuntimeId => ParseRuntimeId(locator.Value) is int[] id
             ? Automation.CreatePropertyCondition(UIA_PropertyIds.UIA_RuntimeIdPropertyId, id)
+            : null,
+        LocatorStrategy.Property => int.TryParse(locator.Value, out var propertyId)
+            ? Automation.CreatePropertyCondition(propertyId, locator.PropertyValue)
             : null,
         _ => null,
     };

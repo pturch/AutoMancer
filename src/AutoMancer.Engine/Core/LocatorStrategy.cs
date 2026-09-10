@@ -11,4 +11,6 @@ public enum LocatorStrategy
     AutoMancerPath,
     RuntimeId,
     AutoMancerXPath,
+    Spatial,
+    Property,
 }

@@ -14,11 +14,11 @@ public sealed class ElementResolverTests
 
     private static ElementHandle Handle(string id) => new(id, "test", new object());
 
-    private static Mock<IElementProvider> MockProvider(string name, ElementHandle? findResult)
+    private static Mock<IElementProvider> MockProvider(string name, ElementHandle? findResult, Locator? locator = null)
     {
         var mock = new Mock<IElementProvider>();
         mock.SetupGet(p => p.ProviderName).Returns(name);
-        mock.Setup(p => p.FindElementAsync(TestLocator, Session, It.IsAny<CancellationToken>())).ReturnsAsync(findResult);
+        mock.Setup(p => p.FindElementAsync(locator ?? TestLocator, Session, It.IsAny<CancellationToken>())).ReturnsAsync(findResult);
         mock.Setup(p => p.SnapshotTreeAsync(Session, It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<ElementSnapshot>());
         return mock;
     }
@@ -275,5 +275,60 @@ public sealed class ElementResolverTests
 
         Assert.Null(result);
         Assert.Empty(writer.ToString());
+    }
+
+    [Fact]
+    public async Task FindAsync_SpatialLocator_ResolvesNearestCandidateByRuntimeId()
+    {
+        var anchorLocator = Locator.ByName("Username");
+        var spatialLocator = Locator.Near(anchorLocator, SpatialDirection.RightOf, maxDistancePx: 200);
+        var anchorHandle = new ElementHandle("anchor-rid", "test", new object()) { BoundingRect = new Rect(0, 0, 50, 20) };
+        var nearCandidate = new ElementSnapshot("near-rid", "Input", null, "Edit", "Edit", new Rect(60, 0, 50, 20), Array.Empty<ElementSnapshot>());
+        var farCandidate = new ElementSnapshot("far-rid", "Other", null, "Edit", "Edit", new Rect(500, 0, 50, 20), Array.Empty<ElementSnapshot>());
+        var resolvedHandle = new ElementHandle("near-rid", "test", new object());
+
+        var provider = new Mock<IElementProvider>();
+        provider.SetupGet(p => p.ProviderName).Returns("uia3");
+        provider.Setup(p => p.FindElementAsync(anchorLocator, Session, It.IsAny<CancellationToken>())).ReturnsAsync(anchorHandle);
+        provider.Setup(p => p.SnapshotTreeAsync(Session, It.IsAny<CancellationToken>())).ReturnsAsync([nearCandidate, farCandidate]);
+        provider.Setup(p => p.FindElementAsync(Locator.ByRuntimeId("near-rid"), Session, It.IsAny<CancellationToken>())).ReturnsAsync(resolvedHandle);
+        var resolver = new ElementResolver([provider.Object], new ElementProviderOptions { ProviderChain = ["uia3"] });
+
+        var result = await resolver.FindAsync(spatialLocator, Session);
+
+        Assert.Same(resolvedHandle, result);
+    }
+
+    [Fact]
+    public async Task FindAsync_SpatialLocator_NoQualifyingCandidate_ThrowsElementNotFoundError()
+    {
+        var anchorLocator = Locator.ByName("Username");
+        var spatialLocator = Locator.Near(anchorLocator, SpatialDirection.RightOf, maxDistancePx: 10);
+        var anchorHandle = new ElementHandle("anchor-rid", "test", new object()) { BoundingRect = new Rect(0, 0, 50, 20) };
+        var tooFar = new ElementSnapshot("far-rid", "Other", null, "Edit", "Edit", new Rect(500, 0, 50, 20), Array.Empty<ElementSnapshot>());
+
+        var provider = new Mock<IElementProvider>();
+        provider.SetupGet(p => p.ProviderName).Returns("uia3");
+        provider.Setup(p => p.FindElementAsync(anchorLocator, Session, It.IsAny<CancellationToken>())).ReturnsAsync(anchorHandle);
+        provider.Setup(p => p.SnapshotTreeAsync(Session, It.IsAny<CancellationToken>())).ReturnsAsync([tooFar]);
+        var resolver = new ElementResolver([provider.Object], new ElementProviderOptions { ProviderChain = ["uia3"] });
+
+        var ex = await Assert.ThrowsAsync<ElementNotFoundError>(() => resolver.FindAsync(spatialLocator, Session));
+
+        Assert.Equal(spatialLocator, ex.Locator);
+    }
+
+    [Fact]
+    public async Task FindAsync_SpatialLocator_AnchorNotFound_PropagatesElementNotFoundError()
+    {
+        var anchorLocator = Locator.ByName("Username");
+        var spatialLocator = Locator.Near(anchorLocator, SpatialDirection.RightOf);
+        var options = new ElementProviderOptions { ProviderChain = ["uia3"], ImplicitWaitMs = 50, PollIntervalMs = 10 };
+        var provider = MockProvider("uia3", null, anchorLocator);
+        var resolver = new ElementResolver([provider.Object], options);
+
+        var ex = await Assert.ThrowsAsync<ElementNotFoundError>(() => resolver.FindAsync(spatialLocator, Session));
+
+        Assert.Equal(anchorLocator, ex.Locator);
     }
 }

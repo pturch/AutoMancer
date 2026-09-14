@@ -180,13 +180,13 @@ dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
 **⚠️ Verify the exact `IUIAutomationRegistrar` shape against `Interop.UIAutomationClient`'s generated types before implementing this task — the signature below is written from general UIA COM documentation, not confirmed against this project's actual package version.** As documented, `IUIAutomationRegistrar.RegisterProperty` takes a full `UIAutomationPropertyInfo { Guid guid; string programmaticName; UIAutomationType type; }`, not just a GUID — the caller has to already know the property's declared name and value type to resolve it, the same way the app that originally registered it did. A bare `Locator.ByProperty(Guid, object value)` factory can't supply that on its own, so **this task exposes a one-time registration call instead of a new `Locator` factory**, and the resolved ID feeds into Task 2.1.3's existing `ByProperty(int, object)`:
 
 ```csharp
-// On Uia3Provider (or App, delegating to it) — a live UIA3 COM call, so it can't happen at Locator-construction time.
+// A live COM call, so it can't happen at Locator-construction time.
 public async Task<int> RegisterCustomPropertyAsync(Guid propertyGuid, string programmaticName, UiaAutomationType type, CancellationToken ct = default);
 ```
 Callers do `var id = await app.RegisterCustomPropertyAsync(guid, "MyApp.Status", UiaAutomationType.String); app.FindAsync(Locator.ByProperty(id, "Ready"))` — one extra line, but it doesn't require guessing at a `Locator` shape that can't actually carry enough information to work.
 
 **Creates:**
-- `src/AutoMancer.Engine/Providers/Uia3Provider.cs` — `RegisterCustomPropertyAsync(Guid, string, UiaAutomationType, CancellationToken)` → `int`, via `IUIAutomationRegistrar.RegisterProperty`
+- `src/AutoMancer.Engine/Providers/UiaRegistrarInterop.cs` — `RegisterCustomPropertyAsync(Guid, string, UiaAutomationType, CancellationToken)` → `int`, via `IUIAutomationRegistrar.RegisterProperty`. Not on `Uia3Provider`: `CUIAutomationRegistrar` is a standalone COM object with no dependency on either provider's automation root, so it lives in its own file rather than implying a UIA3-specific dependency that doesn't exist
 - `src/AutoMancer.Engine/App.cs` — thin delegating overload
 
 - [ ] **Implement and build**
@@ -470,7 +470,7 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration&FullyQ
 
 ### Task 2.5.1: `AccessibilityAuditor`
 
-**What:** Walks an `ElementSnapshot` tree from the existing `App.SnapshotAsync`, flags nodes whose `ControlType` is interactive (`Button`, `Edit`, `CheckBox`, …) with a null or empty `Name`. Returns findings with a tree-path breadcrumb (built the same way `XPathEvaluator`'s index-to-element mapping already walks the snapshot tree, reused here for the breadcrumb string).
+**What:** Walks an `ElementSnapshot` tree from the existing `App.SnapshotAsync`, flags nodes whose `ControlType` is interactive (`Button`, `Edit`, `CheckBox`, …) with a null or empty `Name`. Returns findings with a tree-path breadcrumb — likely buildable by walking the tree the same way `XPathEvaluator`'s index-to-element mapping already does, though whether that mapping is actually reusable for a breadcrumb string (rather than just an index lookup) isn't confirmed until tried.
 
 **Creates:**
 - `src/AutoMancer.Engine/Diagnostics/AccessibilityAuditor.cs` — `Audit(IReadOnlyList<ElementSnapshot> tree)` → `IReadOnlyList<AccessibilityFinding>` (`ControlType`, `TreePath`); a fixed `HashSet<string>` of interactive control-type names
@@ -488,7 +488,7 @@ dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
 
 ### Task 2.5.2: CLI `audit` command
 
-**What:** `automancer audit <session>` prints findings as a table, matching `tree`'s existing output style (reuses the CLI's existing table-printing helper rather than a new formatter).
+**What:** `automancer audit <session>` prints findings as a table, matching `tree`'s existing output style — likely able to reuse the CLI's existing table-printing helper rather than needing a new formatter, though that depends on how reusable that helper actually turns out to be.
 
 **Creates:**
 - `src/AutoMancer.Cli/Commands/AuditCommand.cs`
@@ -525,7 +525,7 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration&FullyQ
 
 ## Stage 2.6 — Visual Provider, Idle Wait, and Visual Regression
 
-> **Two different capabilities share this stage because they share screenshot/pixel-diff plumbing, not because they solve the same problem.** Tasks 23–26 are the actual Visual Provider — a locator fallback for apps with no accessibility tree at all. Tasks 27–28 (`WaitForIdleAsync`, visual regression) are general-purpose and useful against any app, UIA-accessible or not; they only live here because they reuse the capture/compare code Tasks 23–26 already needed. See roadmap-spec.md's Stage 2.6 for the full split.
+> **Two different capabilities share this stage because they're expected to share screenshot/pixel-diff plumbing, not because they solve the same problem.** Tasks 23–26 are the actual Visual Provider — a locator fallback for apps with no accessibility tree at all. Tasks 27–28 (`WaitForIdleAsync`, visual regression) are general-purpose and useful against any app, UIA-accessible or not; they're grouped here on the assumption they can reuse the capture/compare code Tasks 23–26 build, though that's only confirmed once 2.6.3 actually lands. See roadmap-spec.md's Stage 2.6 for the full split.
 
 ### Task 2.6.1: `VisualProvider` skeleton
 
@@ -607,7 +607,7 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration&FullyQ
 
 ### Task 2.6.5: `App.WaitForIdleAsync()`
 
-**What:** Diffs consecutive `ScreenshotAsync()` captures at a short interval until two frames match within a pixel-difference threshold, or a timeout is hit. Replaces the ad-hoc `Task.Delay(300) // flyout animation` waits already scattered through the Phase 1 integration test suite with a real settledness check — reuses the pixel-compare plumbing Task 2.6.3 built for template matching rather than a separate diff implementation.
+**What:** Diffs consecutive `ScreenshotAsync()` captures at a short interval until two frames match within a pixel-difference threshold, or a timeout is hit. Replaces the ad-hoc `Task.Delay(300) // flyout animation` waits already scattered through the Phase 1 integration test suite with a real settledness check — likely able to reuse the pixel-compare plumbing Task 2.6.3 builds for template matching rather than needing a separate diff implementation, assuming that plumbing ends up general enough once 2.6.3 actually lands.
 
 **Creates:**
 - `src/AutoMancer.Engine/App.cs` — `WaitForIdleAsync(TimeSpan? pollInterval = null, TimeSpan? timeout = null, CancellationToken ct = default)`
@@ -624,7 +624,7 @@ dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
 
 ### Task 2.6.6: Visual regression snapshot assertion
 
-**What:** Captures the current window/element region and pixel-diffs it against a stored baseline PNG, failing past a configurable difference threshold. Reuses the screenshot/pixel-compare plumbing built for template matching in Task 2.6.3.
+**What:** Captures the current window/element region and pixel-diffs it against a stored baseline PNG, failing past a configurable difference threshold. Likely reuses the screenshot/pixel-compare plumbing built for template matching in Task 2.6.3, if that plumbing turns out general enough for a full-image diff rather than just a template match.
 
 **`DpiHelper.PhysicalToLogical` is not directly reusable here — check its actual signature before assuming otherwise.** `ScreenshotAsync()` captures physical pixels, and the same logical window is a different physical *pixel size* at 100% vs. 150% DPI, so a naive pixel-diff spuriously fails whenever the baseline and the live capture were recorded at different scale factors. But `DpiHelper.PhysicalToLogical(double physicalX, double physicalY, int dpi, Rect windowRect)` converts a single *coordinate pair*, not a bitmap — there's nothing to "call it on" an image. What's actually needed is a bitmap **resize** using the DPI scale ratio (`dpi / 96.0` — the same ratio `DpiHelper` already computes internally as `BaseDpi`-relative `scale`, just not exposed as a standalone factor): resize whichever of the baseline/live capture was taken at the non-reference DPI down (or up) to match the other's pixel dimensions before diffing. Add a small `DpiHelper.GetScale(int dpi) => dpi / 96.0` (or inline the ratio directly in `VisualRegression`) rather than trying to route this through `PhysicalToLogical`.
 

@@ -128,6 +128,10 @@ public sealed class App : IAsyncDisposable
     public Task<IReadOnlyList<ElementHandle>> FindAllAsync(Locator locator, CancellationToken ct = default)
         => _resolver.FindAllAsync(locator, _session, ct);
 
+    // Resolves a custom UIA property's app-declared GUID to this session's numeric PropertyId, so it can be queried via Locator.ByProperty(int, object) — see UiaRegistrarInterop.RegisterCustomPropertyAsync for why the GUID can't just be hardcoded as an int.
+    public Task<int> RegisterCustomPropertyAsync(Guid propertyGuid, string programmaticName, UiaAutomationType type, CancellationToken ct = default)
+        => UiaRegistrarInterop.RegisterCustomPropertyAsync(propertyGuid, programmaticName, type, ct);
+
     // Finds the element and reads its current value via ValuePattern or TextPattern; returns null when the resolved provider has no operator (e.g. Win32) or neither pattern is supported.
     public async Task<string?> GetValueAsync(Locator locator, CancellationToken ct = default)
     {

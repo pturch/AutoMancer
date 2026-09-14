@@ -53,4 +53,16 @@ public sealed class AppTests
 
         await app.KillAsync();
     }
+
+    // Proves the thin delegate reaches the real registrar even with an empty provider chain — RegisterCustomPropertyAsync isn't part of IElementProvider and never goes through ElementResolver, so session/providers are irrelevant to this call.
+    [Fact]
+    public async Task RegisterCustomPropertyAsync_WorksWithNoProvidersConfigured()
+    {
+        var session = AppSession.CreateForTesting(ExitedProcess(), (IntPtr)42);
+        var app = App.CreateForTesting(session, [], new AppOptions { Logger = null });
+
+        var id = await app.RegisterCustomPropertyAsync(Guid.NewGuid(), "AutoMancer.Test.Property", UiaAutomationType.String);
+
+        Assert.True(id > 0);
+    }
 }

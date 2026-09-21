@@ -1,10 +1,12 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
 using System.ComponentModel;
+using System.Diagnostics;
 using AutoMancer.Engine.Actions;
 using AutoMancer.Engine.Core;
 using AutoMancer.Engine.Diagnostics;
 using AutoMancer.Engine.Errors;
 using AutoMancer.Engine.Providers;
+using Interop.UIAutomationClient;
 
 namespace AutoMancer.Engine;
 
@@ -143,6 +145,43 @@ public sealed class App : IAsyncDisposable
     // Finds all elements matching the locator within scope's subtree instead of the whole session; returns empty if none match — scope is resolved fresh as part of this call.
     public Task<IReadOnlyList<ElementHandle>> FindAllScopedAsync(Locator locator, Locator scope, CancellationToken ct = default)
         => _resolver.FindAllScopedAsync(locator, _session, scope, ct);
+
+    // Finds itemLocator inside container's subtree, one wheel notch at a time, for virtualized ListView/ComboBox/DataGrid rows that aren't realized in the UIA tree until scrolled into view — ScrollAction can't help here since it needs an ElementHandle for the item, which is exactly what's missing. 
+    // Throws ElementNotFoundError immediately (rather than burning through maxScrolls) once CurrentVerticalScrollPercent stops changing between scrolls, since the container has hit the end of its scrollable range.
+    public Task<ElementHandle> FindByScrollingAsync(ElementHandle container, Locator itemLocator, int maxScrolls = 20, CancellationToken ct = default)
+        => FindByScrollingCoreAsync(container, itemLocator, maxScrolls, token => ScrollWheelAction.ExecuteAsync(container, 0, -1, token), ct);
+
+    // Same loop as FindByScrollingAsync with the scroll step swapped out — lets tests drive the reveal-after-N-scrolls and stall-detection logic against a fake provider without a real ScrollWheelAction/SendInput call.
+    internal async Task<ElementHandle> FindByScrollingCoreAsync(ElementHandle container, Locator itemLocator, int maxScrolls, Func<CancellationToken, Task> scroll, CancellationToken ct)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        // Set only after a scroll actually happens — comparing against a pre-scroll baseline would flag a stall after just one scroll instead of two consecutive ones.
+        double? previousPercent = null;
+
+        for (var i = 0; i < maxScrolls; i++)
+        {
+            try
+            {
+                return await _resolver.FindScopedAsync(itemLocator, _session, container, ct);
+            }
+            catch (ElementNotFoundError)
+            {
+                // Not realized in the tree yet — scroll and try again below.
+            }
+
+            EnsureWindowNotMinimized();
+            await scroll(ct);
+            if (_actionDelayMs > 0)
+                await Task.Delay(_actionDelayMs, ct);
+
+            var currentPercent = GetVerticalScrollPercent(container);
+            if (currentPercent.HasValue && previousPercent.HasValue && currentPercent.Value == previousPercent.Value) // We're at the bottom of the page
+                throw new ElementNotFoundError(itemLocator, new[] { "scroll" }, (int)stopwatch.ElapsedMilliseconds);
+            previousPercent = currentPercent;
+        }
+
+        return await _resolver.FindScopedAsync(itemLocator, _session, container, ct);
+    }
 
     // Resolves a custom UIA property's app-declared GUID to this session's numeric PropertyId, so it can be queried via Locator.ByProperty(int, object) — see UiaRegistrarInterop.RegisterCustomPropertyAsync for why the GUID can't just be hardcoded as an int.
     public Task<int> RegisterCustomPropertyAsync(Guid propertyGuid, string programmaticName, UiaAutomationType type, CancellationToken ct = default)
@@ -455,6 +494,16 @@ public sealed class App : IAsyncDisposable
         // Checked against root, not the element's window — locator methods foreground the element themselves instead.
         if (NativeMethods.IsIconic(_session.RootWindowHandle))
             throw new WindowMinimizedError(_session.RootWindowHandle);
+    }
+
+    // Reads IUIAutomationScrollPattern.CurrentVerticalScrollPercent for container; null when it wasn't resolved via uia3 or doesn't support ScrollPattern, in which case FindByScrollingAsync's stall detection is skipped and maxScrolls alone bounds the loop.
+    private static double? GetVerticalScrollPercent(ElementHandle container)
+    {
+        if (container.NativeHandle is not IUIAutomationElement uiaElement)
+            return null;
+        if (uiaElement.GetCurrentPattern(UIA_PatternIds.UIA_ScrollPatternId) is not IUIAutomationScrollPattern scrollPattern)
+            return null;
+        return scrollPattern.CurrentVerticalScrollPercent;
     }
 
     // Instantiates one provider per name in the chain; unknown names are silently dropped.

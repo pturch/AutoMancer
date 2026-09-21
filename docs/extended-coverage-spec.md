@@ -248,7 +248,7 @@ dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
 **Creates:**
 - `src/AutoMancer.Engine/App.cs` — `FindByScrollingAsync(ElementHandle container, Locator itemLocator, int maxScrolls = 20, CancellationToken ct = default)`, built on Task 2.1.7's `FindScopedAsync` and the existing `ScrollWheelAction`
 
-- [ ] **Implement and build**
+- [x] **Implement and build**
 
 ```bash
 dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
@@ -268,13 +268,15 @@ dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
 - `tests/AutoMancer.Engine.Tests/Integration/ScopedFindIntegrationTests.cs` — scoped find disambiguates two identically-named buttons in different dialogs of a live app
 - `tests/AutoMancer.Engine.Tests/Integration/VirtualizedListFindIntegrationTests.cs` — `FindByScrollingAsync` locates a far-down item in a long live `ListView`
 
-- [ ] **Write tests, run (expect FAIL), implement, run (expect PASS)**
+- [x] **Write tests, run (expect FAIL), implement, run (expect PASS)**
 
 ```bash
 dotnet test tests/AutoMancer.Engine.Tests/ --filter "FullyQualifiedName~ScopedFind|FullyQualifiedName~FindByScrolling"
 ```
 
 **Done when:** `app.FindScopedAsync(locator, element)` only matches descendants of `element`; `app.FindByScrollingAsync(container, itemLocator)` finds a far-down item in a live virtualized list and throws (not hangs) when the item genuinely isn't there. Stage 2.1 complete.
+
+> Unit coverage (`ScopedFindTests`, `FindByScrollingTests`) passes. The two `VirtualizedListFindIntegrationTests` live tests couldn't be executed in the sandboxed session that wrote them — it can't hold foreground focus (the same `WindowActivationError` also hits the pre-existing `ScopedFindIntegrationTests` there). Run the filter above on a normal desktop session to confirm before trusting this box.
 
 ---
 

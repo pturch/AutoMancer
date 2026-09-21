@@ -12,6 +12,8 @@ public sealed class Uia2Provider : IElementProvider
 
     private const int MaxTreeDepth = 20;
 
+    // ---- Control type maps ----
+
     // AutoMancer's control type names mapped to System.Windows.Automation.ControlType values.
     private static readonly Dictionary<string, ControlType> ControlTypeMap = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -60,6 +62,8 @@ public sealed class Uia2Provider : IElementProvider
     private static readonly Dictionary<int, string> ControlTypeNames =
         ControlTypeMap.GroupBy(kv => kv.Value.Id).ToDictionary(g => g.Key, g => g.First().Key);
 
+    // ---- IElementProvider implementation (public) + supporting private helpers ----
+
     // Resolves the root element for the session's window; null if the handle is invalid or the window has been destroyed — never throws (FromHandle itself can throw ElementNotAvailableException for a destroyed HWND).
     private static AutomationElement? TryGetRoot(AppSession session)
     {
@@ -67,8 +71,8 @@ public sealed class Uia2Provider : IElementProvider
         catch (Exception ex) when (ex is InvalidOperationException or ElementNotAvailableException) { return null; }
     }
 
-    // Finds the first descendant of the session's root window matching the locator; null if none match — never throws.
-    public Task<ElementHandle?> FindElementAsync(Locator locator, AppSession session, CancellationToken ct = default)
+    // Finds the first descendant of root() matching the locator; null if none match — never throws.
+    private Task<ElementHandle?> FindFirstAsync(Func<AutomationElement?> root, Locator locator, CancellationToken ct)
     {
         return Task.Run(() =>
         {
@@ -76,13 +80,13 @@ public sealed class Uia2Provider : IElementProvider
             if (condition is null)
                 return (ElementHandle?)null;
 
-            var root = TryGetRoot(session);
-            if (root is null) return (ElementHandle?)null;
+            var element = root();
+            if (element is null) return (ElementHandle?)null;
 
             // A stale element mid-search can abort FindFirst entirely — treat that as not-found instead of throwing.
             try
             {
-                var found = root.FindFirst(TreeScope.Descendants, condition);
+                var found = element.FindFirst(TreeScope.Descendants, condition);
                 if (found is null)
                     return null; // no element in the tree matched the locator
 
@@ -95,8 +99,8 @@ public sealed class Uia2Provider : IElementProvider
         }, ct);
     }
 
-    // Finds every descendant of the session's root window matching the locator; empty if none match or a dynamic app invalidates an element mid-search.
-    public Task<IReadOnlyList<ElementHandle>> FindElementsAsync(Locator locator, AppSession session, CancellationToken ct = default)
+    // Finds every descendant of root() matching the locator; empty if none match or a dynamic app invalidates an element mid-search.
+    private Task<IReadOnlyList<ElementHandle>> FindAllAsync(Func<AutomationElement?> root, Locator locator, CancellationToken ct)
     {
         return Task.Run(() =>
         {
@@ -104,16 +108,16 @@ public sealed class Uia2Provider : IElementProvider
             if (condition is null)
                 return (IReadOnlyList<ElementHandle>)Array.Empty<ElementHandle>();
 
-            var root = TryGetRoot(session);
-            if (root is null)
+            var element = root();
+            if (element is null)
                 return (IReadOnlyList<ElementHandle>)Array.Empty<ElementHandle>();
 
             try
             {
-                var matches = root.FindAll(TreeScope.Descendants, condition);
+                var matches = element.FindAll(TreeScope.Descendants, condition);
                 var results = new List<ElementHandle>(matches.Count);
-                foreach (AutomationElement element in matches)
-                    if (Wrap(element) is { } wrapped)
+                foreach (AutomationElement match in matches)
+                    if (Wrap(match) is { } wrapped)
                         results.Add(wrapped);
 
                 return (IReadOnlyList<ElementHandle>)results;
@@ -124,6 +128,22 @@ public sealed class Uia2Provider : IElementProvider
             }
         }, ct);
     }
+
+    // Finds the first descendant of the session's root window matching the locator; null if none match — never throws.
+    public Task<ElementHandle?> FindElementAsync(Locator locator, AppSession session, CancellationToken ct = default) =>
+        FindFirstAsync(() => TryGetRoot(session), locator, ct);
+
+    // Finds every descendant of the session's root window matching the locator; empty if none match or a dynamic app invalidates an element mid-search.
+    public Task<IReadOnlyList<ElementHandle>> FindElementsAsync(Locator locator, AppSession session, CancellationToken ct = default) =>
+        FindAllAsync(() => TryGetRoot(session), locator, ct);
+
+    // Finds the first descendant of scope's subtree matching the locator; null if none match, or scope's NativeHandle came from a different provider.
+    public Task<ElementHandle?> FindScopedElementAsync(Locator locator, AppSession session, ElementHandle scope, CancellationToken ct = default) =>
+        FindFirstAsync(() => scope.NativeHandle as AutomationElement, locator, ct);
+
+    // Finds every descendant of scope's subtree matching the locator; empty if none match or scope came from a different provider.
+    public Task<IReadOnlyList<ElementHandle>> FindScopedElementsAsync(Locator locator, AppSession session, ElementHandle scope, CancellationToken ct = default) =>
+        FindAllAsync(() => scope.NativeHandle as AutomationElement, locator, ct);
 
     // Snapshots the element tree rooted at the session's window using TreeWalker.ControlViewWalker.
     public Task<IReadOnlyList<ElementSnapshot>> SnapshotTreeAsync(AppSession session, CancellationToken ct = default)
@@ -173,6 +193,8 @@ public sealed class Uia2Provider : IElementProvider
         return new ElementSnapshot(id, name, automationId, className, controlTypeName, rect, children);
     }
 
+    // ---- Internal: exposed only for BuildConditionParityTests, otherwise an implementation detail of the finders above ----
+
     // Builds a UIA2 property condition for the locator's strategy; null if the strategy or control type name isn't recognized. Internal (not private) so BuildConditionParityTests can call it directly.
     internal static Condition? BuildCondition(Locator locator) => locator.Strategy switch
     {
@@ -197,6 +219,8 @@ public sealed class Uia2Provider : IElementProvider
         try { return value.Split('.').Select(int.Parse).ToArray(); }
         catch { return null; }
     }
+
+    // ---- Private helpers ----
 
     private static readonly Uia2Operator _op = new();
 

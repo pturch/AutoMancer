@@ -8,13 +8,17 @@ public sealed class Win32Provider : IElementProvider
 {
     public string ProviderName => "win32";
 
-    // Finds the first child window matching the locator by title (Name) or class name (ClassName); null if not found or strategy unsupported.
-    public Task<ElementHandle?> FindElementAsync(Locator locator, AppSession session, CancellationToken ct = default)
+    // ---- IElementProvider implementation (public) + supporting private helpers ----
+
+    // Finds the first child window under root matching the locator by title (Name) or class name (ClassName); null if not found, strategy unsupported, or root is null.
+    private Task<ElementHandle?> FindFirstAsync(IntPtr? root, Locator locator, CancellationToken ct)
     {
         return Task.Run(() =>
         {
+            if (root is null) return null;
+
             ElementHandle? result = null;
-            NativeMethods.EnumChildWindows(session.RootWindowHandle, (windowHandle, _) =>
+            NativeMethods.EnumChildWindows(root.Value, (windowHandle, _) =>
             {
                 if (!Matches(windowHandle, locator))
                     return true;
@@ -25,13 +29,15 @@ public sealed class Win32Provider : IElementProvider
         }, ct);
     }
 
-    // Finds all child windows matching the locator by title (Name) or class name (ClassName); empty if none match.
-    public Task<IReadOnlyList<ElementHandle>> FindElementsAsync(Locator locator, AppSession session, CancellationToken ct = default)
+    // Finds all child windows under root matching the locator by title (Name) or class name (ClassName); empty if none match or root is null.
+    private Task<IReadOnlyList<ElementHandle>> FindAllAsync(IntPtr? root, Locator locator, CancellationToken ct)
     {
         return Task.Run(() =>
         {
+            if (root is null) return (IReadOnlyList<ElementHandle>)Array.Empty<ElementHandle>();
+
             var results = new List<ElementHandle>();
-            NativeMethods.EnumChildWindows(session.RootWindowHandle, (windowHandle, _) =>
+            NativeMethods.EnumChildWindows(root.Value, (windowHandle, _) =>
             {
                 if (Matches(windowHandle, locator))
                     results.Add(WrapWindowHandle(windowHandle));
@@ -39,6 +45,34 @@ public sealed class Win32Provider : IElementProvider
             }, IntPtr.Zero);
             return (IReadOnlyList<ElementHandle>)results;
         }, ct);
+    }
+
+    // Finds the first child window of the session root matching the locator; null if not found or strategy unsupported.
+    public Task<ElementHandle?> FindElementAsync(Locator locator, AppSession session, CancellationToken ct = default) =>
+        FindFirstAsync(session.RootWindowHandle, locator, ct);
+
+    // Finds all child windows of the session root matching the locator; empty if none match.
+    public Task<IReadOnlyList<ElementHandle>> FindElementsAsync(Locator locator, AppSession session, CancellationToken ct = default) =>
+        FindAllAsync(session.RootWindowHandle, locator, ct);
+
+    // Finds the first child window under scope's hwnd matching the locator; null if none match, scope's NativeHandle isn't an IntPtr (came from a different provider)
+    // In Win32 its possible the hwnd no longer belongs to this session's process (destroyed and recycled by the OS for an unrelated window).
+    public Task<ElementHandle?> FindScopedElementAsync(Locator locator, AppSession session, ElementHandle scope, CancellationToken ct = default) =>
+        FindFirstAsync(ValidScopeHandle(scope, session), locator, ct);
+
+    // Finds all child windows under scope's hwnd matching the locator; empty if none match or scope came from a different provider
+    // In Win32 its possible the hwnd no longer belongs to this session's process (destroyed and recycled by the OS for an unrelated window).
+
+    public Task<IReadOnlyList<ElementHandle>> FindScopedElementsAsync(Locator locator, AppSession session, ElementHandle scope, CancellationToken ct = default) =>
+        FindAllAsync(ValidScopeHandle(scope, session), locator, ct);
+
+    // Returns scope's hwnd only if it's still owned by session's own process.
+    private static IntPtr? ValidScopeHandle(ElementHandle scope, AppSession session)
+    {
+        if (scope.NativeHandle is not IntPtr hwnd) return null;
+        NativeMethods.GetWindowThreadProcessId(hwnd, out var pid);
+        if ((int)pid != session.ProcessId) return null;
+        return hwnd;
     }
 
     // Snapshots all child windows of the session root into a flat list of children under a single root snapshot.
@@ -57,6 +91,8 @@ public sealed class Win32Provider : IElementProvider
             return (IReadOnlyList<ElementSnapshot>)[root];
         }, ct);
     }
+
+    // ---- Private helpers ----
 
     // Returns true when the windowHandle's title (Name strategy) or class name (ClassName strategy) matches the locator value.
     private static bool Matches(IntPtr windowHandle, Locator locator) => locator.Strategy switch

@@ -23,6 +23,8 @@ public sealed class App : IAsyncDisposable
     private readonly IEngineLogger? _combinedLogger;
     private readonly DateTime _startedAtUtc = DateTime.UtcNow;
 
+    // ---- Public properties ----
+
     // The PID of the target process — useful for re-attaching after a session change.
     public int ProcessId => _session.ProcessId;
 
@@ -40,6 +42,8 @@ public sealed class App : IAsyncDisposable
 
     // The poll interval this App was configured with (via AppOptions.PollIntervalMs) — the default cadence callers can reuse for their own polling loops.
     public int PollIntervalMs { get; }
+
+    // ---- Construction (public static factories) ----
 
     // Private — callers use the static factory methods.
     private App(AppSession session, IEnumerable<IElementProvider> providers, AppOptions options)
@@ -116,9 +120,13 @@ public sealed class App : IAsyncDisposable
     // Returns a new App bound to the same session but with different options — useful for warmup or provider-specific operations without creating a new process.
     public App WithOptions(AppOptions options) => new(_session, BuildProviders(options.ProviderChain), options);
 
+    // ---- Internal: test support only — not part of the public surface ----
+
     // Bypasses real provider construction to build an App around fake providers, for unit tests exercising App/Expect() retry and diagnostics logic without a live window.
     internal static App CreateForTesting(AppSession session, IEnumerable<IElementProvider> providers, AppOptions? options = null) =>
         new(session, providers, options ?? AppOptions.Default);
+
+    // ---- Finding & querying elements (public) ----
 
     // Finds the first element matching the locator; waits up to ImplicitWaitMs before throwing.
     public Task<ElementHandle> FindAsync(Locator locator, CancellationToken ct = default)
@@ -127,6 +135,14 @@ public sealed class App : IAsyncDisposable
     // Finds all elements matching the locator in a single pass; returns empty if none match.
     public Task<IReadOnlyList<ElementHandle>> FindAllAsync(Locator locator, CancellationToken ct = default)
         => _resolver.FindAllAsync(locator, _session, ct);
+
+    // Finds the first element matching the locator within scope's subtree instead of the whole session — scope is resolved fresh as part of this call, so it can't be a stale handle from earlier.
+    public Task<ElementHandle> FindScopedAsync(Locator locator, Locator scope, CancellationToken ct = default)
+        => _resolver.FindScopedAsync(locator, _session, scope, ct);
+
+    // Finds all elements matching the locator within scope's subtree instead of the whole session; returns empty if none match — scope is resolved fresh as part of this call.
+    public Task<IReadOnlyList<ElementHandle>> FindAllScopedAsync(Locator locator, Locator scope, CancellationToken ct = default)
+        => _resolver.FindAllScopedAsync(locator, _session, scope, ct);
 
     // Resolves a custom UIA property's app-declared GUID to this session's numeric PropertyId, so it can be queried via Locator.ByProperty(int, object) — see UiaRegistrarInterop.RegisterCustomPropertyAsync for why the GUID can't just be hardcoded as an int.
     public Task<int> RegisterCustomPropertyAsync(Guid propertyGuid, string programmaticName, UiaAutomationType type, CancellationToken ct = default)
@@ -147,6 +163,8 @@ public sealed class App : IAsyncDisposable
     public Task<byte[]> ScreenshotAsync(CancellationToken ct = default)
         => ScreenshotAction.CaptureAsync(_session.RootWindowHandle, ct);
 
+    // ---- Waiting (public) ----
+
     // Waits until every provider in the chain returns null for the locator; throws ElementStillPresentError if it's still found after ImplicitWaitMs.
     public Task WaitUntilGoneAsync(Locator locator, CancellationToken ct = default)
         => _resolver.WaitUntilGoneAsync(locator, _session, ct);
@@ -154,6 +172,8 @@ public sealed class App : IAsyncDisposable
     // Waits until the located element satisfies condition; throws ElementConditionTimeoutError if it never does within ImplicitWaitMs.
     public Task<ElementHandle> WaitForAsync(Locator locator, Func<ElementHandle, bool> condition, CancellationToken ct = default)
         => _resolver.WaitForAsync(locator, condition, _session, ct);
+
+    // ---- Input actions: mouse & keyboard (public) ----
 
     // Finds the element and clicks it; waits ActionDelayMs after the click for the UI to settle.
     public async Task ClickAsync(Locator locator, MouseButton button = MouseButton.Left, KeyModifiers modifiers = default, CancellationToken ct = default)
@@ -330,6 +350,8 @@ public sealed class App : IAsyncDisposable
             await Task.Delay(_actionDelayMs, ct);
     }
 
+    // ---- Window management (public) ----
+
     // Returns the window's current bounding rectangle in physical screen coordinates.
     public Task<Rect> GetWindowSizeAsync(CancellationToken ct = default)
         => WindowAction.GetSizeAsync(_session.RootWindowHandle, ct);
@@ -352,6 +374,8 @@ public sealed class App : IAsyncDisposable
     // Closes the root window; tries WindowPattern.Close() first, falls back to posting WM_CLOSE.
     public Task CloseWindowAsync(CancellationToken ct = default)
         => WindowAction.CloseCoreAsync(_session.RootWindowHandle, _logger, ct);
+
+    // ---- Lifecycle (public) ----
 
     // Terminates the target process immediately; no-op if it has already exited.
     public void Kill()
@@ -380,6 +404,8 @@ public sealed class App : IAsyncDisposable
         TryWriteWindowsEventLogArtifact();
         return _session.DisposeAsync();
     }
+
+    // ---- Private helpers ----
 
     // Kills the underlying process, swallowing a failure to terminate it (e.g. access denied against an elevated target) so that alone can never block the rest of Kill/KillAsync/DisposeAsync from running.
     private void KillAppBestEffort()
@@ -442,6 +468,8 @@ public sealed class App : IAsyncDisposable
         };
         return chain.Where(all.ContainsKey).Select(n => all[n]).ToList();
     }
+
+    // ---- Nested types ----
 
     // Tracks keys held via KeyDownAsync so Kill/Dispose can release them all even after a crash; locked since App's key methods can be called concurrently. Private to App — no other class needs to see a held key mid-hold.
     internal sealed class HeldKeyTracker

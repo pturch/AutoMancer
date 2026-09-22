@@ -6,18 +6,17 @@ using AutoMancer.Engine.Errors;
 
 namespace AutoMancer.Engine.Tests.Integration;
 
-// Covers FindByScrollingAsync end to end: locating a far-down row in a long, genuinely virtualized live list.
-// Uses Notepad's native Open dialog (a classic Win32 common item dialog) pointed at a folder with hundreds of files —
-// its file list is the "Items View" (AutomationId "1000"), a well-known, widely-relied-on control across Windows UI
-// automation tooling for the common Open/Save dialog's virtualized file list.
+// Covers FindByScrollingAsync end to end via Notepad's Open dialog file list (ClassName "UIItemsView"), a genuinely virtualized live control.
 [Collection("Notepad")]
 [Trait("Category", "Integration")]
 public sealed class VirtualizedListFindIntegrationTests
 {
-    private const int FileCount = 300;
-    private const string TargetFileName = "file-0250.txt";
-    private const string LastFileName = "file-0299.txt";
-    private const string FirstFileName = "file-0000.txt";
+    // ~7 rows are visible before any scroll and each wheel notch reveals ~3 more (this machine's WheelScrollLines); Target/Last are sized off that so a single notch (maxScrolls: 1, below) provably can't reach either one.
+    private const int FileCount = 15;
+    // Extension-less: Windows hides known file extensions by default, so a real "file-0010.txt" row's UIA Name is "file-0010".
+    private const string TargetFileName = "file-0010";
+    private const string LastFileName = "file-0014";
+    private const string FirstFileName = "file-0000";
 
     // Each file's content marks its own name, so a test can open a file found via scrolling and confirm — via Document's actual text — that it opened the file it thinks it did, not just a same-named decoy.
     private static string CreateFolderWithManyFiles()
@@ -37,7 +36,8 @@ public sealed class VirtualizedListFindIntegrationTests
         var dialog = await App.FindDialogAsync(app.ProcessId, "Open");
         Assert.NotNull(dialog);
 
-        await dialog!.TypeAsync(Locator.ByControlType("Edit"), folder);
+        // The "File name:" combo and its nested Edit both carry AutomationId "1148", and ByControlType("Edit") separately matches the file list's per-row rename-in-place cells first — either ambiguity misses the real target. ClassName "Edit" (the native Win32 class) is unique to the combo's actual text box.
+        await dialog!.TypeAsync(Locator.ByClassName("Edit"), folder);
         await dialog.PressKeyAsync(Key.Enter);
         await Task.Delay(500);
 
@@ -52,9 +52,9 @@ public sealed class VirtualizedListFindIntegrationTests
         try
         {
             var dialog = await OpenFileDialogOnFolderAsync(app, folder);
-            var itemsView = await dialog.FindAsync(Locator.ByAutomationId("1000"));
+            var itemsView = await dialog.FindAsync(Locator.ByClassName("UIItemsView"));
 
-            var found = await dialog.FindByScrollingAsync(itemsView, Locator.ByName(TargetFileName), maxScrolls: 30);
+            var found = await dialog.FindByScrollingAsync(itemsView, Locator.ByName(TargetFileName), maxScrolls: 5);
 
             Assert.Equal(TargetFileName, found.Name);
         }
@@ -73,10 +73,10 @@ public sealed class VirtualizedListFindIntegrationTests
         try
         {
             var dialog = await OpenFileDialogOnFolderAsync(app, folder);
-            var itemsView = await dialog.FindAsync(Locator.ByAutomationId("1000"));
+            var itemsView = await dialog.FindAsync(Locator.ByClassName("UIItemsView"));
 
             await Assert.ThrowsAsync<ElementNotFoundError>(() =>
-                dialog.FindByScrollingAsync(itemsView, Locator.ByName("this-file-does-not-exist.txt"), maxScrolls: 30));
+                dialog.FindByScrollingAsync(itemsView, Locator.ByName("this-file-does-not-exist.txt"), maxScrolls: 5));
         }
         finally
         {
@@ -94,9 +94,9 @@ public sealed class VirtualizedListFindIntegrationTests
         try
         {
             var dialog = await OpenFileDialogOnFolderAsync(app, folder);
-            var itemsView = await dialog.FindAsync(Locator.ByAutomationId("1000"));
+            var itemsView = await dialog.FindAsync(Locator.ByClassName("UIItemsView"));
 
-            var found = await dialog.FindByScrollingAsync(itemsView, Locator.ByName(FirstFileName), maxScrolls: 30);
+            var found = await dialog.FindByScrollingAsync(itemsView, Locator.ByName(FirstFileName), maxScrolls: 5);
 
             Assert.Equal(FirstFileName, found.Name);
         }
@@ -116,7 +116,7 @@ public sealed class VirtualizedListFindIntegrationTests
         try
         {
             var dialog = await OpenFileDialogOnFolderAsync(app, folder);
-            var itemsView = await dialog.FindAsync(Locator.ByAutomationId("1000"));
+            var itemsView = await dialog.FindAsync(Locator.ByClassName("UIItemsView"));
 
             await Assert.ThrowsAsync<ElementNotFoundError>(() =>
                 dialog.FindByScrollingAsync(itemsView, Locator.ByName(LastFileName), maxScrolls: 1));
@@ -137,14 +137,14 @@ public sealed class VirtualizedListFindIntegrationTests
         try
         {
             var dialog = await OpenFileDialogOnFolderAsync(app, folder);
-            var itemsView = await dialog.FindAsync(Locator.ByAutomationId("1000"));
-            var found = await dialog.FindByScrollingAsync(itemsView, Locator.ByName(TargetFileName), maxScrolls: 30);
+            var itemsView = await dialog.FindAsync(Locator.ByClassName("UIItemsView"));
+            var found = await dialog.FindByScrollingAsync(itemsView, Locator.ByName(TargetFileName), maxScrolls: 5);
 
             await DoubleClickAction.ExecuteAsync(found);
             await Task.Delay(500);
 
             var content = await app.GetValueAsync(Locator.ByControlType("Document"));
-            Assert.Equal("contents of file-0250", content);
+            Assert.Equal("contents of file-0010", content);
         }
         finally
         {

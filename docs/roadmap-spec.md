@@ -542,7 +542,7 @@ Batch numbers below match `sdks-spec.md`'s task numbers 1:1 (batch `3.4.4` is Ta
 ## Quick-Reference: Definition of Done
 
 **Phase 1 complete when:**
-- [ ] `dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category!=Integration"` — all unit tests green
+- [x] `dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category!=Integration"` — all unit tests green
 - [ ] `dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration"` — all integration tests green on Windows
 - [ ] `automancer launch notepad.exe && automancer tree <id>` produces a readable element tree
 - [ ] `ElementNotFoundError` includes `closestMatch` when a near-match exists
@@ -552,15 +552,15 @@ Batch numbers below match `sdks-spec.md`'s task numbers 1:1 (batch `3.4.4` is Ta
 - [ ] `WaitForAsync(locator, condition)` resolves once the condition is true, not merely once the element is found
 - [ ] `AutoMancer.Testing` / `AutoMancer.Testing.XUnit` ship; `Expect(locator).ToHaveName(...)` and direct `App`/`Locator` calls both work in the same test method against the same engine surface
 - [ ] `dotnet test tests/AutoMancer.Engine.Tests/ --filter "FullyQualifiedName~TestingAdapter"` — all tests green
-- [ ] Apache-2.0 license header present in all `.cs` source files
+- [x] Apache-2.0 license header present in all `.cs` source files
 
 **Phase 2 complete when (v1 release):**
-- [ ] `dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category!=Integration"` — all unit tests green including Phase 2 additions
-- [ ] A spatial locator finds an unlabeled control relative to a known anchor
-- [ ] `Locator.ByProperty(UiaProperty.HelpText, ...)` finds an element via the named enum
+- [x] `dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category!=Integration"` — all unit tests green including Phase 2 additions
+- [x] A spatial locator finds an unlabeled control relative to a known anchor
+- [x] `Locator.ByProperty(UiaProperty.HelpText, ...)` finds an element via the named enum
 - [ ] `RegisterCustomPropertyAsync` resolves an app-registered custom property's GUID to an ID, and `Locator.ByProperty(int, ...)` finds an element via it
-- [ ] `app.FindScopedAsync(locator, element)` only matches descendants of `element`, ignoring identically-matched elements elsewhere in the tree
-- [ ] `app.FindByScrollingAsync(container, itemLocator)` finds an item in a live virtualized list that isn't realized in the tree until scrolled into view, and throws (rather than looping forever) when the item genuinely isn't there
+- [x] `app.FindScopedAsync(locator, element)` only matches descendants of `element`, ignoring identically-matched elements elsewhere in the tree
+- [x] `app.FindByScrollingAsync(container, itemLocator)` finds an item in a live virtualized list that isn't realized in the tree until scrolled into view, and throws (rather than looping forever) when the item genuinely isn't there
 - [ ] A canned `WaitConditions` predicate works as a drop-in `WaitForAsync` condition
 - [ ] `Expect(locator).ToBeEnabledAsync()` (or another `WaitConditions`-backed assertion) polls and fails the same way the Stage 1.9 `Expect()` checks already do
 - [ ] Stale-element re-resolve is opt-in and covered by a test — calls that don't opt in behave exactly as before

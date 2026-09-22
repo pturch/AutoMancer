@@ -162,7 +162,7 @@ public sealed class App : IAsyncDisposable
         {
             try
             {
-                return await _resolver.FindScopedAsync(itemLocator, _session, container, ct);
+                return await ResolveFullyIntoViewAsync(itemLocator, container, ct);
             }
             catch (ElementNotFoundError)
             {
@@ -176,11 +176,20 @@ public sealed class App : IAsyncDisposable
 
             var currentPercent = GetVerticalScrollPercent(container);
             if (currentPercent.HasValue && previousPercent.HasValue && currentPercent.Value == previousPercent.Value) // We're at the bottom of the page
-                throw new ElementNotFoundError(itemLocator, new[] { "scroll" }, (int)stopwatch.ElapsedMilliseconds);
+                _resolver.ThrowNotFound(itemLocator, "scroll", (int)stopwatch.ElapsedMilliseconds);
             previousPercent = currentPercent;
         }
 
-        return await _resolver.FindScopedAsync(itemLocator, _session, container, ct);
+        return await ResolveFullyIntoViewAsync(itemLocator, container, ct);
+    }
+
+    // Scrolls the found item fully into view before returning it — a virtualized row can be realized in the tree right at a scroll's edge while still IsOffscreen.
+    private async Task<ElementHandle> ResolveFullyIntoViewAsync(Locator itemLocator, ElementHandle container, CancellationToken ct)
+    {
+        var found = await _resolver.FindScopedAsync(itemLocator, _session, container, ct);
+        await ScrollAction.ExecuteAsync(found, ct);
+        // IsOffscreen/BoundingRect are init-only snapshots, so found's are now stale — re-resolve for fresh ones, same idiom FindSpatialAsync uses.
+        return await _resolver.FindAsync(Locator.ByRuntimeId(found.Id), _session, ct);
     }
 
     // Resolves a custom UIA property's app-declared GUID to this session's numeric PropertyId, so it can be queried via Locator.ByProperty(int, object) — see UiaRegistrarInterop.RegisterCustomPropertyAsync for why the GUID can't just be hardcoded as an int.

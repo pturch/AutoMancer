@@ -207,11 +207,15 @@ public sealed class Uia2Provider : IElementProvider
         LocatorStrategy.RuntimeId => ParseRuntimeId(locator.Value) is int[] id
             ? new PropertyCondition(AutomationElement.RuntimeIdProperty, id)
             : null,
-        LocatorStrategy.Property => int.TryParse(locator.Value, out var propertyId)
-            ? new PropertyCondition(AutomationProperty.LookupById(propertyId), locator.PropertyValue)
+        LocatorStrategy.Property => LookupProperty(locator.Value) is AutomationProperty property
+            ? new PropertyCondition(property, locator.PropertyValue)
             : null,
         _ => null,
     };
+
+    // Null for a custom property, since UIA2's managed registry only knows built-in ones — PropertyCondition throws on a null property, so this keeps that check out of BuildCondition's switch.
+    private static AutomationProperty? LookupProperty(string value) =>
+        int.TryParse(value, out var propertyId) ? AutomationProperty.LookupById(propertyId) : null;
 
     // Parses a dotted RuntimeId string (e.g. "42.333896.3.1") back to int[] for use in a UIA2 property condition.
     private static int[]? ParseRuntimeId(string value)

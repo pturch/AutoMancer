@@ -148,6 +148,10 @@ public sealed class ElementResolver
         return await FindAsync(Locator.ByRuntimeId(nearest.Id), session, ct).ConfigureAwait(false);
     }
 
+    // Throws ElementNotFoundError for a caller-detected failure (e.g. FindByScrollingAsync's scroll-stall check) that isn't a poll timeout — keeps this the one place in the engine that constructs the exception.
+    internal void ThrowNotFound(Locator locator, string attemptedVia, int elapsedMs) =>
+        throw new ElementNotFoundError(locator, new[] { attemptedVia }, elapsedMs);
+
     // ---- Waiting on element state (public) ----
 
     // Polls the provider chain every PollIntervalMs until every provider returns null for the locator, or ImplicitWaitMs elapses; throws ElementStillPresentError on timeout.

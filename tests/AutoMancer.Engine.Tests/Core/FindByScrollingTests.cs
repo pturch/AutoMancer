@@ -49,8 +49,9 @@ public sealed class FindByScrollingTests
             return Task.FromResult(FindAttempts - 1 >= _revealAfterScrolls ? _item : null);
         }
 
+        // Backs FindByScrollingCoreAsync's post-find RuntimeId re-resolve (ScrollIntoView needs fresh IsOffscreen/BoundingRect off a re-resolved handle, not the stale one FindScopedElementAsync returned).
         public Task<ElementHandle?> FindElementAsync(Locator locator, AppSession session, CancellationToken ct = default) =>
-            Task.FromResult<ElementHandle?>(null);
+            Task.FromResult(locator.Strategy == LocatorStrategy.RuntimeId && locator.Value == _item.Id ? _item : null);
 
         public Task<IReadOnlyList<ElementHandle>> FindElementsAsync(Locator locator, AppSession session, CancellationToken ct = default) =>
             Task.FromResult((IReadOnlyList<ElementHandle>)Array.Empty<ElementHandle>());

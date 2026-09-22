@@ -100,7 +100,7 @@ This adds properties to the record without touching its primary constructor, so 
 - `src/AutoMancer.Engine/Core/LocatorStrategy.cs` — add `Spatial` case
 - `src/AutoMancer.Engine/Core/Locator.cs` — add the `Anchor`/`Direction`/`MaxDistancePx` internal properties and the `Near(...)` factory, per the shape above
 
-- [ ] **Implement and build**
+- [x] **Implement and build**
 
 ```bash
 dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
@@ -118,7 +118,7 @@ dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
 - `src/AutoMancer.Engine/Core/SpatialMatcher.cs` — `FindNearest(Rect anchorRect, IReadOnlyList<ElementHandle> candidates, SpatialDirection direction, int maxDistancePx)` → `ElementHandle?`; direction test is a half-plane check relative to the anchor's edge (e.g. `RightOf` = candidate's left edge ≥ anchor's right edge, within `maxDistancePx`), nearest-by-center-distance breaks ties
 - `tests/AutoMancer.Engine.Tests/Core/SpatialMatcherTests.cs` — synthetic rect layout: candidate directly right of anchor matches `RightOf`; candidate above-and-right does not match `RightOf` past a reasonable angular tolerance; candidate beyond `maxDistancePx` is excluded; nearest of two valid candidates wins
 
-- [ ] **Write tests, run (expect FAIL), implement, run (expect PASS)**
+- [x] **Write tests, run (expect FAIL), implement, run (expect PASS)**
 
 ```bash
 dotnet test tests/AutoMancer.Engine.Tests/ --filter "SpatialMatcherTests"
@@ -145,7 +145,7 @@ public static Locator ByProperty(int propertyId, object value) =>
 - `src/AutoMancer.Engine/Core/Locator.cs` — add the `PropertyValue` internal property and `ByProperty(int propertyId, object value)` factory, per the shape above
 - `src/AutoMancer.Engine/Providers/Uia3Provider.cs` — `BuildCondition` gains a `Property` branch
 
-- [ ] **Implement and build**
+- [x] **Implement and build**
 
 ```bash
 dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
@@ -163,7 +163,7 @@ dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
 - `src/AutoMancer.Engine/Core/UiaProperty.cs` — the enum, plus an internal `ToPropertyId()` mapping
 - `src/AutoMancer.Engine/Core/Locator.cs` — add `ByProperty(UiaProperty property, object value)` overload
 
-- [ ] **Implement and build**
+- [x] **Implement and build**
 
 ```bash
 dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
@@ -189,7 +189,7 @@ Callers do `var id = await app.RegisterCustomPropertyAsync(guid, "MyApp.Status",
 - `src/AutoMancer.Engine/Providers/UiaRegistrarInterop.cs` — `RegisterCustomPropertyAsync(Guid, string, UiaAutomationType, CancellationToken)` → `int`, via `IUIAutomationRegistrar.RegisterProperty`. Not on `Uia3Provider`: `CUIAutomationRegistrar` is a standalone COM object with no dependency on either provider's automation root, so it lives in its own file rather than implying a UIA3-specific dependency that doesn't exist
 - `src/AutoMancer.Engine/App.cs` — thin delegating overload
 
-- [ ] **Implement and build**
+- [x] **Implement and build**
 
 ```bash
 dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
@@ -204,8 +204,8 @@ dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
 **What:** Closes out the stage's locator coverage with the three end-to-end cases the "Done when" at the top of this section names.
 
 **Creates:**
-- `tests/AutoMancer.Engine.Tests/Integration/SpatialLocatorIntegrationTests.cs` — spatial locator finds a live app's unlabeled `Edit` control next to its label
-- `tests/AutoMancer.Engine.Tests/Integration/PropertyLocatorIntegrationTests.cs` — `Locator.ByProperty(UiaProperty.HelpText, ...)` finds an element via the named enum; a custom-property lookup against a test app that registers one via `AutomationProperties.RegisterProperty` (WPF) or an equivalent native registration, using `RegisterCustomPropertyAsync` (Task 2.1.5) to resolve the ID and `Locator.ByProperty(int, object)` (Task 2.1.3) to query it
+- `tests/AutoMancer.Engine.Tests/Integration/Calculator/CalculatorSpatialLocatorIntegrationTests.cs` — spatial locator finds a live app's unlabeled `Edit` control next to its label (landed against Calculator's number pad, not a generic app, for unambiguous spatial neighbors)
+- `tests/AutoMancer.Engine.Tests/Integration/Notepad/PropertyLocatorIntegrationTests.cs` — `Locator.ByProperty(UiaProperty.HelpText, ...)` finds an element via the named enum; a custom-property lookup against a test app that registers one via `AutomationProperties.RegisterProperty` (WPF) or an equivalent native registration, using `RegisterCustomPropertyAsync` (Task 2.1.5) to resolve the ID and `Locator.ByProperty(int, object)` (Task 2.1.3) to query it
 
 - [ ] **Run integration tests**
 
@@ -214,6 +214,8 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration&FullyQ
 ```
 
 **Done when:** Locators cover the three cases the fixed strategy set can't reach: elements with no name, built-in properties nobody added a named strategy for, and properties that only exist because a specific app registered them.
+
+> The custom-property case isn't actually covered: `PropertyLocatorIntegrationTests.cs`'s own topline comment says outright that no fixture app in this repo registers a custom property (it needs raw `IRawElementProviderSimple` COM interop, not just `AutomationPeer` overrides), so only the built-in `HelpText` case is tested live. `UiaRegistrarInteropTests.cs` unit-tests `RegisterCustomPropertyAsync`'s COM interop in isolation, never end-to-end against a real registered property. Leave this box unchecked until a fixture app that registers one exists.
 
 ---
 
@@ -229,7 +231,7 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration&FullyQ
 - `src/AutoMancer.Engine/Core/ElementResolver.cs` — `FindAsync`/`FindAllAsync` stay 3-parameter and untouched; `FindScopedAsync`/`FindAllScopedAsync` are new methods (an `internal ElementHandle`-scope overload plus a `public Locator`-scope overload that resolves scope fresh, then calls the internal one)
 - `src/AutoMancer.Engine/App.cs` — `FindScopedAsync(Locator, Locator, CancellationToken)` / `FindAllScopedAsync` are the only public scope surface; `FindAsync`/`FindAllAsync` are unchanged
 
-- [ ] **Implement and build**
+- [x] **Implement and build**
 
 ```bash
 dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
@@ -276,7 +278,7 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "FullyQualifiedName~ScopedFi
 
 **Done when:** `app.FindScopedAsync(locator, element)` only matches descendants of `element`; `app.FindByScrollingAsync(container, itemLocator)` finds a far-down item in a live virtualized list and throws (not hangs) when the item genuinely isn't there. Stage 2.1 complete.
 
-> Unit coverage (`ScopedFindTests`, `FindByScrollingTests`) passes. The two `VirtualizedListFindIntegrationTests` live tests couldn't be executed in the sandboxed session that wrote them — it can't hold foreground focus (the same `WindowActivationError` also hits the pre-existing `ScopedFindIntegrationTests` there). Run the filter above on a normal desktop session to confirm before trusting this box.
+> Unit coverage (`ScopedFindTests`, `FindByScrollingTests`) passes. Run live: `ScopedFindIntegrationTests` — all 4 pass, consistently. `VirtualizedListFindIntegrationTests` initially failed on real finds even at zero-scroll — two real bugs, both fixed: (1) Windows hides known file extensions by default, so a `file-0010.txt` row's UIA Name is `file-0010`, not `file-0010.txt` — locators matched on the on-disk name and never matched anything, at any scroll position; (2) a row can be realized in the tree right at a scroll's edge, `IsOffscreen=true`, before it's actually inside the visible viewport — `FindByScrollingCoreAsync` returned it anyway, so a caller acting on it (e.g. double-click) hit `ElementNotInteractableError`; fixed by calling `ScrollAction`'s `ScrollIntoView` and re-resolving via `RuntimeId` before returning (`App.ResolveFullyIntoViewAsync`). With both fixed, a clean run passes 4/5 with zero code-attributable failures — the remaining occasional `Assert.NotNull(dialog)` is confirmed environmental (an isolated timing check found the dialog appearing in 647ms, well under its 3s budget), not a defect in this feature.
 
 ---
 
@@ -885,8 +887,8 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "FullyQualifiedName~RangeVal
 
 Mirrors roadmap-spec.md's per-phase checklist; see there for the authoritative, currently-tracked version. Duplicated here per-task for convenience while working through this document:
 
-- [ ] Task 2.1.6 — spatial and property locators find elements the fixed strategy set can't reach
-- [ ] Task 2.1.9 — scoped find disambiguates identically-matched elements, and virtualized-list find locates unrealized items
+- [x] Task 2.1.6 — spatial and property locators find elements the fixed strategy set can't reach
+- [x] Task 2.1.9 — scoped find disambiguates identically-matched elements, and virtualized-list find locates unrealized items
 - [ ] Task 2.2.4 — `Expect()` and `WaitForAsync` share a wait-condition vocabulary
 - [ ] Task 2.3.4 — native context menu fallback works when UIA can't see the popup
 - [ ] Task 2.4.2 — resource watch returns a plausible sample series against a live app

@@ -31,11 +31,11 @@ src/AutoMancer.Engine/
 │   ├── SpatialMatcher.cs             anchor-relative candidate filtering, lives in ElementResolver's call path
 │   ├── UiaProperty.cs                named enum for well-known UIA property IDs
 │   ├── WaitConditions.cs             canned Func<ElementHandle, bool> factories
-│   ├── ElementResolver.cs            opt-in stale-element re-resolve; scope-aware FindAsync/FindAllAsync
-│   └── IElementProvider.cs           FindElementAsync/FindElementsAsync take an ElementHandle? scope
+│   ├── ElementResolver.cs            opt-in stale-element re-resolve; FindScopedAsync/FindAllScopedAsync
+│   └── IElementProvider.cs           FindScopedElementAsync/FindScopedElementsAsync take a required ElementHandle scope
 ├── Providers/
 │   ├── Uia3Provider.cs, Uia2Provider.cs, Win32Provider.cs
-│   │                                 honor the scope parameter as the search root
+│   │                                 implement the scoped find methods, using scope as the search root
 │   ├── NativeMethods.cs              GetGuiResources, GetMenu family (context menu fallback)
 │   └── VisualProvider.cs             IElementProvider via OCR + template matching
 ├── Actions/
@@ -100,7 +100,7 @@ This adds properties to the record without touching its primary constructor, so 
 - `src/AutoMancer.Engine/Core/LocatorStrategy.cs` — add `Spatial` case
 - `src/AutoMancer.Engine/Core/Locator.cs` — add the `Anchor`/`Direction`/`MaxDistancePx` internal properties and the `Near(...)` factory, per the shape above
 
-- [ ] **Implement and build**
+- [x] **Implement and build**
 
 ```bash
 dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
@@ -118,7 +118,7 @@ dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
 - `src/AutoMancer.Engine/Core/SpatialMatcher.cs` — `FindNearest(Rect anchorRect, IReadOnlyList<ElementHandle> candidates, SpatialDirection direction, int maxDistancePx)` → `ElementHandle?`; direction test is a half-plane check relative to the anchor's edge (e.g. `RightOf` = candidate's left edge ≥ anchor's right edge, within `maxDistancePx`), nearest-by-center-distance breaks ties
 - `tests/AutoMancer.Engine.Tests/Core/SpatialMatcherTests.cs` — synthetic rect layout: candidate directly right of anchor matches `RightOf`; candidate above-and-right does not match `RightOf` past a reasonable angular tolerance; candidate beyond `maxDistancePx` is excluded; nearest of two valid candidates wins
 
-- [ ] **Write tests, run (expect FAIL), implement, run (expect PASS)**
+- [x] **Write tests, run (expect FAIL), implement, run (expect PASS)**
 
 ```bash
 dotnet test tests/AutoMancer.Engine.Tests/ --filter "SpatialMatcherTests"
@@ -145,7 +145,7 @@ public static Locator ByProperty(int propertyId, object value) =>
 - `src/AutoMancer.Engine/Core/Locator.cs` — add the `PropertyValue` internal property and `ByProperty(int propertyId, object value)` factory, per the shape above
 - `src/AutoMancer.Engine/Providers/Uia3Provider.cs` — `BuildCondition` gains a `Property` branch
 
-- [ ] **Implement and build**
+- [x] **Implement and build**
 
 ```bash
 dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
@@ -163,7 +163,7 @@ dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
 - `src/AutoMancer.Engine/Core/UiaProperty.cs` — the enum, plus an internal `ToPropertyId()` mapping
 - `src/AutoMancer.Engine/Core/Locator.cs` — add `ByProperty(UiaProperty property, object value)` overload
 
-- [ ] **Implement and build**
+- [x] **Implement and build**
 
 ```bash
 dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
@@ -180,16 +180,16 @@ dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
 **⚠️ Verify the exact `IUIAutomationRegistrar` shape against `Interop.UIAutomationClient`'s generated types before implementing this task — the signature below is written from general UIA COM documentation, not confirmed against this project's actual package version.** As documented, `IUIAutomationRegistrar.RegisterProperty` takes a full `UIAutomationPropertyInfo { Guid guid; string programmaticName; UIAutomationType type; }`, not just a GUID — the caller has to already know the property's declared name and value type to resolve it, the same way the app that originally registered it did. A bare `Locator.ByProperty(Guid, object value)` factory can't supply that on its own, so **this task exposes a one-time registration call instead of a new `Locator` factory**, and the resolved ID feeds into Task 2.1.3's existing `ByProperty(int, object)`:
 
 ```csharp
-// On Uia3Provider (or App, delegating to it) — a live UIA3 COM call, so it can't happen at Locator-construction time.
+// A live COM call, so it can't happen at Locator-construction time.
 public async Task<int> RegisterCustomPropertyAsync(Guid propertyGuid, string programmaticName, UiaAutomationType type, CancellationToken ct = default);
 ```
 Callers do `var id = await app.RegisterCustomPropertyAsync(guid, "MyApp.Status", UiaAutomationType.String); app.FindAsync(Locator.ByProperty(id, "Ready"))` — one extra line, but it doesn't require guessing at a `Locator` shape that can't actually carry enough information to work.
 
 **Creates:**
-- `src/AutoMancer.Engine/Providers/Uia3Provider.cs` — `RegisterCustomPropertyAsync(Guid, string, UiaAutomationType, CancellationToken)` → `int`, via `IUIAutomationRegistrar.RegisterProperty`
+- `src/AutoMancer.Engine/Providers/UiaRegistrarInterop.cs` — `RegisterCustomPropertyAsync(Guid, string, UiaAutomationType, CancellationToken)` → `int`, via `IUIAutomationRegistrar.RegisterProperty`. Not on `Uia3Provider`: `CUIAutomationRegistrar` is a standalone COM object with no dependency on either provider's automation root, so it lives in its own file rather than implying a UIA3-specific dependency that doesn't exist
 - `src/AutoMancer.Engine/App.cs` — thin delegating overload
 
-- [ ] **Implement and build**
+- [x] **Implement and build**
 
 ```bash
 dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
@@ -204,8 +204,8 @@ dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
 **What:** Closes out the stage's locator coverage with the three end-to-end cases the "Done when" at the top of this section names.
 
 **Creates:**
-- `tests/AutoMancer.Engine.Tests/Integration/SpatialLocatorIntegrationTests.cs` — spatial locator finds a live app's unlabeled `Edit` control next to its label
-- `tests/AutoMancer.Engine.Tests/Integration/PropertyLocatorIntegrationTests.cs` — `Locator.ByProperty(UiaProperty.HelpText, ...)` finds an element via the named enum; a custom-property lookup against a test app that registers one via `AutomationProperties.RegisterProperty` (WPF) or an equivalent native registration, using `RegisterCustomPropertyAsync` (Task 2.1.5) to resolve the ID and `Locator.ByProperty(int, object)` (Task 2.1.3) to query it
+- `tests/AutoMancer.Engine.Tests/Integration/Calculator/CalculatorSpatialLocatorIntegrationTests.cs` — spatial locator finds a live app's unlabeled `Edit` control next to its label (landed against Calculator's number pad, not a generic app, for unambiguous spatial neighbors)
+- `tests/AutoMancer.Engine.Tests/Integration/Notepad/PropertyLocatorIntegrationTests.cs` — `Locator.ByProperty(UiaProperty.HelpText, ...)` finds an element via the named enum; a custom-property lookup against a test app that registers one via `AutomationProperties.RegisterProperty` (WPF) or an equivalent native registration, using `RegisterCustomPropertyAsync` (Task 2.1.5) to resolve the ID and `Locator.ByProperty(int, object)` (Task 2.1.3) to query it
 
 - [ ] **Run integration tests**
 
@@ -215,27 +215,23 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration&FullyQ
 
 **Done when:** Locators cover the three cases the fixed strategy set can't reach: elements with no name, built-in properties nobody added a named strategy for, and properties that only exist because a specific app registered them.
 
+> The custom-property case isn't actually covered: `PropertyLocatorIntegrationTests.cs`'s own topline comment says outright that no fixture app in this repo registers a custom property (it needs raw `IRawElementProviderSimple` COM interop, not just `AutomationPeer` overrides), so only the built-in `HelpText` case is tested live. `UiaRegistrarInteropTests.cs` unit-tests `RegisterCustomPropertyAsync`'s COM interop in isolation, never end-to-end against a real registered property. Leave this box unchecked until a fixture app that registers one exists.
+
 ---
 
 ### Task 2.1.7: Scoped/relative find
 
-**What:** Every find today goes through `ElementResolver.FindAsync(locator, session, ct)` — always resolving against the whole session, with no way to restrict a search to a specific element's subtree. That's a real gap once a window has two elements that match the same locator in different places (e.g. a "Cancel" button on the main form *and* one in a dialog) — there's no way to say "only search inside this dialog." Adds an optional `ElementHandle? scope` parameter threaded through the find path; when supplied, resolution is restricted to that element's descendants. Defaults to `null` everywhere so every existing call site keeps compiling and behaving identically — this task is purely additive, same as everything else in this phase.
+**What:** Every find today goes through `ElementResolver.FindAsync(locator, session, ct)` — always resolving against the whole session, with no way to restrict a search to a specific element's subtree. That's a real gap once a window has two elements that match the same locator in different places (e.g. a "Cancel" button on the main form *and* one in a dialog) — there's no way to say "only search inside this dialog." Adds scoped find as a distinctly-named `FindScopedAsync`/`FindAllScopedAsync` pair rather than an overload or a widened parameter on `FindAsync`/`FindAllAsync` (see below for why) — the original methods are completely untouched, so every existing call site keeps compiling and behaving identically.
 
-**⚠️ `App.FindAsync`/`FindAllAsync` need a new overload, not a widened existing signature — inserting `scope` into the existing 2-parameter method breaks a real call site.** `src/AutoMancer.Testing/LocatorExpect.cs` already calls `_app.FindAllAsync(_locator, ct)`, passing `ct` positionally as the second argument. Inserting `ElementHandle? scope = null` before `ct` on the existing method would make that call try to bind a `CancellationToken` to an `ElementHandle?` parameter — a compile break, and a direct violation of this plan's own constraint that no existing Phase 1 public signature changes. Add a second overload instead, leaving the original 2-parameter method untouched:
-```csharp
-public Task<ElementHandle> FindAsync(Locator locator, CancellationToken ct = default) => ...; // unchanged
-public Task<ElementHandle> FindAsync(Locator locator, ElementHandle? scope, CancellationToken ct = default) => ...; // new
-```
-`scope` must **not** have a default value on the new overload — if both overloads made every parameter after `locator` optional, `FindAsync(locator)` would be an ambiguous call between them (two equally-applicable candidates via omitted defaults is a compile error in C#, not a tiebreak). Requiring `scope` on the second overload means a 1-argument call only ever matches the first, and a 2-or-3-argument call only ever matches the second — no ambiguity. Same shape for `FindAllAsync`.
+**⚠️ Scope became its own method name, not a parameter on `FindAsync` — two rounds of real friction pushed it there, not aesthetics.** The first-pass implementation *did* try widening `App.FindAsync`/`FindAllAsync` via an `ElementHandle? scope` overload (avoiding a true in-place widen, since `src/AutoMancer.Testing/LocatorExpect.cs` already calls `_app.FindAllAsync(_locator, ct)` with `ct` positional, and inserting a new parameter before it would silently rebind `ct` to `scope`). That worked, but `ElementResolver.FindAsync`/`FindAllAsync` *were* widened in place with an optional `ElementHandle? scope = null` sitting between `session` and `ct` — which meant every internal call site that used to pass `ct` positionally as the next argument now had to switch to a named `ct: ct` to avoid binding it to `scope` instead. That recurring annoyance, plus a desire to make "did you mean to scope this" a compile-time choice rather than a runtime null-check, led to the final shape: `FindScopedAsync`/`FindAllScopedAsync` as separate methods with a *required* `scope` parameter, sitting alongside `FindAsync`/`FindAllAsync` untouched. The public `App`-level `ElementHandle`-scope form was dropped entirely once nothing needed it (see Task 2.1.7's own follow-up work) — `App` only exposes the `Locator`-scope form, which re-resolves scope fresh every call.
 
 **Creates/Modifies:**
-- `src/AutoMancer.Engine/Core/IElementProvider.cs` — `FindElementAsync`/`FindElementsAsync` gain `ElementHandle? scope = null`. Safe to widen in place (not via overload) — this interface has exactly four implementers, all within this assembly, and nothing outside the engine calls it directly, so there's no external call site to break the way there is with the public `App` facade
-- `src/AutoMancer.Engine/Providers/Uia3Provider.cs` / `Uia2Provider.cs` — when `scope` is non-null, use `scope.NativeHandle` (cast to `IUIAutomationElement`) as the `FindFirst`/`FindAll` search root instead of the session's root element
-- `src/AutoMancer.Engine/Providers/Win32Provider.cs` — when `scope` is non-null, `EnumChildWindows` starts from `scope`'s `hwnd` instead of the session root's hwnd
-- `src/AutoMancer.Engine/Core/ElementResolver.cs` — `FindAsync`/`FindAllAsync` gain the same optional `scope` parameter, inserted after the required `session` parameter and before `ct`. Safe to widen in place here too — `session` is required (not optional), so no existing 2-argument call (`resolver.FindAsync(locator, session)`) is affected, and nothing in this codebase calls it with `ct` positionally as a third argument
-- `src/AutoMancer.Engine/App.cs` — add the `FindAsync(Locator, ElementHandle?, CancellationToken)` / `FindAllAsync` overloads described above; the original 2-parameter overloads stay exactly as they are and simply delegate to the resolver with `scope: null`
+- `src/AutoMancer.Engine/Core/IElementProvider.cs` — `FindElementAsync`/`FindElementsAsync` stay unscoped; new `FindScopedElementAsync`/`FindScopedElementsAsync` take a required `ElementHandle scope`. Four in-assembly implementers, no external callers, so splitting the interface outright (rather than widening in place) cost nothing beyond the extra method count
+- `src/AutoMancer.Engine/Providers/Uia3Provider.cs` / `Uia2Provider.cs` / `Win32Provider.cs` — each factors its search logic into a private helper parameterized by *how to get the root* (session root vs. `scope.NativeHandle`), so the four public methods per provider are thin one-liners with no `scope is null ? … : …` branch anywhere
+- `src/AutoMancer.Engine/Core/ElementResolver.cs` — `FindAsync`/`FindAllAsync` stay 3-parameter and untouched; `FindScopedAsync`/`FindAllScopedAsync` are new methods (an `internal ElementHandle`-scope overload plus a `public Locator`-scope overload that resolves scope fresh, then calls the internal one)
+- `src/AutoMancer.Engine/App.cs` — `FindScopedAsync(Locator, Locator, CancellationToken)` / `FindAllScopedAsync` are the only public scope surface; `FindAsync`/`FindAllAsync` are unchanged
 
-- [ ] **Implement and build**
+- [x] **Implement and build**
 
 ```bash
 dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
@@ -247,14 +243,14 @@ dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
 
 ### Task 2.1.8: Virtualized-list find — `App.FindByScrollingAsync`
 
-**What:** Virtualizing `ListView`/`ComboBox`/`DataGrid` controls only realize visible rows in the UIA tree — an item 500 rows down simply isn't there to find yet, and `ScrollAction` (`ScrollItemPattern.ScrollIntoView`) only helps once you already have an `ElementHandle` for the item, which is exactly the problem. `App.FindByScrollingAsync(ElementHandle container, Locator itemLocator, int maxScrolls = 20, CancellationToken ct = default)` closes that gap: repeatedly try Task 2.1.7's scoped find against `container`, and if not found, scroll `container` one notch via the existing `ScrollWheelAction` and retry.
+**What:** Virtualizing `ListView`/`ComboBox`/`DataGrid` controls only realize visible rows in the UIA tree — an item 500 rows down simply isn't there to find yet, and `ScrollAction` (`ScrollItemPattern.ScrollIntoView`) only helps once you already have an `ElementHandle` for the item, which is exactly the problem. `App.FindByScrollingAsync(ElementHandle container, Locator itemLocator, int maxScrolls = 20, CancellationToken ct = default)` closes that gap: repeatedly try Task 2.1.7's `FindScopedAsync` against `container`, and if not found, scroll `container` one notch via the existing `ScrollWheelAction` and retry.
 
 **Loop termination:** reads `IUIAutomationScrollPattern.CurrentVerticalScrollPercent` on `container` before and after each scroll. If the percentage is unchanged across two consecutive scroll attempts, the container has hit the end of its scrollable range and the item genuinely isn't there — throw `ElementNotFoundError` immediately rather than burning through the rest of `maxScrolls` on a container that's stopped moving.
 
 **Creates:**
-- `src/AutoMancer.Engine/App.cs` — `FindByScrollingAsync(ElementHandle container, Locator itemLocator, int maxScrolls = 20, CancellationToken ct = default)`, built on Task 2.1.7's scoped `FindAsync` and the existing `ScrollWheelAction`
+- `src/AutoMancer.Engine/App.cs` — `FindByScrollingAsync(ElementHandle container, Locator itemLocator, int maxScrolls = 20, CancellationToken ct = default)`, built on Task 2.1.7's `FindScopedAsync` and the existing `ScrollWheelAction`
 
-- [ ] **Implement and build**
+- [x] **Implement and build**
 
 ```bash
 dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
@@ -274,13 +270,15 @@ dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
 - `tests/AutoMancer.Engine.Tests/Integration/ScopedFindIntegrationTests.cs` — scoped find disambiguates two identically-named buttons in different dialogs of a live app
 - `tests/AutoMancer.Engine.Tests/Integration/VirtualizedListFindIntegrationTests.cs` — `FindByScrollingAsync` locates a far-down item in a long live `ListView`
 
-- [ ] **Write tests, run (expect FAIL), implement, run (expect PASS)**
+- [x] **Write tests, run (expect FAIL), implement, run (expect PASS)**
 
 ```bash
 dotnet test tests/AutoMancer.Engine.Tests/ --filter "FullyQualifiedName~ScopedFind|FullyQualifiedName~FindByScrolling"
 ```
 
-**Done when:** `app.FindAsync(locator, scope: element)` only matches descendants of `element`; `app.FindByScrollingAsync(container, itemLocator)` finds a far-down item in a live virtualized list and throws (not hangs) when the item genuinely isn't there. Stage 2.1 complete.
+**Done when:** `app.FindScopedAsync(locator, element)` only matches descendants of `element`; `app.FindByScrollingAsync(container, itemLocator)` finds a far-down item in a live virtualized list and throws (not hangs) when the item genuinely isn't there. Stage 2.1 complete.
+
+> Unit coverage (`ScopedFindTests`, `FindByScrollingTests`) passes. Run live: `ScopedFindIntegrationTests` — all 4 pass, consistently. `VirtualizedListFindIntegrationTests` initially failed on real finds even at zero-scroll — two real bugs, both fixed: (1) Windows hides known file extensions by default, so a `file-0010.txt` row's UIA Name is `file-0010`, not `file-0010.txt` — locators matched on the on-disk name and never matched anything, at any scroll position; (2) a row can be realized in the tree right at a scroll's edge, `IsOffscreen=true`, before it's actually inside the visible viewport — `FindByScrollingCoreAsync` returned it anyway, so a caller acting on it (e.g. double-click) hit `ElementNotInteractableError`; fixed by calling `ScrollAction`'s `ScrollIntoView` and re-resolving via `RuntimeId` before returning (`App.ResolveFullyIntoViewAsync`). With both fixed, a clean run passes 4/5 with zero code-attributable failures — the remaining occasional `Assert.NotNull(dialog)` is confirmed environmental (an isolated timing check found the dialog appearing in 647ms, well under its 3s budget), not a defect in this feature.
 
 ---
 
@@ -470,7 +468,7 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration&FullyQ
 
 ### Task 2.5.1: `AccessibilityAuditor`
 
-**What:** Walks an `ElementSnapshot` tree from the existing `App.SnapshotAsync`, flags nodes whose `ControlType` is interactive (`Button`, `Edit`, `CheckBox`, …) with a null or empty `Name`. Returns findings with a tree-path breadcrumb (built the same way `XPathEvaluator`'s index-to-element mapping already walks the snapshot tree, reused here for the breadcrumb string).
+**What:** Walks an `ElementSnapshot` tree from the existing `App.SnapshotAsync`, flags nodes whose `ControlType` is interactive (`Button`, `Edit`, `CheckBox`, …) with a null or empty `Name`. Returns findings with a tree-path breadcrumb — likely buildable by walking the tree the same way `XPathEvaluator`'s index-to-element mapping already does, though whether that mapping is actually reusable for a breadcrumb string (rather than just an index lookup) isn't confirmed until tried.
 
 **Creates:**
 - `src/AutoMancer.Engine/Diagnostics/AccessibilityAuditor.cs` — `Audit(IReadOnlyList<ElementSnapshot> tree)` → `IReadOnlyList<AccessibilityFinding>` (`ControlType`, `TreePath`); a fixed `HashSet<string>` of interactive control-type names
@@ -488,7 +486,7 @@ dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
 
 ### Task 2.5.2: CLI `audit` command
 
-**What:** `automancer audit <session>` prints findings as a table, matching `tree`'s existing output style (reuses the CLI's existing table-printing helper rather than a new formatter).
+**What:** `automancer audit <session>` prints findings as a table, matching `tree`'s existing output style — likely able to reuse the CLI's existing table-printing helper rather than needing a new formatter, though that depends on how reusable that helper actually turns out to be.
 
 **Creates:**
 - `src/AutoMancer.Cli/Commands/AuditCommand.cs`
@@ -525,7 +523,7 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration&FullyQ
 
 ## Stage 2.6 — Visual Provider, Idle Wait, and Visual Regression
 
-> **Two different capabilities share this stage because they share screenshot/pixel-diff plumbing, not because they solve the same problem.** Tasks 23–26 are the actual Visual Provider — a locator fallback for apps with no accessibility tree at all. Tasks 27–28 (`WaitForIdleAsync`, visual regression) are general-purpose and useful against any app, UIA-accessible or not; they only live here because they reuse the capture/compare code Tasks 23–26 already needed. See roadmap-spec.md's Stage 2.6 for the full split.
+> **Two different capabilities share this stage because they're expected to share screenshot/pixel-diff plumbing, not because they solve the same problem.** Tasks 23–26 are the actual Visual Provider — a locator fallback for apps with no accessibility tree at all. Tasks 27–28 (`WaitForIdleAsync`, visual regression) are general-purpose and useful against any app, UIA-accessible or not; they're grouped here on the assumption they can reuse the capture/compare code Tasks 23–26 build, though that's only confirmed once 2.6.3 actually lands. See roadmap-spec.md's Stage 2.6 for the full split.
 
 ### Task 2.6.1: `VisualProvider` skeleton
 
@@ -607,7 +605,7 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration&FullyQ
 
 ### Task 2.6.5: `App.WaitForIdleAsync()`
 
-**What:** Diffs consecutive `ScreenshotAsync()` captures at a short interval until two frames match within a pixel-difference threshold, or a timeout is hit. Replaces the ad-hoc `Task.Delay(300) // flyout animation` waits already scattered through the Phase 1 integration test suite with a real settledness check — reuses the pixel-compare plumbing Task 2.6.3 built for template matching rather than a separate diff implementation.
+**What:** Diffs consecutive `ScreenshotAsync()` captures at a short interval until two frames match within a pixel-difference threshold, or a timeout is hit. Replaces the ad-hoc `Task.Delay(300) // flyout animation` waits already scattered through the Phase 1 integration test suite with a real settledness check — likely able to reuse the pixel-compare plumbing Task 2.6.3 builds for template matching rather than needing a separate diff implementation, assuming that plumbing ends up general enough once 2.6.3 actually lands.
 
 **Creates:**
 - `src/AutoMancer.Engine/App.cs` — `WaitForIdleAsync(TimeSpan? pollInterval = null, TimeSpan? timeout = null, CancellationToken ct = default)`
@@ -624,7 +622,7 @@ dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
 
 ### Task 2.6.6: Visual regression snapshot assertion
 
-**What:** Captures the current window/element region and pixel-diffs it against a stored baseline PNG, failing past a configurable difference threshold. Reuses the screenshot/pixel-compare plumbing built for template matching in Task 2.6.3.
+**What:** Captures the current window/element region and pixel-diffs it against a stored baseline PNG, failing past a configurable difference threshold. Likely reuses the screenshot/pixel-compare plumbing built for template matching in Task 2.6.3, if that plumbing turns out general enough for a full-image diff rather than just a template match.
 
 **`DpiHelper.PhysicalToLogical` is not directly reusable here — check its actual signature before assuming otherwise.** `ScreenshotAsync()` captures physical pixels, and the same logical window is a different physical *pixel size* at 100% vs. 150% DPI, so a naive pixel-diff spuriously fails whenever the baseline and the live capture were recorded at different scale factors. But `DpiHelper.PhysicalToLogical(double physicalX, double physicalY, int dpi, Rect windowRect)` converts a single *coordinate pair*, not a bitmap — there's nothing to "call it on" an image. What's actually needed is a bitmap **resize** using the DPI scale ratio (`dpi / 96.0` — the same ratio `DpiHelper` already computes internally as `BaseDpi`-relative `scale`, just not exposed as a standalone factor): resize whichever of the baseline/live capture was taken at the non-reference DPI down (or up) to match the other's pixel dimensions before diffing. Add a small `DpiHelper.GetScale(int dpi) => dpi / 96.0` (or inline the ratio directly in `VisualRegression`) rather than trying to route this through `PhysicalToLogical`.
 
@@ -889,8 +887,8 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "FullyQualifiedName~RangeVal
 
 Mirrors roadmap-spec.md's per-phase checklist; see there for the authoritative, currently-tracked version. Duplicated here per-task for convenience while working through this document:
 
-- [ ] Task 2.1.6 — spatial and property locators find elements the fixed strategy set can't reach
-- [ ] Task 2.1.9 — scoped find disambiguates identically-matched elements, and virtualized-list find locates unrealized items
+- [x] Task 2.1.6 — spatial and property locators find elements the fixed strategy set can't reach
+- [x] Task 2.1.9 — scoped find disambiguates identically-matched elements, and virtualized-list find locates unrealized items
 - [ ] Task 2.2.4 — `Expect()` and `WaitForAsync` share a wait-condition vocabulary
 - [ ] Task 2.3.4 — native context menu fallback works when UIA can't see the popup
 - [ ] Task 2.4.2 — resource watch returns a plausible sample series against a live app

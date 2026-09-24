@@ -295,6 +295,10 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     internal static extern uint GetWindowThreadProcessId(IntPtr windowHandle, out uint lpdwProcessId);
 
+    // Returns the handle of the desktop window — always valid, owned by a system process rather than the calling process.
+    [DllImport("user32.dll")]
+    internal static extern IntPtr GetDesktopWindow();
+
     // Moves, resizes, or repositions windowHandle without changing its Z-order or foreground state.
     [DllImport("user32.dll", SetLastError = true)]
     internal static extern bool SetWindowPos(IntPtr windowHandle, IntPtr insertAfterWindowHandle, int X, int Y, int cx, int cy, SetWindowPosFlags uFlags);

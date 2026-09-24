@@ -284,7 +284,7 @@ All C# code (engine + daemon) is tested in C# with xunit + Moq. SDK client code 
 
 ### Stage 2.1 — Locator Power Tools
 > **Unlocks:** Finding elements that have no reliable `Name`/`AutomationId`; querying any built-in UIA property by name instead of a magic number; reaching properties a specific app registered itself, which no fixed enum could ever anticipate; disambiguating identically-named elements by restricting a search to a specific subtree instead of always searching the whole window; and finding items in virtualized lists/grids that aren't realized in the UIA tree until scrolled into view.
-> **Done when:** A spatial locator finds an unlabeled `Edit` control next to a known label element in a live app; `Locator.ByProperty(UiaProperty.HelpText, ...)` finds an element via the named enum; a custom, app-registered property is resolved via `RegisterCustomPropertyAsync` and found through `Locator.ByProperty(int, ...)`; `app.FindAsync(locator, scope: dialogHandle)` finds a "Cancel" button inside a specific dialog while an identically-named button exists elsewhere in the window; `app.FindByScrollingAsync(listHandle, itemLocator)` finds a list item hundreds of rows below the currently-realized range.
+> **Done when:** A spatial locator finds an unlabeled `Edit` control next to a known label element in a live app; `Locator.ByProperty(UiaProperty.HelpText, ...)` finds an element via the named enum; a custom, app-registered property is resolved via `RegisterCustomPropertyAsync` and found through `Locator.ByProperty(int, ...)`; `app.FindScopedAsync(locator, dialogScope)` finds a "Cancel" button inside a specific dialog while an identically-named button exists elsewhere in the window; `app.FindByScrollingAsync(listHandle, itemLocator)` finds a list item hundreds of rows below the currently-realized range.
 
 Batch numbers below match the task numbers 1:1 in `extended-coverage-spec.md` (e.g. batch `2.1.7` is Task `2.1.7` there).
 
@@ -296,8 +296,8 @@ Batch numbers below match the task numbers 1:1 in `extended-coverage-spec.md` (e
 | 2.1.4 | `UiaProperty` enum — named constants for the built-in properties worth surfacing (`HelpText`, `LocalizedControlType`, `IsOffscreen`, `ItemStatus`, `IsContentElement`, `AriaRole`, `AriaProperties`, ...) mapped to their well-known integer IDs; `Locator.ByProperty(UiaProperty property, object value)` overload so the common case never needs a raw int |
 | 2.1.5 | `RegisterCustomPropertyAsync(Guid, string programmaticName, UiaAutomationType)` — for app-registered custom properties, which don't have stable integer IDs across processes; resolves the GUID (plus its declared name/type, which `IUIAutomationRegistrar.RegisterProperty` requires) to this session's `PropertyId`, then queried via the existing `Locator.ByProperty(int, ...)` from batch 2.1.3 rather than a separate `Locator` factory — a custom property's numeric ID is assigned at registration time and can't be hardcoded, but a bare GUID isn't enough information to resolve it either |
 | 2.1.6 | Unit tests for `SpatialMatcher` against a synthetic rect layout; integration tests — spatial locator finds a label's adjacent input, `UiaProperty` enum lookup finds an element by `HelpText`, and a custom-property lookup against a test app that registers one via `AutomationProperties.RegisterProperty` |
-| 2.1.7 | Scoped/relative find — a new `App.FindAsync(Locator locator, ElementHandle? scope, CancellationToken ct = default)` overload (and `FindAllAsync` equivalent) alongside the existing 2-parameter methods, not a widened signature — `LocatorExpect.cs` already calls `FindAllAsync(_locator, ct)` with `ct` positional, so inserting `scope` into that method directly would break it. `scope` has no default on the new overload, so a 1-arg call only matches the original and a 2-or-3-arg call only matches the new one — no ambiguity. When `scope` is supplied, resolution is restricted to that element's subtree instead of the whole session. `IElementProvider.FindElementAsync`/`FindElementsAsync` gain an `ElementHandle? scope` parameter directly (safe to widen in place — only four in-assembly implementers, no external callers) — `Uia3Provider`/`Uia2Provider` pass `scope.NativeHandle` as the UIA search root instead of the session's root element; `Win32Provider` calls `EnumChildWindows` from `scope`'s `hwnd` instead of the session root's |
-| 2.1.8 | Virtualized-list find — `App.FindByScrollingAsync(ElementHandle container, Locator itemLocator, int maxScrolls = 20, CancellationToken ct = default)`; loops: try 2.1.7's scoped find against `container`, and if not found, scroll `container` one notch via the existing `ScrollWheelAction` and retry. Stops early via `IUIAutomationScrollPattern.CurrentVerticalScrollPercent` — if two consecutive scrolls report the same percentage, the container has hit its end and further attempts would loop forever, so it throws `ElementNotFoundError` immediately rather than burning through `maxScrolls` |
+| 2.1.7 | Scoped/relative find — `App.FindScopedAsync(Locator locator, Locator scope, CancellationToken ct = default)` (and `FindAllScopedAsync`), distinctly-named methods rather than an overload or widened parameter on `FindAsync`/`FindAllAsync`, which stay untouched. `IElementProvider` splits into unscoped `FindElementAsync`/`FindElementsAsync` and scoped `FindScopedElementAsync`/`FindScopedElementsAsync` (required `ElementHandle scope`, not optional) — `Uia3Provider`/`Uia2Provider` pass `scope.NativeHandle` as the UIA search root instead of the session's root element; `Win32Provider` calls `EnumChildWindows` from `scope`'s `hwnd` instead of the session root's. `ElementResolver`'s scoped methods come in an internal `ElementHandle`-scope form plus the public `Locator`-scope form, which resolves scope fresh every call — that's the only scope shape `App` exposes publicly |
+| 2.1.8 | Virtualized-list find — `App.FindByScrollingAsync(ElementHandle container, Locator itemLocator, int maxScrolls = 20, CancellationToken ct = default)`; loops: try 2.1.7's `FindScopedAsync` against `container`, and if not found, scroll `container` one notch via the existing `ScrollWheelAction` and retry. Stops early via `IUIAutomationScrollPattern.CurrentVerticalScrollPercent` — if two consecutive scrolls report the same percentage, the container has hit its end and further attempts would loop forever, so it throws `ElementNotFoundError` immediately rather than burning through `maxScrolls` |
 | 2.1.9 | Unit tests — scoped find against a fake provider returns only descendants of the given scope, not sibling matches elsewhere in the tree; `FindByScrollingAsync` against a fake provider that "reveals" an item only after N simulated scrolls, plus a control test proving it stops (not infinite-loops) when the scroll percentage stalls. Integration tests — scoped find disambiguates two identically-named buttons in different dialogs of a live app; `FindByScrollingAsync` locates a far-down item in a long live `ListView` |
 
 **After 2.1.9:** Locators cover the three cases the fixed strategy set can't reach (unnamed elements, unmapped built-in properties, app-registered properties), plus two disambiguation problems no locator *strategy* alone can solve: which of several identically-matched elements is the right one, and elements the UIA tree hasn't realized yet at all.
@@ -305,8 +305,10 @@ Batch numbers below match the task numbers 1:1 in `extended-coverage-spec.md` (e
 ---
 
 ### Stage 2.2 — Wait and Resilience Primitives
-> **Unlocks:** A ready-made vocabulary of wait conditions instead of hand-rolled predicates, an opt-in way for actions to survive a UIA element going stale mid-test, and that same vocabulary available through `Expect()`, not just `WaitForAsync`.
-> **Done when:** A canned `WaitConditions` predicate works as a drop-in `WaitForAsync` condition; an action against a deliberately-staled `ElementHandle` re-resolves once via `RuntimeId` and succeeds, but only when the caller opts in; `Expect(locator).ToBeEnabledAsync()` polls and fails the same way `ToHaveNameAsync` already does.
+> **Unlocks:** A ready-made vocabulary of wait conditions instead of hand-rolled predicates, an opt-in way for actions to survive a UIA element going stale mid-test, that same vocabulary available through `Expect()` (not just `WaitForAsync`), and an opt-in way to check whether an element will actually receive a click before committing to one.
+> **Done when:** A canned `WaitConditions` predicate works as a drop-in `WaitForAsync` condition; an action against a deliberately-staled `ElementHandle` re-resolves once via `RuntimeId` and succeeds, but only when the caller opts in; `Expect(locator).ToBeEnabledAsync()` polls and fails the same way `ToHaveNameAsync` already does; `app.IsUnobscuredAsync(locator)` returns `false` when another window or an in-app overlay is covering the element's hit point, and `true` once it's clear.
+>
+> **Batches 2.2.5–2.2.6 are a different shape than 2.2.1–2.2.4:** the rest of this stage is explicitly "no new engine surface" — predicate closures over properties an `ElementHandle` already carries. Occlusion detection can't be that; it needs a live COM/Win32 call at check time, not a read of cached state. It's grouped into 2.2 anyway because it's the same actionability-primitive family Selenium's `ExpectedConditions`/Playwright's actionability checks live in, not because it fits 2.2.1's "small predicate closure" contract.
 
 | Batch | Work |
 |---|---|
@@ -314,8 +316,10 @@ Batch numbers below match the task numbers 1:1 in `extended-coverage-spec.md` (e
 | 2.2.2 | Opt-in stale-element re-resolve — a wrapper (e.g. an `AppOptions.ReresolveOnStale` flag, or an explicit `ClickAction.ExecuteWithRetryAsync`) that catches a stale-element COM failure and re-resolves once via `RuntimeId` through `ElementResolver` before retrying; default behavior for every existing call is unchanged — this only activates when a caller explicitly asks for it |
 | 2.2.3 | Unit tests for each `WaitConditions` predicate against a fake element; a resilience test simulating a stale COM failure via a mock provider, verifying the opt-in retry re-resolves and succeeds, plus a control test proving non-opted-in calls fail exactly as they do today |
 | 2.2.4 | Extend `AutoMancer.Testing`'s `LocatorExpect` with assertions built on 2.2.1's vocabulary — `ToBeEnabledAsync()` (`WaitConditions.IsEnabled()`), `ToContainTextAsync(substring)` (`NameContains`) — so `Expect()` gets the same conditions `WaitForAsync` does instead of only the four hand-written checks from Stage 1.9 (`ToHaveName`/`ToBeVisible`/`ToHaveText`/`ToHaveValueAsync`); unit tests mirroring `ElementExpectTests`/`LocatorExpectTests` |
+| 2.2.5 | `App.IsUnobscuredAsync(Locator locator, CancellationToken ct = default)` — opt-in occlusion check, not a gate on any existing action. Cross-window half works for every provider via a new `NativeMethods.WindowFromPoint` compared against the resolved element's own top-level HWND; same-window/sibling-overlay half only for `uia3`-resolved elements, via a new `Uia3Provider` internal helper that walks ancestors from `IUIAutomation.ElementFromPoint` (bounded by the existing `MaxTreeDepth`, compared via `CompareElements`) — a `uia2`/`win32`-resolved element degrades to the cross-window check alone rather than throwing |
+| 2.2.6 | Integration test against live Notepad — an on-screen button reports unobscured; the same button reports obscured once the Save-changes `ContentDialog` covers it |
 
-**After 2.2.4:** `WaitForAsync` and `Expect()` share a starter vocabulary instead of `WaitForAsync` alone having one, and flaky COM staleness has an opt-in escape hatch that never changes default behavior.
+**After 2.2.6:** `WaitForAsync` and `Expect()` share a starter vocabulary instead of `WaitForAsync` alone having one, flaky COM staleness has an opt-in escape hatch that never changes default behavior, and callers get an explicit, opt-in way to check whether an element will actually receive a click before committing to one — without every existing action silently gaining a new failure mode.
 
 ---
 
@@ -538,7 +542,7 @@ Batch numbers below match `sdks-spec.md`'s task numbers 1:1 (batch `3.4.4` is Ta
 ## Quick-Reference: Definition of Done
 
 **Phase 1 complete when:**
-- [ ] `dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category!=Integration"` — all unit tests green
+- [x] `dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category!=Integration"` — all unit tests green
 - [ ] `dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration"` — all integration tests green on Windows
 - [ ] `automancer launch notepad.exe && automancer tree <id>` produces a readable element tree
 - [ ] `ElementNotFoundError` includes `closestMatch` when a near-match exists
@@ -548,18 +552,19 @@ Batch numbers below match `sdks-spec.md`'s task numbers 1:1 (batch `3.4.4` is Ta
 - [ ] `WaitForAsync(locator, condition)` resolves once the condition is true, not merely once the element is found
 - [ ] `AutoMancer.Testing` / `AutoMancer.Testing.XUnit` ship; `Expect(locator).ToHaveName(...)` and direct `App`/`Locator` calls both work in the same test method against the same engine surface
 - [ ] `dotnet test tests/AutoMancer.Engine.Tests/ --filter "FullyQualifiedName~TestingAdapter"` — all tests green
-- [ ] Apache-2.0 license header present in all `.cs` source files
+- [x] Apache-2.0 license header present in all `.cs` source files
 
 **Phase 2 complete when (v1 release):**
-- [ ] `dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category!=Integration"` — all unit tests green including Phase 2 additions
-- [ ] A spatial locator finds an unlabeled control relative to a known anchor
-- [ ] `Locator.ByProperty(UiaProperty.HelpText, ...)` finds an element via the named enum
+- [x] `dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category!=Integration"` — all unit tests green including Phase 2 additions
+- [x] A spatial locator finds an unlabeled control relative to a known anchor
+- [x] `Locator.ByProperty(UiaProperty.HelpText, ...)` finds an element via the named enum
 - [ ] `RegisterCustomPropertyAsync` resolves an app-registered custom property's GUID to an ID, and `Locator.ByProperty(int, ...)` finds an element via it
-- [ ] `app.FindAsync(locator, scope: element)` only matches descendants of `element`, ignoring identically-matched elements elsewhere in the tree
-- [ ] `app.FindByScrollingAsync(container, itemLocator)` finds an item in a live virtualized list that isn't realized in the tree until scrolled into view, and throws (rather than looping forever) when the item genuinely isn't there
+- [x] `app.FindScopedAsync(locator, element)` only matches descendants of `element`, ignoring identically-matched elements elsewhere in the tree
+- [x] `app.FindByScrollingAsync(container, itemLocator)` finds an item in a live virtualized list that isn't realized in the tree until scrolled into view, and throws (rather than looping forever) when the item genuinely isn't there
 - [ ] A canned `WaitConditions` predicate works as a drop-in `WaitForAsync` condition
 - [ ] `Expect(locator).ToBeEnabledAsync()` (or another `WaitConditions`-backed assertion) polls and fails the same way the Stage 1.9 `Expect()` checks already do
 - [ ] Stale-element re-resolve is opt-in and covered by a test — calls that don't opt in behave exactly as before
+- [ ] `app.IsUnobscuredAsync(locator)` returns `false` when another window or an in-app overlay covers the element's hit point, `true` once it's clear, and doesn't change the behavior of any existing action
 - [ ] A native context-menu item is found and clicked via the `HMENU` fallback on an app where UIA doesn't expose it
 - [ ] `WatchResourcesAsync()` returns a non-empty handle/memory sample series over a live test run
 - [ ] `automancer audit <session>` reports at least one finding against a deliberately-unnamed test control

@@ -15,6 +15,8 @@ public sealed class Uia3Provider : IElementProvider
 
     private static readonly IUIAutomation Automation = new CUIAutomation8Class();
 
+    // ---- Control type maps ----
+
     // AutoMancer's control type names mapped to their UIA_*ControlTypeId constants.
     private static readonly Dictionary<string, int> ControlTypeMap = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -65,6 +67,8 @@ public sealed class Uia3Provider : IElementProvider
     private static readonly Dictionary<int, string> ControlTypeNames =
         ControlTypeMap.GroupBy(kv => kv.Value).ToDictionary(g => g.Key, g => g.First().Key);
 
+    // ---- IElementProvider implementation (public) + supporting private helpers ----
+
     // Resolves the root element for the session's window; null if the handle is invalid or the window has been destroyed — never throws (ElementFromHandle itself can throw COMException for a destroyed HWND).
     private static IUIAutomationElement? TryGetRoot(AppSession session)
     {
@@ -72,8 +76,8 @@ public sealed class Uia3Provider : IElementProvider
         catch (COMException) { return null; }
     }
 
-    // Finds the first descendant of the session's root window matching the locator; null if none match or the strategy is unsupported.
-    public Task<ElementHandle?> FindElementAsync(Locator locator, AppSession session, CancellationToken ct = default)
+    // Finds the first descendant of root() matching the locator; null if none match or the strategy is unsupported. AutoMancerXPath/AutoMancerPath ignore root() and always search from the session root.
+    private Task<ElementHandle?> FindFirstAsync(Func<IUIAutomationElement?> root, Locator locator, AppSession session, CancellationToken ct)
     {
         return Task.Run(() =>
         {
@@ -86,13 +90,13 @@ public sealed class Uia3Provider : IElementProvider
             if (condition is null)
                 return (ElementHandle?)null;
 
-            var root = TryGetRoot(session);
-            if (root is null) return (ElementHandle?)null;
+            var element = root();
+            if (element is null) return (ElementHandle?)null;
 
             // A stale element mid-search can abort FindFirst entirely — treat that as not-found instead of throwing.
             try
             {
-                var found = root.FindFirst(TreeScope.TreeScope_Descendants, condition);
+                var found = element.FindFirst(TreeScope.TreeScope_Descendants, condition);
                 if (found is null)
                     return null; // no element in the tree matched the locator
 
@@ -105,8 +109,8 @@ public sealed class Uia3Provider : IElementProvider
         }, ct);
     }
 
-    // Finds every descendant of the session's root window matching the locator; empty if none match or a dynamic app invalidates an element mid-search.
-    public Task<IReadOnlyList<ElementHandle>> FindElementsAsync(Locator locator, AppSession session, CancellationToken ct = default)
+    // Finds every descendant of root() matching the locator; empty if none match or a dynamic app invalidates an element mid-search. AutoMancerXPath/AutoMancerPath ignore root() and always search from the session root.
+    private Task<IReadOnlyList<ElementHandle>> FindAllAsync(Func<IUIAutomationElement?> root, Locator locator, AppSession session, CancellationToken ct)
     {
         return Task.Run(() =>
         {
@@ -119,13 +123,13 @@ public sealed class Uia3Provider : IElementProvider
             if (condition is null)
                 return (IReadOnlyList<ElementHandle>)Array.Empty<ElementHandle>();
 
-            var root = TryGetRoot(session);
-            if (root is null)
+            var element = root();
+            if (element is null)
                 return (IReadOnlyList<ElementHandle>)Array.Empty<ElementHandle>();
 
             try
             {
-                var matches = root.FindAll(TreeScope.TreeScope_Descendants, condition);
+                var matches = element.FindAll(TreeScope.TreeScope_Descendants, condition);
                 var results = new List<ElementHandle>(matches.Length);
                 for (var i = 0; i < matches.Length; i++)
                     if (Wrap(matches.GetElement(i)) is { } wrapped)
@@ -139,6 +143,81 @@ public sealed class Uia3Provider : IElementProvider
             }
         }, ct);
     }
+
+    // Finds the first descendant of the session's root window matching the locator; null if none match or the strategy is unsupported.
+    public Task<ElementHandle?> FindElementAsync(Locator locator, AppSession session, CancellationToken ct = default) =>
+        FindFirstAsync(() => TryGetRoot(session), locator, session, ct);
+
+    // Finds every descendant of the session's root window matching the locator; empty if none match or a dynamic app invalidates an element mid-search.
+    public Task<IReadOnlyList<ElementHandle>> FindElementsAsync(Locator locator, AppSession session, CancellationToken ct = default) =>
+        FindAllAsync(() => TryGetRoot(session), locator, session, ct);
+
+    // Finds the first descendant of scope's subtree matching the locator; null if none match, or scope's NativeHandle came from a different provider (treated as not-found, never falls back to the whole session).
+    public Task<ElementHandle?> FindScopedElementAsync(Locator locator, AppSession session, ElementHandle scope, CancellationToken ct = default) =>
+        FindFirstAsync(() => scope.NativeHandle as IUIAutomationElement, locator, session, ct);
+
+    // Finds every descendant of scope's subtree matching the locator; empty if none match or scope came from a different provider.
+    public Task<IReadOnlyList<ElementHandle>> FindScopedElementsAsync(Locator locator, AppSession session, ElementHandle scope, CancellationToken ct = default) =>
+        FindAllAsync(() => scope.NativeHandle as IUIAutomationElement, locator, session, ct);
+
+    // ---- Snapshotting (public SnapshotTreeAsync + private helper) ----
+
+    // Snapshots the element tree rooted at the session's window, walking up to MaxTreeDepth levels deep.
+    public Task<IReadOnlyList<ElementSnapshot>> SnapshotTreeAsync(AppSession session, CancellationToken ct = default)
+    {
+        return Task.Run(() =>
+        {
+            var root = TryGetRoot(session);
+            if (root is null)
+                return (IReadOnlyList<ElementSnapshot>)Array.Empty<ElementSnapshot>();
+
+            return (IReadOnlyList<ElementSnapshot>)[WalkTree(root, Automation.ControlViewWalker, 0)];
+        }, ct);
+    }
+
+    // Recursively builds a snapshot of an element and its children (defensive reads, since dynamic apps like Task Manager can invalidate elements mid-walk), stopping at MaxTreeDepth.
+    private static ElementSnapshot WalkTree(IUIAutomationElement element, IUIAutomationTreeWalker walker, int depth)
+    {
+        var children = new List<ElementSnapshot>();
+        if (depth < MaxTreeDepth)
+        {
+            IUIAutomationElement? child = null;
+            try { child = walker.GetFirstChildElement(element); } catch { }
+            while (child is not null)
+            {
+                try { children.Add(WalkTree(child, walker, depth + 1)); } catch { }
+                IUIAutomationElement? next = null;
+                try { next = walker.GetNextSiblingElement(child); } catch { }
+                child = next;
+            }
+        }
+
+        // Read all properties in one block; if the element goes stale partway through, use whatever was captured.
+        string id = "", name = "", automationId = "", className = "";
+        int controlTypeId = 0;
+        tagRECT rect = default;
+        try
+        {
+            id = GetRuntimeId(element);
+            name = element.CurrentName;
+            automationId = element.CurrentAutomationId;
+            className = element.CurrentClassName;
+            controlTypeId = element.CurrentControlType;
+            rect = element.CurrentBoundingRectangle;
+        }
+        catch { }
+
+        return new ElementSnapshot(
+            id,
+            name,
+            automationId,
+            className,
+            ControlTypeNames.GetValueOrDefault(controlTypeId, "Unknown"),
+            ToRect(rect),
+            children);
+    }
+
+    // ---- AutoMancerXPath/AutoMancerPath resolution (private helpers backing FindFirstAsync/FindAllAsync above) ----
 
     // Snapshots the tree, evaluates the XPath expression, then re-walks the live tree to find the first matching element.
     private ElementHandle? FindByXPath(string xpath, AppSession session)
@@ -259,63 +338,10 @@ public sealed class Uia3Provider : IElementProvider
         }
     }
 
-    // Snapshots the element tree rooted at the session's window, walking up to MaxTreeDepth levels deep.
-    public Task<IReadOnlyList<ElementSnapshot>> SnapshotTreeAsync(AppSession session, CancellationToken ct = default)
-    {
-        return Task.Run(() =>
-        {
-            var root = TryGetRoot(session);
-            if (root is null)
-                return (IReadOnlyList<ElementSnapshot>)Array.Empty<ElementSnapshot>();
+    // ---- Internal: exposed only for BuildConditionParityTests, otherwise an implementation detail of the finders above ----
 
-            return (IReadOnlyList<ElementSnapshot>)[WalkTree(root, Automation.ControlViewWalker, 0)];
-        }, ct);
-    }
-
-    // Recursively builds a snapshot of an element and its children (defensive reads, since dynamic apps like Task Manager can invalidate elements mid-walk), stopping at MaxTreeDepth.
-    private static ElementSnapshot WalkTree(IUIAutomationElement element, IUIAutomationTreeWalker walker, int depth)
-    {
-        var children = new List<ElementSnapshot>();
-        if (depth < MaxTreeDepth)
-        {
-            IUIAutomationElement? child = null;
-            try { child = walker.GetFirstChildElement(element); } catch { }
-            while (child is not null)
-            {
-                try { children.Add(WalkTree(child, walker, depth + 1)); } catch { }
-                IUIAutomationElement? next = null;
-                try { next = walker.GetNextSiblingElement(child); } catch { }
-                child = next;
-            }
-        }
-
-        // Read all properties in one block; if the element goes stale partway through, use whatever was captured.
-        string id = "", name = "", automationId = "", className = "";
-        int controlTypeId = 0;
-        tagRECT rect = default;
-        try
-        {
-            id = GetRuntimeId(element);
-            name = element.CurrentName;
-            automationId = element.CurrentAutomationId;
-            className = element.CurrentClassName;
-            controlTypeId = element.CurrentControlType;
-            rect = element.CurrentBoundingRectangle;
-        }
-        catch { }
-
-        return new ElementSnapshot(
-            id,
-            name,
-            automationId,
-            className,
-            ControlTypeNames.GetValueOrDefault(controlTypeId, "Unknown"),
-            ToRect(rect),
-            children);
-    }
-
-    // Builds a UIA property condition for the locator's strategy; null if the strategy or control type name isn't recognized.
-    private static IUIAutomationCondition? BuildCondition(Locator locator) => locator.Strategy switch
+    // Builds a UIA property condition for the locator's strategy; null if the strategy or control type name isn't recognized. Internal (not private) so BuildConditionParityTests can call it directly.
+    internal static IUIAutomationCondition? BuildCondition(Locator locator) => locator.Strategy switch
     {
         LocatorStrategy.Name => Automation.CreatePropertyCondition(UIA_PropertyIds.UIA_NamePropertyId, locator.Value),
         LocatorStrategy.AutomationId => Automation.CreatePropertyCondition(UIA_PropertyIds.UIA_AutomationIdPropertyId, locator.Value),
@@ -326,6 +352,9 @@ public sealed class Uia3Provider : IElementProvider
         LocatorStrategy.RuntimeId => ParseRuntimeId(locator.Value) is int[] id
             ? Automation.CreatePropertyCondition(UIA_PropertyIds.UIA_RuntimeIdPropertyId, id)
             : null,
+        LocatorStrategy.Property => int.TryParse(locator.Value, out var propertyId)
+            ? Automation.CreatePropertyCondition(propertyId, locator.PropertyValue)
+            : null,
         _ => null,
     };
 
@@ -335,6 +364,8 @@ public sealed class Uia3Provider : IElementProvider
         try { return value.Split('.').Select(int.Parse).ToArray(); }
         catch { return null; }
     }
+
+    // ---- Private helpers ----
 
     private static readonly Uia3Operator _op = new();
 

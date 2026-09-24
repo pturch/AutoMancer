@@ -14,11 +14,11 @@ public sealed class ElementResolverTests
 
     private static ElementHandle Handle(string id) => new(id, "test", new object());
 
-    private static Mock<IElementProvider> MockProvider(string name, ElementHandle? findResult)
+    private static Mock<IElementProvider> MockProvider(string name, ElementHandle? findResult, Locator? locator = null)
     {
         var mock = new Mock<IElementProvider>();
         mock.SetupGet(p => p.ProviderName).Returns(name);
-        mock.Setup(p => p.FindElementAsync(TestLocator, Session, It.IsAny<CancellationToken>())).ReturnsAsync(findResult);
+        mock.Setup(p => p.FindElementAsync(locator ?? TestLocator, Session, It.IsAny<CancellationToken>())).ReturnsAsync(findResult);
         mock.Setup(p => p.SnapshotTreeAsync(Session, It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<ElementSnapshot>());
         return mock;
     }
@@ -275,5 +275,172 @@ public sealed class ElementResolverTests
 
         Assert.Null(result);
         Assert.Empty(writer.ToString());
+    }
+
+    [Fact]
+    public async Task FindAsync_SpatialLocator_ResolvesNearestCandidateByRuntimeId()
+    {
+        var anchorLocator = Locator.ByName("Username");
+        var spatialLocator = Locator.Near(anchorLocator, SpatialDirection.RightOf, maxDistancePx: 200);
+        var anchorHandle = new ElementHandle("anchor-rid", "test", new object()) { BoundingRect = new Rect(0, 0, 50, 20) };
+        var nearCandidate = new ElementSnapshot("near-rid", "Input", null, "Edit", "Edit", new Rect(60, 0, 50, 20), Array.Empty<ElementSnapshot>());
+        var farCandidate = new ElementSnapshot("far-rid", "Other", null, "Edit", "Edit", new Rect(500, 0, 50, 20), Array.Empty<ElementSnapshot>());
+        var resolvedHandle = new ElementHandle("near-rid", "test", new object());
+
+        var provider = new Mock<IElementProvider>();
+        provider.SetupGet(p => p.ProviderName).Returns("uia3");
+        provider.Setup(p => p.FindElementAsync(anchorLocator, Session, It.IsAny<CancellationToken>())).ReturnsAsync(anchorHandle);
+        provider.Setup(p => p.SnapshotTreeAsync(Session, It.IsAny<CancellationToken>())).ReturnsAsync([nearCandidate, farCandidate]);
+        provider.Setup(p => p.FindElementAsync(Locator.ByRuntimeId("near-rid"), Session, It.IsAny<CancellationToken>())).ReturnsAsync(resolvedHandle);
+        var resolver = new ElementResolver([provider.Object], new ElementProviderOptions { ProviderChain = ["uia3"] });
+
+        var result = await resolver.FindAsync(spatialLocator, Session);
+
+        Assert.Same(resolvedHandle, result);
+    }
+
+    [Fact]
+    public async Task FindAsync_SpatialLocator_NoQualifyingCandidate_ThrowsElementNotFoundError()
+    {
+        var anchorLocator = Locator.ByName("Username");
+        var spatialLocator = Locator.Near(anchorLocator, SpatialDirection.RightOf, maxDistancePx: 10);
+        var anchorHandle = new ElementHandle("anchor-rid", "test", new object()) { BoundingRect = new Rect(0, 0, 50, 20) };
+        var tooFar = new ElementSnapshot("far-rid", "Other", null, "Edit", "Edit", new Rect(500, 0, 50, 20), Array.Empty<ElementSnapshot>());
+
+        var provider = new Mock<IElementProvider>();
+        provider.SetupGet(p => p.ProviderName).Returns("uia3");
+        provider.Setup(p => p.FindElementAsync(anchorLocator, Session, It.IsAny<CancellationToken>())).ReturnsAsync(anchorHandle);
+        provider.Setup(p => p.SnapshotTreeAsync(Session, It.IsAny<CancellationToken>())).ReturnsAsync([tooFar]);
+        var resolver = new ElementResolver([provider.Object], new ElementProviderOptions { ProviderChain = ["uia3"] });
+
+        var ex = await Assert.ThrowsAsync<ElementNotFoundError>(() => resolver.FindAsync(spatialLocator, Session));
+
+        Assert.Equal(spatialLocator, ex.Locator);
+    }
+
+    [Fact]
+    public async Task FindAsync_SpatialLocator_AnchorNotFound_PropagatesElementNotFoundError()
+    {
+        var anchorLocator = Locator.ByName("Username");
+        var spatialLocator = Locator.Near(anchorLocator, SpatialDirection.RightOf);
+        var options = new ElementProviderOptions { ProviderChain = ["uia3"], ImplicitWaitMs = 50, PollIntervalMs = 10 };
+        var provider = MockProvider("uia3", null, anchorLocator);
+        var resolver = new ElementResolver([provider.Object], options);
+
+        var ex = await Assert.ThrowsAsync<ElementNotFoundError>(() => resolver.FindAsync(spatialLocator, Session));
+
+        Assert.Equal(anchorLocator, ex.Locator);
+    }
+
+    // Proves scope is resolved independently per provider, not once globally then reused everywhere. Provider A can see the scope element but not the target inside it; provider B can find both, using its own resolution of scope. A single global scope resolve (the old design) would settle on provider A's handle first, and provider B could never honor a handle it didn't resolve itself — so the search would fail even though provider B could have succeeded end to end on its own.
+    [Fact]
+    public async Task FindScopedAsync_FirstProviderResolvesScopeButNotTarget_SecondProviderSucceedsWithItsOwnScope()
+    {
+        var scope = Locator.ByName("Dialog");
+        var scopeHandleA = Handle("dialog-a");
+        var scopeHandleB = Handle("dialog-b");
+        var target = Handle("target");
+
+        var providerA = new Mock<IElementProvider>();
+        providerA.SetupGet(p => p.ProviderName).Returns("uia3");
+        providerA.Setup(p => p.FindElementAsync(scope, Session, It.IsAny<CancellationToken>())).ReturnsAsync(scopeHandleA);
+        providerA.Setup(p => p.FindScopedElementAsync(TestLocator, Session, scopeHandleA, It.IsAny<CancellationToken>())).ReturnsAsync((ElementHandle?)null);
+
+        var providerB = new Mock<IElementProvider>();
+        providerB.SetupGet(p => p.ProviderName).Returns("uia2");
+        providerB.Setup(p => p.FindElementAsync(scope, Session, It.IsAny<CancellationToken>())).ReturnsAsync(scopeHandleB);
+        providerB.Setup(p => p.FindScopedElementAsync(TestLocator, Session, scopeHandleA, It.IsAny<CancellationToken>())).ReturnsAsync((ElementHandle?)null);
+        providerB.Setup(p => p.FindScopedElementAsync(TestLocator, Session, scopeHandleB, It.IsAny<CancellationToken>())).ReturnsAsync(target);
+
+        var options = new ElementProviderOptions { ProviderChain = ["uia3", "uia2"] };
+        var resolver = new ElementResolver([providerA.Object, providerB.Object], options);
+
+        var result = await resolver.FindScopedAsync(TestLocator, Session, scope);
+
+        Assert.Same(target, result);
+        providerB.Verify(p => p.FindElementAsync(scope, Session, It.IsAny<CancellationToken>()), Times.Once);
+        providerB.Verify(p => p.FindScopedElementAsync(TestLocator, Session, scopeHandleB, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // Same cross-provider fallback as above, for the single-pass FindAllScopedAsync path.
+    [Fact]
+    public async Task FindAllScopedAsync_FirstProviderResolvesScopeButNotTarget_SecondProviderSucceedsWithItsOwnScope()
+    {
+        var scope = Locator.ByName("Dialog");
+        var scopeHandleA = Handle("dialog-a");
+        var scopeHandleB = Handle("dialog-b");
+        var targets = new[] { Handle("t1"), Handle("t2") };
+
+        var providerA = new Mock<IElementProvider>();
+        providerA.SetupGet(p => p.ProviderName).Returns("uia3");
+        providerA.Setup(p => p.FindElementAsync(scope, Session, It.IsAny<CancellationToken>())).ReturnsAsync(scopeHandleA);
+        providerA.Setup(p => p.FindScopedElementsAsync(TestLocator, Session, scopeHandleA, It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<ElementHandle>());
+
+        var providerB = new Mock<IElementProvider>();
+        providerB.SetupGet(p => p.ProviderName).Returns("uia2");
+        providerB.Setup(p => p.FindElementAsync(scope, Session, It.IsAny<CancellationToken>())).ReturnsAsync(scopeHandleB);
+        providerB.Setup(p => p.FindScopedElementsAsync(TestLocator, Session, scopeHandleA, It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<ElementHandle>());
+        providerB.Setup(p => p.FindScopedElementsAsync(TestLocator, Session, scopeHandleB, It.IsAny<CancellationToken>())).ReturnsAsync(targets);
+
+        var options = new ElementProviderOptions { ProviderChain = ["uia3", "uia2"] };
+        var resolver = new ElementResolver([providerA.Object, providerB.Object], options);
+
+        var result = await resolver.FindAllScopedAsync(TestLocator, Session, scope);
+
+        Assert.Equal(2, result.Count);
+        Assert.Same(targets[0], result[0]);
+        Assert.Same(targets[1], result[1]);
+    }
+
+    // The locator being searched FOR is Spatial — unsupported combined with any scope, so scope must be dropped (never passed to FindScopedElementAsync) and a warning logged, rather than the search silently timing out.
+    [Fact]
+    public async Task FindScopedAsync_SpatialLocator_DropsScopeAndLogsWarning()
+    {
+        var writer = new StringWriter();
+        var logger = new EngineLogger(writer);
+        var anchorLocator = Locator.ByName("Username");
+        var spatialLocator = Locator.Near(anchorLocator, SpatialDirection.RightOf, maxDistancePx: 200);
+        var scope = Locator.ByName("Dialog");
+        var anchorHandle = new ElementHandle("anchor-rid", "test", new object()) { BoundingRect = new Rect(0, 0, 50, 20) };
+        var nearCandidate = new ElementSnapshot("near-rid", "Input", null, "Edit", "Edit", new Rect(60, 0, 50, 20), Array.Empty<ElementSnapshot>());
+        var resolvedHandle = new ElementHandle("near-rid", "test", new object());
+
+        var provider = new Mock<IElementProvider>();
+        provider.SetupGet(p => p.ProviderName).Returns("uia3");
+        provider.Setup(p => p.FindElementAsync(anchorLocator, Session, It.IsAny<CancellationToken>())).ReturnsAsync(anchorHandle);
+        provider.Setup(p => p.SnapshotTreeAsync(Session, It.IsAny<CancellationToken>())).ReturnsAsync([nearCandidate]);
+        provider.Setup(p => p.FindElementAsync(Locator.ByRuntimeId("near-rid"), Session, It.IsAny<CancellationToken>())).ReturnsAsync(resolvedHandle);
+        var resolver = new ElementResolver([provider.Object], new ElementProviderOptions { ProviderChain = ["uia3"] }, logger);
+
+        var result = await resolver.FindScopedAsync(spatialLocator, Session, scope);
+
+        Assert.Same(resolvedHandle, result);
+        Assert.Contains("Scope is not honored for Spatial locators", writer.ToString());
+        provider.Verify(p => p.FindScopedElementAsync(It.IsAny<Locator>(), Session, It.IsAny<ElementHandle>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // scope (the container) being identified via a Spatial locator is a different, fully-supported case — it's resolved once via the normal spatial path (anchor + snapshot), not per-provider, since no provider can redo that resolution on its own.
+    [Fact]
+    public async Task FindScopedAsync_SpatialScope_ResolvesScopeOnceThenSearchesWithinIt()
+    {
+        var anchorLocator = Locator.ByName("Toolbar");
+        var spatialScope = Locator.Near(anchorLocator, SpatialDirection.Below, maxDistancePx: 200);
+        var anchorHandle = new ElementHandle("anchor-rid", "test", new object()) { BoundingRect = new Rect(0, 0, 50, 20) };
+        var panelCandidate = new ElementSnapshot("panel-rid", "Panel", null, "Pane", "Pane", new Rect(0, 30, 200, 200), Array.Empty<ElementSnapshot>());
+        var scopeHandle = new ElementHandle("panel-rid", "test", new object());
+        var target = Handle("target");
+
+        var provider = new Mock<IElementProvider>();
+        provider.SetupGet(p => p.ProviderName).Returns("uia3");
+        provider.Setup(p => p.FindElementAsync(anchorLocator, Session, It.IsAny<CancellationToken>())).ReturnsAsync(anchorHandle);
+        provider.Setup(p => p.SnapshotTreeAsync(Session, It.IsAny<CancellationToken>())).ReturnsAsync([panelCandidate]);
+        provider.Setup(p => p.FindElementAsync(Locator.ByRuntimeId("panel-rid"), Session, It.IsAny<CancellationToken>())).ReturnsAsync(scopeHandle);
+        provider.Setup(p => p.FindScopedElementAsync(TestLocator, Session, scopeHandle, It.IsAny<CancellationToken>())).ReturnsAsync(target);
+        var resolver = new ElementResolver([provider.Object], new ElementProviderOptions { ProviderChain = ["uia3"] });
+
+        var result = await resolver.FindScopedAsync(TestLocator, Session, spatialScope);
+
+        Assert.Same(target, result);
+        provider.Verify(p => p.FindElementAsync(spatialScope, Session, It.IsAny<CancellationToken>()), Times.Never);
     }
 }

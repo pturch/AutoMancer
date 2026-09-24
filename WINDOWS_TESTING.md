@@ -10,6 +10,10 @@ Try them in this order:
 2. **`FindAllAsync(ByControlType(...))` + a stable ordering key** — for apps (or specific controls) that expose neither. Anonymous buttons and labels can be resolved this way, ordering by `BoundingRect.X` (or `Y`). It doesn't need to know the tree's nesting depth, so it tends to survive an app's UI being reshuffled between versions better than a path does.
 3. **`ByPath` / `ByXPath`** — also reach anonymous elements (they don't require a `Name`), and are more precise when position alone is ambiguous. But read the next section before reaching for these against an unfamiliar app.
 
+## Finding elements via app-specific (custom) UIA properties
+
+Some apps expose properties outside the fixed UIA set (WPF's `AutomationProperties.RegisterProperty`, e.g.). Unlike built-in properties, a custom property's numeric id isn't a constant — Windows allocates it the first time anyone asks about the property's GUID in the current logon session, and that allocation can differ machine to machine or session to session. Don't hardcode an id captured once from an inspection tool; it can silently stop matching anything (or match the wrong thing) the moment it drifts. Call `App.RegisterCustomPropertyAsync(guid, name, type)` to resolve the app's documented GUID to the current session's id, then use it with `Locator.ByProperty(int, object)` as normal.
+
 ## The `ByPath`/`ByXPath` indexing gotcha
 
 Both take a bracketed index per step, e.g. `"Window > Custom[0] > Custom[1] > Button[0]"`. That index is the element's position **among same-`ControlType` siblings**, not its position among all of that parent's children. If a parent's children are `Pane, Custom, Custom`, the second `Custom` is `Custom[1]`, not `Custom[2]`.

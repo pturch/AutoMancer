@@ -1,10 +1,12 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
 using System.ComponentModel;
+using System.Diagnostics;
 using AutoMancer.Engine.Actions;
 using AutoMancer.Engine.Core;
 using AutoMancer.Engine.Diagnostics;
 using AutoMancer.Engine.Errors;
 using AutoMancer.Engine.Providers;
+using Interop.UIAutomationClient;
 
 namespace AutoMancer.Engine;
 
@@ -23,6 +25,8 @@ public sealed class App : IAsyncDisposable
     private readonly IEngineLogger? _combinedLogger;
     private readonly DateTime _startedAtUtc = DateTime.UtcNow;
 
+    // ---- Public properties ----
+
     // The PID of the target process — useful for re-attaching after a session change.
     public int ProcessId => _session.ProcessId;
 
@@ -40,6 +44,8 @@ public sealed class App : IAsyncDisposable
 
     // The poll interval this App was configured with (via AppOptions.PollIntervalMs) — the default cadence callers can reuse for their own polling loops.
     public int PollIntervalMs { get; }
+
+    // ---- Construction (public static factories) ----
 
     // Private — callers use the static factory methods.
     private App(AppSession session, IEnumerable<IElementProvider> providers, AppOptions options)
@@ -116,9 +122,13 @@ public sealed class App : IAsyncDisposable
     // Returns a new App bound to the same session but with different options — useful for warmup or provider-specific operations without creating a new process.
     public App WithOptions(AppOptions options) => new(_session, BuildProviders(options.ProviderChain), options);
 
+    // ---- Internal: test support only — not part of the public surface ----
+
     // Bypasses real provider construction to build an App around fake providers, for unit tests exercising App/Expect() retry and diagnostics logic without a live window.
     internal static App CreateForTesting(AppSession session, IEnumerable<IElementProvider> providers, AppOptions? options = null) =>
         new(session, providers, options ?? AppOptions.Default);
+
+    // ---- Finding & querying elements (public) ----
 
     // Finds the first element matching the locator; waits up to ImplicitWaitMs before throwing.
     public Task<ElementHandle> FindAsync(Locator locator, CancellationToken ct = default)
@@ -127,6 +137,64 @@ public sealed class App : IAsyncDisposable
     // Finds all elements matching the locator in a single pass; returns empty if none match.
     public Task<IReadOnlyList<ElementHandle>> FindAllAsync(Locator locator, CancellationToken ct = default)
         => _resolver.FindAllAsync(locator, _session, ct);
+
+    // Finds the first element matching the locator within scope's subtree instead of the whole session — scope is resolved fresh as part of this call, so it can't be a stale handle from earlier.
+    public Task<ElementHandle> FindScopedAsync(Locator locator, Locator scope, CancellationToken ct = default)
+        => _resolver.FindScopedAsync(locator, _session, scope, ct);
+
+    // Finds all elements matching the locator within scope's subtree instead of the whole session; returns empty if none match — scope is resolved fresh as part of this call.
+    public Task<IReadOnlyList<ElementHandle>> FindAllScopedAsync(Locator locator, Locator scope, CancellationToken ct = default)
+        => _resolver.FindAllScopedAsync(locator, _session, scope, ct);
+
+    // Finds itemLocator inside container's subtree, one wheel notch at a time, for virtualized ListView/ComboBox/DataGrid rows that aren't realized in the UIA tree until scrolled into view — ScrollAction can't help here since it needs an ElementHandle for the item, which is exactly what's missing. 
+    // Throws ElementNotFoundError immediately (rather than burning through maxScrolls) once CurrentVerticalScrollPercent stops changing between scrolls, since the container has hit the end of its scrollable range.
+    public Task<ElementHandle> FindByScrollingAsync(ElementHandle container, Locator itemLocator, int maxScrolls = 20, CancellationToken ct = default)
+        => FindByScrollingCoreAsync(container, itemLocator, maxScrolls, token => ScrollWheelAction.ExecuteAsync(container, 0, -1, token), ct);
+
+    // Same loop as FindByScrollingAsync with the scroll step swapped out — lets tests drive the reveal-after-N-scrolls and stall-detection logic against a fake provider without a real ScrollWheelAction/SendInput call.
+    internal async Task<ElementHandle> FindByScrollingCoreAsync(ElementHandle container, Locator itemLocator, int maxScrolls, Func<CancellationToken, Task> scroll, CancellationToken ct)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        // Set only after a scroll actually happens — comparing against a pre-scroll baseline would flag a stall after just one scroll instead of two consecutive ones.
+        double? previousPercent = null;
+
+        for (var i = 0; i < maxScrolls; i++)
+        {
+            try
+            {
+                return await ResolveFullyIntoViewAsync(itemLocator, container, ct);
+            }
+            catch (ElementNotFoundError)
+            {
+                // Not realized in the tree yet — scroll and try again below.
+            }
+
+            EnsureWindowNotMinimized();
+            await scroll(ct);
+            if (_actionDelayMs > 0)
+                await Task.Delay(_actionDelayMs, ct);
+
+            var currentPercent = GetVerticalScrollPercent(container);
+            if (currentPercent.HasValue && previousPercent.HasValue && currentPercent.Value == previousPercent.Value) // We're at the bottom of the page
+                _resolver.ThrowNotFound(itemLocator, "scroll", (int)stopwatch.ElapsedMilliseconds);
+            previousPercent = currentPercent;
+        }
+
+        return await ResolveFullyIntoViewAsync(itemLocator, container, ct);
+    }
+
+    // Scrolls the found item fully into view before returning it — a virtualized row can be realized in the tree right at a scroll's edge while still IsOffscreen.
+    private async Task<ElementHandle> ResolveFullyIntoViewAsync(Locator itemLocator, ElementHandle container, CancellationToken ct)
+    {
+        var found = await _resolver.FindScopedAsync(itemLocator, _session, container, ct);
+        await ScrollAction.ExecuteAsync(found, ct);
+        // IsOffscreen/BoundingRect are init-only snapshots, so found's are now stale — re-resolve for fresh ones, same idiom FindSpatialAsync uses.
+        return await _resolver.FindAsync(Locator.ByRuntimeId(found.Id), _session, ct);
+    }
+
+    // Resolves a custom UIA property's app-declared GUID to this session's numeric PropertyId, so it can be queried via Locator.ByProperty(int, object) — see UiaRegistrarInterop.RegisterCustomPropertyAsync for why the GUID can't just be hardcoded as an int.
+    public Task<int> RegisterCustomPropertyAsync(Guid propertyGuid, string programmaticName, UiaAutomationType type, CancellationToken ct = default)
+        => UiaRegistrarInterop.RegisterCustomPropertyAsync(propertyGuid, programmaticName, type, ct);
 
     // Finds the element and reads its current value via ValuePattern or TextPattern; returns null when the resolved provider has no operator (e.g. Win32) or neither pattern is supported.
     public async Task<string?> GetValueAsync(Locator locator, CancellationToken ct = default)
@@ -143,6 +211,8 @@ public sealed class App : IAsyncDisposable
     public Task<byte[]> ScreenshotAsync(CancellationToken ct = default)
         => ScreenshotAction.CaptureAsync(_session.RootWindowHandle, ct);
 
+    // ---- Waiting (public) ----
+
     // Waits until every provider in the chain returns null for the locator; throws ElementStillPresentError if it's still found after ImplicitWaitMs.
     public Task WaitUntilGoneAsync(Locator locator, CancellationToken ct = default)
         => _resolver.WaitUntilGoneAsync(locator, _session, ct);
@@ -150,6 +220,8 @@ public sealed class App : IAsyncDisposable
     // Waits until the located element satisfies condition; throws ElementConditionTimeoutError if it never does within ImplicitWaitMs.
     public Task<ElementHandle> WaitForAsync(Locator locator, Func<ElementHandle, bool> condition, CancellationToken ct = default)
         => _resolver.WaitForAsync(locator, condition, _session, ct);
+
+    // ---- Input actions: mouse & keyboard (public) ----
 
     // Finds the element and clicks it; waits ActionDelayMs after the click for the UI to settle.
     public async Task ClickAsync(Locator locator, MouseButton button = MouseButton.Left, KeyModifiers modifiers = default, CancellationToken ct = default)
@@ -326,6 +398,8 @@ public sealed class App : IAsyncDisposable
             await Task.Delay(_actionDelayMs, ct);
     }
 
+    // ---- Window management (public) ----
+
     // Returns the window's current bounding rectangle in physical screen coordinates.
     public Task<Rect> GetWindowSizeAsync(CancellationToken ct = default)
         => WindowAction.GetSizeAsync(_session.RootWindowHandle, ct);
@@ -348,6 +422,8 @@ public sealed class App : IAsyncDisposable
     // Closes the root window; tries WindowPattern.Close() first, falls back to posting WM_CLOSE.
     public Task CloseWindowAsync(CancellationToken ct = default)
         => WindowAction.CloseCoreAsync(_session.RootWindowHandle, _logger, ct);
+
+    // ---- Lifecycle (public) ----
 
     // Terminates the target process immediately; no-op if it has already exited.
     public void Kill()
@@ -376,6 +452,8 @@ public sealed class App : IAsyncDisposable
         TryWriteWindowsEventLogArtifact();
         return _session.DisposeAsync();
     }
+
+    // ---- Private helpers ----
 
     // Kills the underlying process, swallowing a failure to terminate it (e.g. access denied against an elevated target) so that alone can never block the rest of Kill/KillAsync/DisposeAsync from running.
     private void KillAppBestEffort()
@@ -427,6 +505,16 @@ public sealed class App : IAsyncDisposable
             throw new WindowMinimizedError(_session.RootWindowHandle);
     }
 
+    // Reads IUIAutomationScrollPattern.CurrentVerticalScrollPercent for container; null when it wasn't resolved via uia3 or doesn't support ScrollPattern, in which case FindByScrollingAsync's stall detection is skipped and maxScrolls alone bounds the loop.
+    private static double? GetVerticalScrollPercent(ElementHandle container)
+    {
+        if (container.NativeHandle is not IUIAutomationElement uiaElement)
+            return null;
+        if (uiaElement.GetCurrentPattern(UIA_PatternIds.UIA_ScrollPatternId) is not IUIAutomationScrollPattern scrollPattern)
+            return null;
+        return scrollPattern.CurrentVerticalScrollPercent;
+    }
+
     // Instantiates one provider per name in the chain; unknown names are silently dropped.
     private static IReadOnlyList<IElementProvider> BuildProviders(IReadOnlyList<string> chain)
     {
@@ -438,6 +526,8 @@ public sealed class App : IAsyncDisposable
         };
         return chain.Where(all.ContainsKey).Select(n => all[n]).ToList();
     }
+
+    // ---- Nested types ----
 
     // Tracks keys held via KeyDownAsync so Kill/Dispose can release them all even after a crash; locked since App's key methods can be called concurrently. Private to App — no other class needs to see a held key mid-hold.
     internal sealed class HeldKeyTracker

@@ -60,6 +60,8 @@ Inline comments only when the *why* is non-obvious — never narrate what the co
 
 **`TypeAction` must use `KEYEVENTF_UNICODE`** with `wScan` set to the character codepoint. Never use VK codes for printable characters — this is what fixes WinAppDriver's QWERTY-only keyboard layout bug.
 
+**Never call `RegisterCustomPropertyAsync` (or `IUIAutomationRegistrar.RegisterProperty`) with many distinct GUIDs in a loop**, e.g. in a benchmark. Windows' UI Automation Core keeps a finite, session-wide table for custom property registrations; exhausting it throws `COMException` (`E_OUTOFMEMORY`, `0x80070008`) from every future call — including unrelated GUIDs, from any process — for the rest of the logon session. Confirmed by exhausting it this way; recovery requires signing out (or rebooting), and the real capacity is unknown but well under a few thousand distinct GUIDs.
+
 ## Every `.cs` file starts with
 
 ```csharp

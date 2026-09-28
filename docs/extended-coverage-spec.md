@@ -286,10 +286,10 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "FullyQualifiedName~ScopedFi
 
 ### Task 2.2.1: `WaitConditions` static class
 
-**What:** Canned `Func<ElementHandle, bool>` factories — `IsVisible()`, `NameEquals(string)`, `NameContains(string)`, `TextEquals(string)`, `IsEnabled()` — mirroring Selenium's `ExpectedConditions`. Each is a small predicate closure; this adds no new engine surface beyond the static class itself, since every predicate is a drop-in for `App.WaitForAsync`'s existing `Func<ElementHandle, bool>` parameter.
+**What:** Canned `Func<ElementHandle, bool>` factories — `IsVisible()`, `NameEquals(string)`, `NameContains(string)`, `TextEquals(string)`, `IsEnabled()`, plus the trivial field-based siblings `AutomationIdEquals(string)`, `ClassNameEquals(string)`, `ControlTypeEquals(string)`, `TextMatches(Regex)`, and the `Not(condition)` combinator — mirroring Selenium's `ExpectedConditions`. Each is a small predicate closure; this adds no new engine surface beyond the static class itself, since every predicate is a drop-in for `App.WaitForAsync`'s existing `Func<ElementHandle, bool>` parameter.
 
 **Creates:**
-- `src/AutoMancer.Engine/Core/WaitConditions.cs` — the five factories above
+- `src/AutoMancer.Engine/Core/WaitConditions.cs` — the ten factories above
 - `tests/AutoMancer.Engine.Tests/Core/WaitConditionsTests.cs` — each predicate against a fake `ElementHandle`, true and false cases
 
 - [ ] **Write tests, run (expect FAIL), implement, run (expect PASS)**
@@ -299,6 +299,8 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "WaitConditionsTests"
 ```
 
 **Done when:** `app.WaitForAsync(locator, WaitConditions.IsEnabled())` compiles and behaves identically to a hand-written `e => e.IsEnabled == true` predicate.
+
+**Future extension:** `NumberOfElementsToBe(locator, n)` (and `...MoreThan`/`...LessThan`) — a common ask for "wait until a list/grid finishes populating," but a different method shape from everything else here, since it needs `FindAllAsync`'s count rather than a single `ElementHandle`. Not part of this task's `Func<ElementHandle, bool>` contract.
 
 ---
 
@@ -317,6 +319,8 @@ dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
 ```
 
 **Done when:** Engine builds with 0 errors.
+
+**Future extension:** A staleness *wait* — the inverse of this task's re-resolve — would let a caller wait until an element/dialog detaches from the tree, for close-and-continue flows, instead of polling `FindAsync` for absence. Same `RuntimeId`-based staleness detection this task already adds, used to confirm absence rather than to recover from it.
 
 ---
 
@@ -351,7 +355,48 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "StaleElementResilienceTests
 dotnet test tests/AutoMancer.Engine.Tests/ --filter "FullyQualifiedName~LocatorExpectTests"
 ```
 
-**Done when:** `WaitForAsync` and `Expect()` share a starter vocabulary instead of `WaitForAsync` alone having one; flaky COM staleness has an opt-in escape hatch that never changes default behavior. Stage 2.2 complete.
+**Done when:** `WaitForAsync` and `Expect()` share a starter vocabulary instead of `WaitForAsync` alone having one; flaky COM staleness has an opt-in escape hatch that never changes default behavior.
+
+---
+
+### Task 2.2.5: `App.IsUnobscuredAsync` — occlusion check
+
+**What:** An opt-in occlusion check, not a gate on any existing action — `App.IsUnobscuredAsync(Locator locator, CancellationToken ct = default)`. Cross-window half works for every provider via a new `NativeMethods.WindowFromPoint` compared against the resolved element's own top-level HWND; same-window/sibling-overlay half only for `uia3`-resolved elements, via a new `Uia3Provider` internal helper that walks ancestors from `IUIAutomation.ElementFromPoint` (bounded by the existing `MaxTreeDepth`, compared via `CompareElements`) — a `uia2`/`win32`-resolved element degrades to the cross-window check alone rather than throwing. This is a different shape than Tasks 2.2.1–2.2.4: it needs a live COM/Win32 call at check time, not a read of cached `ElementHandle` state, but it belongs in this stage anyway as the same actionability-primitive family Selenium's `ExpectedConditions`/Playwright's actionability checks live in.
+
+**Creates:**
+- `src/AutoMancer.Engine/Providers/NativeMethods.cs` — add `WindowFromPoint` P/Invoke declaration
+- `src/AutoMancer.Engine/Providers/Uia3Provider.cs` — internal ancestor-walk helper from `IUIAutomation.ElementFromPoint`
+- `src/AutoMancer.Engine/App.cs` — `IsUnobscuredAsync(Locator locator, CancellationToken ct = default)`
+
+- [ ] **Implement and build**
+
+```bash
+dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
+```
+
+**Done when:** `app.IsUnobscuredAsync(locator)` returns `false` when another window or an in-app overlay is covering the element's hit point, and `true` once it's clear.
+
+**Future extensions, once this lands:**
+- `WaitConditions.ToBeClickable()` — a composite of `IsVisible()` + `IsEnabled()` (Task 2.2.1) + this task's live occlusion check; Selenium's single most-used `ExpectedCondition`. Needs this task first since it can't be a pure cached-state predicate like the rest of `WaitConditions`.
+- `App.IsForegroundAsync(locator)` — a focus/foreground-window check via `GetForegroundWindow` comparison, same live-check shape as this task. Arguably higher real-world value than occlusion alone, since input silently landing on the wrong window is one of the most common WinAppDriver flake sources.
+- A hung-window ("Not Responding") check via `IsHungAppWindow` or a `SendMessageTimeout` probe — same actionability-primitive family, catches slow-app flake that today has no engine-level answer.
+
+---
+
+### Task 2.2.6: Integration test for occlusion detection
+
+**What:** Integration test against live Notepad — an on-screen button reports unobscured; the same button reports obscured once the Save-changes `ContentDialog` covers it.
+
+**Creates:**
+- `tests/AutoMancer.Engine.Tests/Integration/OcclusionIntegrationTests.cs`
+
+- [ ] **Run integration tests**
+
+```bash
+dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration&FullyQualifiedName~Occlusion"
+```
+
+**Done when:** Both cases pass against live Notepad. Stage 2.2 complete.
 
 ---
 
@@ -757,6 +802,8 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "ToggleActionTests"
 
 **Done when:** `app.ToggleAsync(locator)` flips a checkbox's `Toggle.ToggleState` (verified live in Task 2.8.6).
 
+**Future extension:** A `WaitConditions.ToggleStateEquals(ToggleState)` predicate, for polling a checkbox/tri-state control via `WaitForAsync`/`Expect()` instead of a one-shot read. Blocked on this task landing `TogglePattern` support first, and on `ElementHandle` (or a follow-on read) actually carrying `ToggleState` for a sync predicate closure to read.
+
 ---
 
 ### Task 2.8.3: `ExpandCollapseAction`
@@ -794,6 +841,8 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "SelectionActionTests"
 ```
 
 **Done when:** `app.SelectAsync(locator)`/`GetSelectedItemsAsync(locator)` round-trip a list selection (verified live in Task 2.8.6).
+
+**Future extension:** A `WaitConditions.IsSelected()` predicate, for polling a list/combo item's selection state via `WaitForAsync`/`Expect()` instead of calling this task's one-shot `IsSelectedAsync` in a hand-rolled loop. Same blocker as `ToggleStateEquals` above — needs `SelectionItemPattern` support from this task first, plus a sync-readable field to close the predicate over.
 
 ---
 

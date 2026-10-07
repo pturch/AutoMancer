@@ -75,7 +75,7 @@ internal static class VsCodeLauncher
         await app.KillAsync();
         await app.DisposeAsync();
 
-        for (var attempt = 0; attempt < 5; attempt++)
+        for (int attempt = 0; attempt < 5; attempt++)
         {
             try { Directory.Delete(sandbox.RootDir, recursive: true); return; }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)

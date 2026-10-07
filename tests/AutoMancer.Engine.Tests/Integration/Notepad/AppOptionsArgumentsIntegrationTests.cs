@@ -23,11 +23,18 @@ public sealed class AppOptionsArgumentsIntegrationTests
                 windowMatch: new WindowMatchOptions { RequireNewWindow = true });
             try
             {
-                Assert.Contains(Path.GetFileName(filePath), Process.GetProcessById(app.ProcessId).MainWindowTitle);
+                // The window first appears titled plain "Notepad" and only picks up the file's name once it loads (~400ms later), so poll rather than read once.
+                var title = "";
+                var deadline = Environment.TickCount64 + 5_000;
+                while (!(title = Process.GetProcessById(app.ProcessId).MainWindowTitle).Contains(Path.GetFileName(filePath)) && Environment.TickCount64 < deadline)
+                    await Task.Delay(100);
+                Assert.Contains(Path.GetFileName(filePath), title);
             }
             finally
             {
                 await app.KillAsync();
+                // The file's tab survives the kill; without this the next Notepad launch (here or in samples/ConsumerNotepadTests) restores it after the file is deleted below and opens a modal "Cannot find the file" dialog.
+                NotepadCollectionFixture.ClearTabState();
             }
         }
         finally

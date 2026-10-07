@@ -142,6 +142,16 @@ automancer find <session-id> --by runtime --value "42.333896.3.1"
 
 **A runtime ID only lasts one session.** Unlike automation ID, which is stable across relaunches, a runtime ID is only valid for the lifetime of the app instance that produced it. Use it to confirm you're still looking at the same element after doing something to it — not as a locator you write into a test ahead of time, since you won't have one until you've already found the element once.
 
+### Locators vs. Element Handles:
+
+Apps rebuild their UI all the time. Lists frequently re-render, dialogs close and reopen. Elements found a moment ago can be gone by the time you use them. Retrying logic can get dicey, so who deals with what depends on what you handed AutoMancer:
+
+**A `Locator` is AutoMancer's problem.** Any method that takes one (`ClickAsync`, `GetValueAsync`, `FindAllScopedAsync`, ...) re-finds the element when it needs it. If the element turns out to be gone, AutoMancer runs that locator again until the implicit wait runs out. `AppOptions.ReresolveOnStale` (default `true`) controls this; set it to `false` and you get a `StaleElementError` instead, for you to handle however you'd like.
+
+**An `ElementHandle` is your problem.** A handle (what `FindAsync` returns) points at one specific element. If that element leaves the UI tree, acting on the handle or reading its value throws `StaleElementError`. AutoMancer has no locator to re-run, and following a look-alike replacement could act on the wrong thing. A handle's properties (`Name`, `BoundingRect`, `IsEnabled`, ...) are a snapshot from when it was found: they never throw, but they never update either, and `Expect(handle)` asserts against that same snapshot.
+
+Pass locators wherever you can (especially for scopes), and hold a handle only when you specifically want that one element. To pass a handle where a locator is expected, wrap it in `Locator.ByRuntimeId(handle.Id)`. That locator only ever matches that exact element, so if the element is gone it won't follow a replacement; you'll get `ElementNotFoundError` once the implicit wait runs out.
+
 ### Path Locators:
 
 A path locator addresses an element by its exact position in the tree, using `>` to separate levels: `ControlType`, `ControlType["Name"]`, `ControlType[index]`, or a `*` wildcard for any control type. The first segment has to match the root window itself, and every segment after that only matches the direct children of the previous match. There's no `//`-style "search anywhere below" like an XPath locator has, so every level in between has to be spelled out. Leave off `[index]` and every matching child at that level continues; add it (0-based) to pick one specific child, counted only among siblings that already match that segment's control type.

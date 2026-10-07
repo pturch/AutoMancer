@@ -18,7 +18,15 @@ public static class SetFocusAction
         if (element.NativeHandle is not IUIAutomationElement uiaElement)
             return;
         ElementInputHelpers.EnsureForeground(element);
-        uiaElement.SetFocus();
+        // SetFocus is a live UIA call that fails if the element has left the tree; surface that as StaleElementError, let any other failure propagate as-is.
+        try
+        {
+            uiaElement.SetFocus();
+        }
+        catch (Exception ex) when (ElementInputHelpers.IsStaleFailure(ex, element))
+        {
+            throw ElementInputHelpers.Stale(element, ex);
+        }
         logger?.Info("Focused via SetFocus", new { elementId = element.Id });
     }, ct);
 }

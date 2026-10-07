@@ -258,6 +258,8 @@ dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
 
 **Done when:** Engine builds with 0 errors.
 
+> Task 2.2.2 later changed `container` from an `ElementHandle` to a `Locator` (`FindByScrollingAsync(Locator containerLocator, ...)`), so a stale container can be re-found by its locator.
+
 ---
 
 ### Task 2.1.9: Unit and integration tests for Tasks 2.1.7–2.1.8
@@ -304,13 +306,52 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "WaitConditionsTests"
 
 ---
 
-### Task 2.2.2: Opt-in stale-element re-resolve
+### Task 2.2.2: Stale-element detection, `StaleElementError`, and opt-out auto re-resolve
 
-**What:** A wrapper — `AppOptions.ReresolveOnStale` flag, checked by the action classes' shared `SendInput`-fallback path — that catches a stale-element COM failure (`COMException` with `UIA_E_ELEMENTNOTAVAILABLE`) and re-resolves once via `RuntimeId` through `ElementResolver` before retrying. Default behavior for every existing call is unchanged; this only activates when a caller explicitly opts in. `RuntimeId` is already a first-class locator strategy (Phase 1, Stage 1.5), so re-resolution reuses `Locator.ByRuntimeId(element.Id)` against the same session rather than introducing a new resolution path.
+**What:** Selenium's `StaleElementReferenceException` convention, not a silent swallow: a genuinely stale element (per the shared definition under "What counts as stale" below, checked in `ElementInputHelpers.EnsureForeground` and the other detection sites) always throws the new `StaleElementError` — distinct from the pre-existing, unrelated catch-and-continue in the same method for elements that just fail this one property lookup without actually being gone (the documented VLC split-button `MenuItem` case). `AppOptions.ReresolveOnStale` (default **`true`**) controls only what happens to that error afterward: each element-targeting `App` method (`ClickAsync`, `TypeAsync`, `ClearAsync`, `DoubleClickAsync`, `HoverAsync`, `ClickAtAsync(Locator)`, `ScrollIntoViewAsync`, `ScrollWheelAsync`, `SetFocusAsync`) runs as a short, self-narrating sequence — `EnsureWindowNotMinimized` → `FindAndRunAsync` (resolves the locator and runs the action; on `StaleElementError`, re-runs the **original locator** and retries, polling every `PollIntervalMs` until `ImplicitWaitMs` elapses — the same budget/cadence `FindAsync`/`WaitForAsync` already use) → log → `SettleAsync` (the `ActionDelayMs` pause). Re-resolution uses the original locator, not the stale element's `RuntimeId`: a UIA element that's destroyed and recreated (a re-rendered list, a reopened dialog) gets a *new* `RuntimeId`, so looking up the old one finds nothing in exactly the case staleness signals, and recycled `RuntimeId`s could even resolve to a different element — re-running the locator is how Playwright recovers too. Trade-off: re-querying means "first match again," so an ambiguous locator's retry inherits that ambiguity. Set `ReresolveOnStale = false` to opt out of the auto-retry and have `StaleElementError` always propagate untouched, for a caller that wants to drive its own recovery. `ClickAction`/`TypeAction`/`ClearAction`'s public `ExecuteAsync` signatures are untouched by any of this — the decision lives entirely in `EnsureForeground` (always throws) and `FindAndRunAsync` (retry or don't). `FindByScrollingAsync`'s container becomes a `Locator` too — `FindByScrollingAsync(Locator containerLocator, Locator itemLocator, ...)` replaces Task 2.1.8's `ElementHandle` signature, matching `FindScopedAsync`'s locator-only scope — but it does *not* run through `FindAndRunAsync`. That's built for atomic actions that take milliseconds; wrapped around a multi-second scroll loop (measured live: ~8s for 20 notches), a whole-call retry restarts the search from scratch, throws away its progress, leaves `maxScrolls` no longer bounding the work, and any time window either refuses a late rebuild or never ends against a list that keeps refreshing. Instead the loop handles its own container: a `StaleElementError` carrying the container (from the per-iteration scoped find or the scroll's `EnsureForeground`) re-finds it by locator and carries on, that iteration still counting toward `maxScrolls`, so the call stays bounded by scrolls rather than a clock, and a list that keeps rebuilding ends in the same `ElementNotFoundError` as a missing item; the final full-wait attempt gets one re-find; a stale *item* is still treated as not-yet-realized; `ReresolveOnStale = false` propagates the first stale container; a caller holding a handle passes `Locator.ByRuntimeId(handle.Id)` to pin that one element instead of following a rebuilt one. `GetValueAsync` closes the remaining silent-staleness gap on the read side: it runs through `FindAndRunAsync` too, with both operators' `TryGetValueAsync` raising `StaleElementError` instead of returning `null` (a read has no SendInput fallback to re-detect it — UIA2 needs a `Current.*` probe first, since a gone element's `GetCurrentPattern` throws the same "Unsupported Pattern" as a live one lacking it). The UIA2 fallback path detects staleness via `EnsureForeground`'s `Current.NativeWindowHandle` read, mirroring UIA3's `CurrentNativeWindowHandle`.
+
+**Guiding rule: a `Locator` is the engine's problem, an `ElementHandle` is the caller's.** Staleness gets tricky once scopes are involved — the scope *and* the target can each go stale, a scope can be a `Locator` or a held `ElementHandle`, and single-element find polls while `FindAll` is single-pass, on top of UIA reporting a dead scope as empty/null rather than failing. Rather than designing each combination separately, one rule decides all of them: if the caller handed us a `Locator`, staleness is ours to recover from — re-run the locator; if they handed us an `ElementHandle`, it's theirs — raise `StaleElementError`. Providers only *report* staleness; the resolver/`App` decides. The pattern that keeps this manageable is **handles inside, locators at the edges**: internal code may hold handles freely, so long as every public entry point takes a `Locator` and re-runs it when a handle it holds goes stale — `FindByScrollingAsync` is the model, holding its container as a handle and re-finding it by locator inside its own loop when it goes stale. Any new scoped API, or any open question below, is settled by looking it up against this rule.
+
+**`FindAll` staleness — reported, never returned as empty.** `FindAllAsync`/`FindAllScopedAsync` stay single-pass, matching Playwright's `locator.all()`/`count()`: a genuinely empty result returns immediately, and waiting for a collection to populate belongs in the assertion layer (Task 2.2.6's `ToHaveCountAsync`), not the query — polling on empty would charge every real "nothing matches" the full `ImplicitWaitMs`. What changes is that staleness stops masquerading as emptiness. Playwright's `all()` runs scope and descendant lookup as one atomic in-page script, so its scope can't die mid-query; UIA resolves a scope and searches it in separate cross-process calls, and today every provider's `FindAll` catch turns a scope that died in between into the same empty list as "nothing matches." Single-element scoped find has the same blind spot — it just hid it better, by polling. Fixing it splits into detection, which only the engine can do since a caller has nothing to tell the two apart by, and recovery, which the guiding rule settles:
+1. **Providers detect a gone scope.** `FindScopedElementAsync` and `FindScopedElementsAsync` both raise `StaleElementError` when the scope itself is gone. Raw UIA `FindFirst`/`FindAll` on a dead scope don't throw — confirmed against a killed Paint process, UIA2 returns null/an empty collection and UIA3 null/a **null** array (which `Uia3Provider` then dereferenced, an uncaught `NullReferenceException` this also fixes) — so after a null/empty result both UIA providers call the shared `ElementInputHelpers.ThrowIfScopeGone`, which makes the same live read `EnsureForeground` uses (`CurrentNativeWindowHandle`/`Current.NativeWindowHandle`) and raises only if that reports the scope gone. A stale exception thrown by the search itself goes through the same `ThrowIfScopeGone` check, since a *descendant* rebuilt mid-search can throw too and mustn't be blamed on a live scope. Win32's `ValidScopeHandle` raises when the scope hwnd no longer belongs to the session's process (destroyed, possibly recycled for another process's window). Every other failure, including a non-stale failure of the probe itself, still degrades to null/empty; a scope `NativeHandle` from a different provider is still not-found; and stale isn't not-found, so "providers never throw on not-found" holds. Unscoped finds need no check: `TryGetRoot` re-fetches the root by hwnd every call, so a closed window really is empty.
+2. **The resolver recovers on the `Locator` paths, per the guiding rule.** Every public scoped method takes a `Locator` scope, so each re-resolves it rather than surfacing the error. Single-element `FindScopedAsync` already re-resolves scope on every poll, so `FindViaFreshScopeAsync` just treats a scope that died between being resolved and searched as a miss for that poll. `FindAllScopedAsync` is single-pass, so its new private `RetryOnStaleScopeAsync` re-runs the resolve-and-search on `StaleElementError` — immediately rather than every `PollIntervalMs`, because the loop ends on its own: the re-run finds the rebuilt scope and searches it, or finds no scope and returns empty, since the scope really is gone. `ImplicitWaitMs` only caps a UI that keeps rebuilding faster than it can be read; past it, `StaleElementError` propagates rather than becoming empty. Both methods' Spatial-scope branches, which no provider can re-resolve per poll, hold the resolved scope and rerun the whole Spatial resolution through the same `RetryOnStaleScopeAsync` when it goes stale — before this, the single-element one polled its dead handle until `ElementNotFoundError`. This matches Playwright's split of locators recovering on their own and handles not — Playwright gets it from atomic queries, AutoMancer from a re-run.
+3. **Held handles propagate.** The internal held-`ElementHandle` `FindScopedAsync`/`FindAllScopedAsync` let `StaleElementError` through, like Playwright's `ElementHandle` throwing on a detached node — a dead handle can't be re-resolved. Their only callers sit under a locator-level retry: the Spatial branches above, and `FindByScrollingAsync`'s `ResolveFullyIntoViewAsync`, whose stale container now reaches the scroll loop's container re-find immediately instead of after a full `ImplicitWaitMs` poll ending in `ElementNotFoundError`.
+
+`ReresolveOnStale = false` opts out of all of it, propagating on the first stale, via a new `ElementProviderOptions.ReresolveOnStale` copied from `AppOptions` alongside `ImplicitWaitMs`/`PollIntervalMs`. Trade-off, as with actions: re-resolving is "first match again," so an ambiguous scope locator's retry can land on a different element.
+
+**What counts as stale — one shared definition.** Matching on `UIA_E_ELEMENTNOTAVAILABLE` alone misses two real cases, found by holding an element while its UI was torn down across Paint, Notepad, and Calculator (identical under UIA2 and UIA3):
+
+| Teardown | What the held element does |
+|---|---|
+| App process exits | E_UNEXPECTED (`0x8000FFFF`) for ~30ms, then `UIA_E_ELEMENTNOTAVAILABLE` |
+| Win32 common dialog closes; XAML list item removed | `UIA_E_ELEMENTNOTAVAILABLE` |
+| **XAML `ContentDialog` closes** (Notepad Go to line, Paint Resize) | **Never throws** — stays readable, detached: blank `Name`, empty bounds, no raw-view parent |
+| XAML menu closes; UWP page navigates away (Calculator) | Still attached and readable, just hidden — not stale |
+
+**Not yet measured: WPF, WinForms, and Electron/Chromium teardown.** The table covers native Win32, WinUI/XAML, and UWP only. Candidate apps for filling it in, run one at a time like every other live-UI suite:
+- **WPF — PowerShell ISE** (in-box, an optional feature on by default): process exit; Find or Tools → Options closing (modal window); a script tab closing (item removed); a context menu closing (hidden, not stale). Worth watching for: a virtualized list recycling its item containers, so a held row stays attached but shows another row's data; and menus/popups being separate hwnds that may tear down like Win32 rather than XAML.
+- **Chromium — Edge** (in-box), launched with its own `--user-data-dir` like the VS Code sample: a DOM modal closing (e.g. "Clear browsing data" on `edge://settings`); a tab closing, which is native Views UI rather than web content, so both kinds are covered; process exit. Chromium updates its accessibility tree asynchronously, so a removed node may read as detached before it starts throwing, like the XAML `ContentDialog` row.
+- **Electron — VS Code**, via the existing `samples/ConsumerVsCodeTests` harness: the Command Palette closing (removed or only hidden?); a notification toast dismissed; an editor tab closing; the "Save changes?" prompt, which Electron shows as a native dialog.
+- **WinForms — a small in-repo fixture app** (nothing usable ships in-box): buttons opening a modal and a modeless dialog, a ListBox and ListView with Add/Remove, a context menu, and an Exit button, so each table row can be produced on purpose; KeePass 2 portable is a real-app cross-check. WinForms dialogs are real Win32 windows, so they likely match the Win32 dialog row, but that needs measuring rather than assuming. A matching WPF fixture would make the WPF rows deterministic too.
+
+For Electron the bigger risk was false positives rather than teardown shape — `IsDetached` runs on every action and treats "no raw-view parent" as gone, so a Chromium node reported without a parent would fail every action on it — and `samples/ConsumerVsCodeTests` rules that out: its end-to-end VS Code run (launch, first-run wizard, editor, save, integrated terminal) passes with the check on every action.
+
+So every detection site — `EnsureForeground`, both operators' `TryGetValueAsync`, `ScrollAction`, `SetFocusAction`, both UIA providers' `ThrowIfScopeGone` calls — goes through `ElementInputHelpers`: `IsStaleFailure(ex, element)` for a failed live read (`UIA_E_ELEMENTNOTAVAILABLE`/`ElementNotAvailableException`, or E_UNEXPECTED once the owning process has exited, using an internal `ElementHandle.ProcessId` captured at wrap time since a dead element can't be asked; with the process alive E_UNEXPECTED stays an ordinary failure, preserving the VLC tolerance), and `IsDetached(element)` for a successful read of an element with no raw-view parent (every attached element has at least the desktop). Before this, UIA3 swallowed the post-exit E_UNEXPECTED and clicked at the dead element's cached `BoundingRect`, UIA2 leaked it as a raw `COMException`, and an element from a closed XAML dialog sailed through every check to a click wherever the dialog used to be. Hidden-but-attached elements (the last row) are deliberately *not* stale — whether acting on one is an error is an actionability question, not a staleness one.
+
+Out of scope: the `AutoMancerXPath`/`AutoMancerPath` walkers swallow per-node failures and can return a short list (a separate gap); a single match that dies while being wrapped is dropped, which is correct, since it's gone.
 
 **Creates:**
-- `src/AutoMancer.Engine/AppOptions.cs` — add `ReresolveOnStale` bool, default `false`
-- `src/AutoMancer.Engine/Actions/ClickAction.cs` (and the other SendInput-fallback actions) — catch the stale-element COM exception, and when `ReresolveOnStale` is set, re-resolve via `RuntimeId` and retry once before rethrowing
+- `src/AutoMancer.Engine/Errors/StaleElementError.cs` — carries the stale `ElementHandle`, mirroring `ElementNotInteractableError`'s shape; `inner` is optional, since Win32's ownership check, the detached check, and the scope liveness probe have no exception to chain
+- `src/AutoMancer.Engine/AppOptions.cs` — add `ReresolveOnStale` bool, default `true`
+- `src/AutoMancer.Engine/Actions/ElementInputHelpers.cs` — shared `IsStaleFailure`/`IsDetached`/`Stale`/`ThrowIfScopeGone`, the one definition of stale every detection site uses (see above); `EnsureForeground` throws `StaleElementError` through them, while any other failure of its live read keeps the original swallow-and-continue behavior unchanged
+- `src/AutoMancer.Engine/Core/ElementHandle.cs` — internal `ProcessId`, set by both UIA providers' `Wrap`
+- `src/AutoMancer.Engine/App.cs` — private `FindAndRunAsync` (find + locator-based stale retry) and `SettleAsync`, called in sequence by every element-targeting action — applied uniformly (matching Playwright's single shared actionability/retry pipeline conceptually) rather than to a curated subset, since `EnsureForeground` throws unconditionally for all of them regardless; `FindByScrollingAsync` switches to a `Locator` container, which its scroll loop re-finds itself when it goes stale (each re-find counting toward `maxScrolls`)
+- `src/AutoMancer.Engine/Providers/Uia3Provider.cs` / `Uia2Provider.cs` / `Win32Provider.cs` — `FindScopedElementAsync`/`FindScopedElementsAsync` raise `StaleElementError` for a gone scope instead of returning null/empty (UIA: private helpers take the scope handle directly and the shared `ElementInputHelpers.ThrowIfScopeGone` liveness probe confirms it; Win32: `ValidScopeHandle` throws). `Uia3Provider.Automation` becomes `internal`, so `IsDetached` reuses the one `IUIAutomation` instance for its raw-view parent lookup; every `Uia2Provider` catch also covers `COMException` and `ElementNotAvailableException` (which derives from `SystemException`, not `InvalidOperationException`), so post-exit E_UNEXPECTED can't escape a provider
+- `src/AutoMancer.Engine/Core/ElementResolver.cs` — `FindViaFreshScopeAsync` treats a stale scope as a miss for that poll; private `RetryOnStaleScopeAsync` (immediate, `ImplicitWaitMs`-capped, honoring `ReresolveOnStale`) wraps `FindAllScopedAsync`'s `Locator`-scope path and both Spatial-scope branches
+- `src/AutoMancer.Engine/Core/ElementProviderOptions.cs` — add `ReresolveOnStale`, set by `App` from `AppOptions`
+- `src/AutoMancer.Engine/Operators/Uia3Operator.cs` / `Uia2Operator.cs` — `TryGetValueAsync` raises `StaleElementError` through the shared checks (detached included) instead of returning `null`; UIA2's read also tolerates a non-stale `COMException` like UIA3's
+- `src/AutoMancer.Engine/Actions/ScrollAction.cs` / `SetFocusAction.cs` — classify failures through `IsStaleFailure`; `ScrollAction` also refuses a detached element, which would otherwise accept `ScrollIntoView` as a silent no-op (`SetFocusAction` gets that via `EnsureForeground`)
+- `src/AutoMancer.Engine/Core/IElementProvider.cs` — `FindScopedElementAsync`/`FindScopedElementsAsync` contracts document `StaleElementError` for a gone scope as distinct from not-found
 
 - [ ] **Implement and build**
 
@@ -320,33 +361,91 @@ dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
 
 **Done when:** Engine builds with 0 errors.
 
-**Future extension:** A staleness *wait* — the inverse of this task's re-resolve — would let a caller wait until an element/dialog detaches from the tree, for close-and-continue flows, instead of polling `FindAsync` for absence. Same `RuntimeId`-based staleness detection this task already adds, used to confirm absence rather than to recover from it.
+**Future extension:** A staleness *wait* — the inverse of this task's re-resolve — would let a caller wait until an element/dialog detaches from the tree, for close-and-continue flows, instead of polling `FindAsync` for absence. Same `StaleElementError` detection this task already adds, used to confirm absence rather than to recover from it.
 
 ---
 
-### Task 2.2.3: Unit tests for Stage 2.2's wait and resilience primitives
+### Task 2.2.3: Tests for stale-element and scoped-find resilience
 
-**What:** A resilience test simulating a stale COM failure via a mock provider, verifying the opt-in retry re-resolves and succeeds, plus a control test proving non-opted-in calls fail exactly as they do today (regression guard for the "default behavior never changes" claim in Task 2.2.2).
+**What:** A resilience test simulating a stale COM failure via a mock provider, verifying that with `ReresolveOnStale = true` (the default) the action re-runs its original locator and succeeds against the freshly found element; a second test verifying that with `ReresolveOnStale = false` the same setup lets `StaleElementError` propagate to the caller untouched, rather than being silently retried; plus a control test proving a *non*-stale `COMException` (the VLC split-button `MenuItem` case) is still silently swallowed exactly as before, regardless of `ReresolveOnStale` — `EnsureForeground` only promotes failures the shared stale definition recognizes (`UIA_E_ELEMENTNOTAVAILABLE`, E_UNEXPECTED once the owning process has exited, or a detached element), so every other failure path must stay provably untouched.
 
 **Creates:**
-- `tests/AutoMancer.Engine.Tests/Actions/StaleElementResilienceTests.cs` — mock `IElementOperator`/`IElementProvider` throws the stale-element `COMException` once; with `ReresolveOnStale = true`, `ElementResolver` re-resolves via `RuntimeId` and the action succeeds; with the flag unset (default), the same setup throws exactly as it does in current Phase 1 behavior
+- `tests/AutoMancer.Engine.Tests/Actions/StaleElementResilienceTests.cs` — mock `IElementOperator`/`IElementProvider` throws the stale-element `COMException` once; with `ReresolveOnStale = true`, the original locator is re-run (returning a fresh handle with a *different* id, as real UIA would for a recreated element) and the action succeeds; with `ReresolveOnStale = false`, `StaleElementError` propagates out of `ClickAsync`/`TypeAsync`/`ClearAsync` for the caller to catch; a non-stale `COMException` from the same mock is swallowed and the action still succeeds via `SendInput`, either way; and, end to end through the real `ScrollWheelAction`, a `FindByScrollingAsync` container that goes stale mid-scroll — including only after `ImplicitWaitMs` has already elapsed — is re-found and the search continues
+- `tests/AutoMancer.Engine.Tests/Core/FindByScrollingTests.cs` — the scroll loop's own container handling: a container that goes stale on a scroll is re-found and the search continues against it (no restart); one that goes stale every iteration ends after `maxScrolls` with `ElementNotFoundError`, one re-find per iteration; one that goes stale during the final attempt gets one re-find; `ReresolveOnStale = false` propagates the first stale container
+- `tests/AutoMancer.Engine.Tests/Resolver/ElementResolverTests.cs` — scoped-find staleness: a held-`ElementHandle` scope's `StaleElementError` propagates out of `FindAllScopedAsync`; a `Locator` scope that goes stale mid-`FindAllScopedAsync` is re-resolved and returns the rebuilt scope's matches with no `PollIntervalMs` delay; one that no longer resolves returns empty; one that stays stale past `ImplicitWaitMs` propagates; `ReresolveOnStale = false` propagates on the first stale; a control proves a live scope with no matches makes exactly one pass; single-element `FindScopedAsync` treats a scope that went stale between resolve and search as a miss and finds the rebuilt scope next poll (or propagates with `ReresolveOnStale = false`); and a Spatial scope that goes stale reruns the Spatial resolution for both `FindScopedAsync` and `FindAllScopedAsync`
+- `tests/AutoMancer.Engine.Tests/Providers/ScopeResolutionTests.cs` — Win32's foreign-process scope hwnd raises `StaleElementError` from both `FindScopedElementAsync` and `FindScopedElementsAsync`
+- `tests/AutoMancer.Engine.Tests/Integration/Paint/StaleElementRegressionTests.cs` — `uia2`/`uia3` theory: a live scope with no matches returns null/empty, then after killing Paint both `FindScopedElementAsync` and `FindScopedElementsAsync` raise `StaleElementError` carrying the scope; a closed Resize dialog's held Cancel button raises `StaleElementError` from `EnsureForeground`, `TryGetValueAsync`, and as a `FindScopedElementsAsync` scope, while its native `TryClickAsync` and the held Horizontal box's `TrySetValueAsync` decline (a detached element exposes no patterns), so the native path falls through to `EnsureForeground` instead of silently succeeding; kills wait for the window owner's exit rather than a fixed delay, so they land in the E_UNEXPECTED window deterministically instead of skipping past it most of the time
+- `tests/AutoMancer.Engine.Tests/Actions/ElementInputHelpersTests.cs` — `IsStaleFailure` classification (stale HRESULT, `ElementNotAvailableException`, E_UNEXPECTED with the process exited vs. alive vs. unknown, an unrelated COM failure) and `EnsureForeground` throwing on post-exit E_UNEXPECTED while keeping log-and-continue for a live process
 
 - [ ] **Write tests, run (expect FAIL), implement, run (expect PASS)**
 
 ```bash
-dotnet test tests/AutoMancer.Engine.Tests/ --filter "StaleElementResilienceTests"
+dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category!=Integration&(FullyQualifiedName~StaleElementResilienceTests|FullyQualifiedName~ElementResolverTests|FullyQualifiedName~ScopeResolutionTests|FullyQualifiedName~ElementInputHelpersTests|FullyQualifiedName~FindByScrollingTests)"
+dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration&FullyQualifiedName~StaleElementRegressionTests"
 ```
 
-**Done when:** Both the opt-in-succeeds and opt-out-fails-as-before cases pass.
+**Done when:** The auto-retry, opt-out-propagates, and non-stale-still-swallowed cases pass, along with the scoped-find staleness, stale-classification, and live Paint process-kill and closed-dialog cases.
 
 ---
 
-### Task 2.2.4: Extend `LocatorExpect` with `WaitConditions`-backed assertions
+### Task 2.2.4: Live actionability checks, and `app.Force` to opt out per call
 
-**What:** `AutoMancer.Testing`'s `LocatorExpect` gets `ToBeEnabledAsync()` (built on Task 2.2.1's `WaitConditions.IsEnabled()`) and `ToContainTextAsync(string substring)` (built on `WaitConditions.NameContains`) — so `Expect()` gets the same conditions `WaitForAsync` does, instead of only the four hand-written checks Stage 1.9 shipped (`ToHaveNameAsync`/`ToBeVisibleAsync`/`ToHaveTextAsync`/`ToHaveValueAsync`). Each new assertion follows the existing `WaitOrFailAsync` pattern already used by `ToHaveNameAsync` et al. — no new failure-message plumbing needed.
+**What:** `ElementInputHelpers.EnsureInteractable` reads `IsEnabled`/`IsOffscreen` as cached on the `ElementHandle` at find time, and only runs on the synthesized-input path (`GetCenter`, `TypeAction`, `ClearAction`) — the native Invoke/SetValue path runs no check at all. Holding Notepad's "New tab" File-menu item and then closing the menu showed the cost: cached `IsOffscreen=false` with its old bounds, live `IsOffscreen=true` with empty bounds and no clickable point — yet a native Invoke on it still opened a new tab, which no user can do with the menu closed, and on the synthesized path the cached check would have passed and clicked wherever the item used to be. (A locator can't reach that item while the menu is closed, since the popup sits outside the session's root window, so this bites held handles.) The cached check is wrong in the other direction too: an element found offscreen and since scrolled into view still fails it. Selenium (`ElementNotInteractableException`) and Playwright (auto-waited actionability) both enforce this at the base, so this task keeps the existing policy and makes it live:
+1. **Live state.** `EnsureInteractable` reads `IsEnabled`, `IsOffscreen`, and the bounding rectangle live; empty live bounds count as not visible. A synthesized click aims at the center of the *live* bounds, not the cached ones.
+2. **Both paths.** It runs before the native Invoke/SetValue attempt as well as before synthesized input, for every input action: `ClickAsync`, `RightClickAsync`, `DoubleClickAsync`, `HoverAsync`, `TypeAsync`, `ClearAsync`, `ClickAtAsync(Locator)`, `ScrollWheelAsync`. `ScrollIntoViewAsync` is exempt — making an offscreen element visible is its whole job — as are `SetFocusAsync` and `GetValueAsync`.
+3. **Auto-wait.** `FindAndRunAsync` treats `ElementNotInteractableError` like `StaleElementError`: re-find and retry every `PollIntervalMs` until `ImplicitWaitMs`, then let it propagate — Playwright's "wait until actionable", so a button that's still enabling or a dialog still animating in doesn't fail a test outright.
+4. **`app.Force` — a per-call opt-out.** `public App Force` returns a cached view of the same `App`: same session, providers, and options, created once. It's built through an internal constructor with `ownsSession: false`, so disposing it never closes the app under test, and its own `ElementResolver` (over the parent's providers) stamps an internal `ElementHandle.Force` alongside `Logger`/`ForegroundActivationTimeoutMs`. A forced handle skips step 1's enabled/visible gate and step 3's wait — the documented escape hatch for invoking a hidden menu command on purpose, or for a framework whose `IsOffscreen` can't be trusted: `await app.Force.ClickAsync(Locator.ByName("New tab"))`. Force never skips stale detection (a forced action on a gone element still raises `StaleElementError` and still re-resolves under `ReresolveOnStale`), and a forced *synthesized* input still needs non-empty live bounds — it skips the waiting, never the need for a real point, so it can't click at (0,0) or at an element's last-known position.
+
+Force is opt-in per call only — there's deliberately no `AppOptions.Force` run-wide default yet. A per-call parameter was rejected: a `bool force` before `ct` on every action would silently rebind positional `ct` (the same trap Task 2.1.7 hit), and one after `ct` breaks the CancellationToken-last convention (CA1068). Behavior change: acting on a hidden or disabled element through a held handle used to succeed via native Invoke and now waits, then throws `ElementNotInteractableError` — `app.Force` is the documented way back.
 
 **Creates:**
-- `src/AutoMancer.Testing/LocatorExpect.cs` — add `ToBeEnabledAsync(CancellationToken ct = default)`, `ToContainTextAsync(string substring, CancellationToken ct = default)`
+- `src/AutoMancer.Engine/Actions/ElementInputHelpers.cs` — `EnsureInteractable` reads live state and honors `ElementHandle.Force`; `GetCenter` uses live bounds
+- `src/AutoMancer.Engine/Actions/ClickAction.cs` / `DoubleClickAction.cs` / `HoverAction.cs` / `TypeAction.cs` / `ClearAction.cs` / `ScrollWheelAction.cs` — call `EnsureInteractable` before the native-pattern attempt, not only before synthesized input
+- `src/AutoMancer.Engine/Core/ElementHandle.cs` — internal `Force`
+- `src/AutoMancer.Engine/Core/ElementResolver.cs` — stamps `Force` on returned handles when constructed for a forced view
+- `src/AutoMancer.Engine/App.cs` — `Force` property and its internal non-owning constructor; `DisposeAsync` a no-op when the session isn't owned; `FindAndRunAsync` retries `ElementNotInteractableError` unless forced
+
+- [ ] **Implement and build**
+
+```bash
+dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
+```
+
+**Done when:** Engine builds with 0 errors.
+
+**Future extensions:**
+- `AppOptions.Force` — a run-wide default for a whole session against a framework whose `IsOffscreen` is unreliable; `app.Force` stays the per-call form.
+- `ElementHandle.WithForce()` — force a handle already held from a non-forced `App` when no locator can re-find it (today: `app.Force.ClickAsync(Locator.ByRuntimeId(handle.Id))`, which works whenever the element is still findable).
+- Folding Task 2.2.7's occlusion check into the base gate as Playwright's "receives events" step, if it proves cheap and reliable enough — it stays opt-in until then.
+
+---
+
+### Task 2.2.5: Tests for live actionability and `app.Force`
+
+**What:** Unit tests against mocked live reads, plus a live Notepad regression for the hidden-menu-item case that motivated Task 2.2.4.
+
+**Creates:**
+- `tests/AutoMancer.Engine.Tests/Actions/ActionabilityTests.cs` — live state overrides cached state in both directions (cached visible/live hidden is rejected; cached offscreen/live visible is allowed); a hidden or disabled element is rejected *before* the native Invoke runs (the mock's Invoke is never called); empty live bounds are rejected even with `IsOffscreen=false`; a synthesized click aims at the live center, not the cached one
+- `tests/AutoMancer.Engine.Tests/Resolver/` or `AppTests.cs` — `FindAndRunAsync` polls a not-yet-interactable element and succeeds once it becomes interactable, and throws `ElementNotInteractableError` after `ImplicitWaitMs`; through `app.Force` the same element is acted on immediately with no wait; `app.Force` on a stale element still throws `StaleElementError`; a forced synthesized click with empty bounds still throws; disposing `app.Force` leaves the session (and process) alive; `app.Force` returns the same cached instance each time
+- `tests/AutoMancer.Engine.Tests/Integration/Notepad/ActionabilityIntegrationTests.cs` — open Notepad's File menu and hold its "New tab" item twice, once found through `app` and once through `app.Force`, then close the menu: `ClickAction.ExecuteAsync` on the default handle throws `ElementNotInteractableError` and opens no tab, while on the forced handle it opens one — tab count asserted both ways. (Both handles are found while the menu is open because no locator, `ByRuntimeId` included, can reach the item once it's closed.)
+
+- [ ] **Write tests, run (expect FAIL), implement, run (expect PASS)**
+
+```bash
+dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category!=Integration&(FullyQualifiedName~Actionability|FullyQualifiedName~Force)"
+dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration&FullyQualifiedName~Actionability"
+```
+
+**Done when:** All cases pass, including the live Notepad hidden-menu regression.
+
+---
+
+### Task 2.2.6: Extend `LocatorExpect` with `WaitConditions`-backed assertions
+
+**What:** `AutoMancer.Testing`'s `LocatorExpect` gets `ToBeEnabledAsync()` (built on Task 2.2.1's `WaitConditions.IsEnabled()`), `ToContainTextAsync(string substring)` (built on `WaitConditions.NameContains`), and `ToHaveCountAsync(int expected)` — Playwright's `toHaveCount`, polling single-pass `FindAllAsync` via `Poll.UntilAsync` (like `ToHaveValueAsync`) and reporting the last count seen on timeout; it's the wait half `FindAllAsync` itself deliberately doesn't do (see Task 2.2.2), and the `Expect()` form of Task 2.2.1's `NumberOfElementsToBe` future extension — so `Expect()` gets the same conditions `WaitForAsync` does, instead of only the four hand-written checks Stage 1.9 shipped (`ToHaveNameAsync`/`ToBeVisibleAsync`/`ToHaveTextAsync`/`ToHaveValueAsync`). Each new assertion follows the existing `WaitOrFailAsync` pattern already used by `ToHaveNameAsync` et al. — no new failure-message plumbing needed.
+
+**Creates:**
+- `src/AutoMancer.Testing/LocatorExpect.cs` — add `ToBeEnabledAsync(CancellationToken ct = default)`, `ToContainTextAsync(string substring, CancellationToken ct = default)`, `ToHaveCountAsync(int expected, int? timeoutMs = null, int? pollIntervalMs = null, CancellationToken ct = default)`
 - `tests/AutoMancer.Engine.Tests/TestingAdapter/LocatorExpectTests.cs` — extend with cases mirroring the existing `ToHaveNameAsync` tests (matches immediately, retries until match, times out with a descriptive message)
 
 - [ ] **Write tests, run (expect FAIL), implement, run (expect PASS)**
@@ -355,13 +454,13 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "StaleElementResilienceTests
 dotnet test tests/AutoMancer.Engine.Tests/ --filter "FullyQualifiedName~LocatorExpectTests"
 ```
 
-**Done when:** `WaitForAsync` and `Expect()` share a starter vocabulary instead of `WaitForAsync` alone having one; flaky COM staleness has an opt-in escape hatch that never changes default behavior.
+**Done when:** `WaitForAsync` and `Expect()` share a starter vocabulary instead of `WaitForAsync` alone having one; `ToHaveCountAsync` waits for a collection to reach an expected size, the wait half single-pass `FindAllAsync` deliberately leaves out.
 
 ---
 
-### Task 2.2.5: `App.IsUnobscuredAsync` — occlusion check
+### Task 2.2.7: `App.IsUnobscuredAsync` — occlusion check
 
-**What:** An opt-in occlusion check, not a gate on any existing action — `App.IsUnobscuredAsync(Locator locator, CancellationToken ct = default)`. Cross-window half works for every provider via a new `NativeMethods.WindowFromPoint` compared against the resolved element's own top-level HWND; same-window/sibling-overlay half only for `uia3`-resolved elements, via a new `Uia3Provider` internal helper that walks ancestors from `IUIAutomation.ElementFromPoint` (bounded by the existing `MaxTreeDepth`, compared via `CompareElements`) — a `uia2`/`win32`-resolved element degrades to the cross-window check alone rather than throwing. This is a different shape than Tasks 2.2.1–2.2.4: it needs a live COM/Win32 call at check time, not a read of cached `ElementHandle` state, but it belongs in this stage anyway as the same actionability-primitive family Selenium's `ExpectedConditions`/Playwright's actionability checks live in.
+**What:** An opt-in occlusion check, not a gate on any existing action — `App.IsUnobscuredAsync(Locator locator, CancellationToken ct = default)`. Cross-window half works for every provider via a new `NativeMethods.WindowFromPoint` compared against the resolved element's own top-level HWND; same-window/sibling-overlay half only for `uia3`-resolved elements, via a new `Uia3Provider` internal helper that walks ancestors from `IUIAutomation.ElementFromPoint` (bounded by the existing `MaxTreeDepth`, compared via `CompareElements`) — a `uia2`/`win32`-resolved element degrades to the cross-window check alone rather than throwing. This is a different shape than the cached-state predicates of Tasks 2.2.1 and 2.2.6: it needs a live COM/Win32 call at check time, not a read of cached `ElementHandle` state — like Task 2.2.4's live actionability checks — and it belongs in this stage anyway as the same actionability-primitive family Selenium's `ExpectedConditions`/Playwright's actionability checks live in.
 
 **Creates:**
 - `src/AutoMancer.Engine/Providers/NativeMethods.cs` — add `WindowFromPoint` P/Invoke declaration
@@ -383,7 +482,7 @@ dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
 
 ---
 
-### Task 2.2.6: Integration test for occlusion detection
+### Task 2.2.8: Integration test for occlusion detection
 
 **What:** Integration test against live Notepad — an on-screen button reports unobscured; the same button reports obscured once the Save-changes `ContentDialog` covers it.
 
@@ -938,7 +1037,7 @@ Mirrors roadmap-spec.md's per-phase checklist; see there for the authoritative, 
 
 - [x] Task 2.1.6 — spatial and property locators find elements the fixed strategy set can't reach
 - [x] Task 2.1.9 — scoped find disambiguates identically-matched elements, and virtualized-list find locates unrealized items
-- [ ] Task 2.2.4 — `Expect()` and `WaitForAsync` share a wait-condition vocabulary
+- [ ] Task 2.2.6 — `Expect()` and `WaitForAsync` share a wait-condition vocabulary
 - [ ] Task 2.3.4 — native context menu fallback works when UIA can't see the popup
 - [ ] Task 2.4.2 — resource watch returns a plausible sample series against a live app
 - [ ] Task 2.5.3 — accessibility audit reports a deliberately-unnamed control

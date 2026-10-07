@@ -20,6 +20,9 @@ public sealed class ElementHandle
     public bool? IsEnabled { get; init; }
     public bool? IsOffscreen { get; init; }
 
+    // Id of the process that owns this element, read when it was found; 0 when unknown. Lets stale detection tell UIA's post-exit E_UNEXPECTED from an ordinary failure, since a dead element can't be asked for it.
+    internal int ProcessId { get; init; }
+
     // The provider that resolved this element — retained for re-finding and diagnostics.
     internal IElementProvider? Provider { get; init; }
 

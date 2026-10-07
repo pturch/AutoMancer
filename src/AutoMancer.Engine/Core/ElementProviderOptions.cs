@@ -8,6 +8,9 @@ public sealed class ElementProviderOptions
     public int ImplicitWaitMs { get; init; } = 5000;
     public int PollIntervalMs { get; init; } = 500;
 
+    // Mirrors AppOptions.ReresolveOnStale for the resolver's own Locator-scope paths: true re-resolves a scope that goes stale mid-call, false lets StaleElementError propagate.
+    public bool ReresolveOnStale { get; init; } = true;
+
     // Preconfigured defaults suitable for most automation scenarios.
     public static ElementProviderOptions Default { get; } = new();
 }

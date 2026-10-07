@@ -17,7 +17,7 @@ public sealed class WindowCloseIntegrationTests
     [Fact]
     public async Task CloseWindowAsync_ClosesTheWindow()
     {
-        for (var testAttempt = 1; testAttempt <= 2; testAttempt++)
+        for (int testAttempt = 1; testAttempt <= 2; testAttempt++)
         {
             try
             {
@@ -41,7 +41,7 @@ public sealed class WindowCloseIntegrationTests
 
         try
         {
-            for (var attempt = 0; attempt < 3 && IsStillOpen(); attempt++)
+            for (int attempt = 0; attempt < 3 && IsStillOpen(); attempt++)
             {
                 await app.CloseWindowAsync();
                 var deadline = DateTime.UtcNow.AddSeconds(20);

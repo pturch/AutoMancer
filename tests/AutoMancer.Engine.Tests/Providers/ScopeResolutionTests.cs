@@ -1,6 +1,7 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
 using System.Diagnostics;
 using AutoMancer.Engine.Core;
+using AutoMancer.Engine.Errors;
 using AutoMancer.Engine.Providers;
 
 namespace AutoMancer.Engine.Tests.Providers;
@@ -51,18 +52,23 @@ public sealed class ScopeResolutionTests
 
     // The desktop window is a real, always-valid HWND, but it belongs to a system process rather than Session's own — stands in for a destroyed HWND that the OS has recycled for an unrelated window, which throws nothing (unlike a stale COM element) and so can't be caught by exception handling.
     [Fact]
-    public async Task Win32Provider_ScopeHwndBelongsToDifferentProcess_ReturnsNullInsteadOfSearchingWrongWindow()
+    public async Task Win32Provider_ScopeHwndBelongsToDifferentProcess_ThrowsStaleElementErrorInsteadOfSearchingWrongWindow()
     {
         var foreignWindowScope = new ElementHandle("hwnd:foreign", "win32", NativeMethods.GetDesktopWindow());
 
-        Assert.Null(await new Win32Provider().FindScopedElementAsync(AnyLocator, Session, foreignWindowScope));
+        var ex = await Assert.ThrowsAsync<StaleElementError>(() => new Win32Provider().FindScopedElementAsync(AnyLocator, Session, foreignWindowScope));
+
+        Assert.Same(foreignWindowScope, ex.Element);
     }
 
+    // Same recycled-HWND case for FindAll — a gone scope is reported, never read as "nothing matches".
     [Fact]
-    public async Task Win32Provider_ScopeHwndBelongsToDifferentProcess_FindElementsReturnsEmptyInsteadOfSearchingWrongWindow()
+    public async Task Win32Provider_ScopeHwndBelongsToDifferentProcess_FindElementsThrowsStaleElementError()
     {
         var foreignWindowScope = new ElementHandle("hwnd:foreign", "win32", NativeMethods.GetDesktopWindow());
 
-        Assert.Empty(await new Win32Provider().FindScopedElementsAsync(AnyLocator, Session, foreignWindowScope));
+        var ex = await Assert.ThrowsAsync<StaleElementError>(() => new Win32Provider().FindScopedElementsAsync(AnyLocator, Session, foreignWindowScope));
+
+        Assert.Same(foreignWindowScope, ex.Element);
     }
 }

@@ -117,7 +117,7 @@ public sealed class HelloWorldScriptDemoTests
         await dialog.TypeDirectAsync(fullPath);
         await dialog.PressKeyAsync(Key.Enter);
 
-        for (var attempt = 0; attempt < 20 && !File.Exists(fullPath); attempt++)
+        for (int attempt = 0; attempt < 20 && !File.Exists(fullPath); attempt++)
             await Task.Delay(250);
         Assert.True(File.Exists(fullPath), $"Expected '{fullPath}' to exist after Save As.");
     }

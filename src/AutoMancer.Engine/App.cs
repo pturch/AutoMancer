@@ -1,6 +1,7 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using AutoMancer.Engine.Actions;
 using AutoMancer.Engine.Core;
 using AutoMancer.Engine.Diagnostics;
@@ -18,6 +19,7 @@ public sealed class App : IAsyncDisposable
     private readonly int _actionDelayMs;
     private readonly int _foregroundActivationTimeoutMs;
     private readonly bool _killEntireProcessTree;
+    private readonly bool _reresolveOnStale;
     private readonly HeldKeyTracker _heldKeys = new();
     private readonly HeldMouseButtonTracker _heldMouseButtons = new();
     private readonly IEngineLogger? _logger;
@@ -54,6 +56,7 @@ public sealed class App : IAsyncDisposable
         _actionDelayMs = options.ActionDelayMs;
         _foregroundActivationTimeoutMs = options.ForegroundActivationTimeoutMs;
         _killEntireProcessTree = options.KillEntireProcessTree;
+        _reresolveOnStale = options.ReresolveOnStale;
         _logger = options.Logger;
         _windowsEventLogger = options.WindowsEventLogger;
         _combinedLogger = options.CombinedLogger;
@@ -66,6 +69,7 @@ public sealed class App : IAsyncDisposable
                 ProviderChain = [.. options.ProviderChain],
                 ImplicitWaitMs = options.ImplicitWaitMs,
                 PollIntervalMs = options.PollIntervalMs,
+                ReresolveOnStale = options.ReresolveOnStale,
             },
             logger: options.Logger,
             foregroundActivationTimeoutMs: options.ForegroundActivationTimeoutMs);
@@ -142,51 +146,81 @@ public sealed class App : IAsyncDisposable
     public Task<ElementHandle> FindScopedAsync(Locator locator, Locator scope, CancellationToken ct = default)
         => _resolver.FindScopedAsync(locator, _session, scope, ct);
 
-    // Finds all elements matching the locator within scope's subtree instead of the whole session; returns empty if none match — scope is resolved fresh as part of this call.
+    // Finds all elements matching the locator within scope's subtree instead of the whole session; returns empty if none match — scope is resolved fresh as part of this call, and re-resolved per ReresolveOnStale if it dies before the search completes.
     public Task<IReadOnlyList<ElementHandle>> FindAllScopedAsync(Locator locator, Locator scope, CancellationToken ct = default)
         => _resolver.FindAllScopedAsync(locator, _session, scope, ct);
 
-    // Finds itemLocator inside container's subtree, one wheel notch at a time, for virtualized ListView/ComboBox/DataGrid rows that aren't realized in the UIA tree until scrolled into view — ScrollAction can't help here since it needs an ElementHandle for the item, which is exactly what's missing. 
-    // Throws ElementNotFoundError immediately (rather than burning through maxScrolls) once CurrentVerticalScrollPercent stops changing between scrolls, since the container has hit the end of its scrollable range.
-    public Task<ElementHandle> FindByScrollingAsync(ElementHandle container, Locator itemLocator, int maxScrolls = 20, CancellationToken ct = default)
-        => FindByScrollingCoreAsync(container, itemLocator, maxScrolls, token => ScrollWheelAction.ExecuteAsync(container, 0, -1, token), ct);
+    // Finds itemLocator inside containerLocator's subtree one wheel notch at a time, for virtualized ListView/ComboBox/DataGrid rows the UIA tree doesn't realize until scrolled into view; throws ElementNotFoundError once maxScrolls or the scroll range runs out.
+    public Task<ElementHandle> FindByScrollingAsync(Locator containerLocator, Locator itemLocator, int maxScrolls = 20, CancellationToken ct = default)
+        // A rebuilt container is followed via containerLocator (per ReresolveOnStale); pass Locator.ByRuntimeId(handle.Id) to pin one specific element instead.
+        => FindByScrollingCoreAsync(containerLocator, itemLocator, maxScrolls, (container, token) => ScrollWheelAction.ExecuteAsync(container, 0, -1, token), ct);
 
-    // Same loop as FindByScrollingAsync with the scroll step swapped out — lets tests drive the reveal-after-N-scrolls and stall-detection logic against a fake provider without a real ScrollWheelAction/SendInput call.
-    internal async Task<ElementHandle> FindByScrollingCoreAsync(ElementHandle container, Locator itemLocator, int maxScrolls, Func<CancellationToken, Task> scroll, CancellationToken ct)
+    // Same loop as FindByScrollingAsync with the scroll step swapped out, so tests can drive it against a fake provider without a real ScrollWheelAction/SendInput call.
+    internal async Task<ElementHandle> FindByScrollingCoreAsync(Locator containerLocator, Locator itemLocator, int maxScrolls, Func<ElementHandle, CancellationToken, Task> scroll, CancellationToken ct)
     {
-        var stopwatch = Stopwatch.StartNew();
+        ElementHandle container = await _resolver.FindAsync(containerLocator, _session, ct);
         // Set only after a scroll actually happens — comparing against a pre-scroll baseline would flag a stall after just one scroll instead of two consecutive ones.
         double? previousPercent = null;
 
-        for (var i = 0; i < maxScrolls; i++)
+        // Each iteration: try to find the item, and if it isn't there yet, scroll one notch and check whether the scroll actually moved anything.
+        // Two try layers because two different things can fail: the inner one swallows item-level misses (fall through to scroll), the outer one recovers when the container itself dies.
+        for (int i = 0; i < maxScrolls; i++)
         {
+            // Outer try spans both the find and the scroll, since a stale container can surface from either — the find scopes its search to container, and the scroll targets it.
             try
             {
-                return await ResolveFullyIntoViewAsync(itemLocator, container, ct);
+                // Inner try only covers the find; a miss here is the expected "keep scrolling" case, not an error.
+                try
+                {
+                    // Single pass, no implicit wait — scrolling is the retry here, so polling each tick would just stall the loop.
+                    return await ResolveFullyIntoViewAsync(itemLocator, container, ct, implicitWaitMs: 0);
+                }
+                // The stale.Element != container filter is what lets a stale *container* skip this catch and reach the outer one; a stale *row* is just another miss.
+                catch (Exception ex) when (ex is ElementNotFoundError || (ex is StaleElementError stale && stale.Element != container))
+                {
+                    // Not realized yet, or a row recycled between find and ScrollIntoView — scroll and try again below.
+                }
+
+                EnsureWindowNotMinimized();
+                await scroll(container, ct);
+                if (_actionDelayMs > 0)
+                    await Task.Delay(_actionDelayMs, ct);
+
+                // Null when the container has no ScrollPattern, which disables stall detection and leaves maxScrolls as the only bound.
+                var currentPercent = GetVerticalScrollPercent(container);
+                // Two consecutive scrolls landed at the same percent, so we're at the bottom — skip the remaining iterations and go straight to the final attempt.
+                if (currentPercent.HasValue && previousPercent.HasValue && currentPercent.Value == previousPercent.Value)
+                    break;
+                previousPercent = currentPercent;
             }
-            catch (ElementNotFoundError)
+            // The container itself was rebuilt (e.g. the list re-rendered for a new folder): follow its locator and keep going, this iteration still counting toward maxScrolls — not FindAndRunAsync, whose whole-call retry would restart the loop and lose that bound.
+            // With ReresolveOnStale off the filter fails and the StaleElementError propagates to the caller.
+            catch (StaleElementError ex) when (ex.Element == container && _reresolveOnStale)
             {
-                // Not realized in the tree yet — scroll and try again below.
+                _logger?.Warn("Scroll container went stale, re-resolving via locator", new { containerLocator.Strategy, containerLocator.Value, staleId = container.Id, iteration = i });
+                container = await _resolver.FindAsync(containerLocator, _session, ct);
+                // The new container's scroll position is unrelated to the old one's, so comparing across them could fake a stall.
+                previousPercent = null;
             }
-
-            EnsureWindowNotMinimized();
-            await scroll(ct);
-            if (_actionDelayMs > 0)
-                await Task.Delay(_actionDelayMs, ct);
-
-            var currentPercent = GetVerticalScrollPercent(container);
-            if (currentPercent.HasValue && previousPercent.HasValue && currentPercent.Value == previousPercent.Value) // We're at the bottom of the page
-                _resolver.ThrowNotFound(itemLocator, "scroll", (int)stopwatch.ElapsedMilliseconds);
-            previousPercent = currentPercent;
         }
 
-        return await ResolveFullyIntoViewAsync(itemLocator, container, ct);
+        // Last chance gets the full ImplicitWaitMs poll, so a miss carries ElementNotFoundError's closest-match hint; a container rebuilt during it gets one re-find, keeping the call bounded.
+        try
+        {
+            return await ResolveFullyIntoViewAsync(itemLocator, container, ct);
+        }
+        catch (StaleElementError ex) when (ex.Element == container && _reresolveOnStale)
+        {
+            _logger?.Warn("Scroll container went stale, re-resolving via locator", new { containerLocator.Strategy, containerLocator.Value, staleId = container.Id, iteration = maxScrolls });
+            container = await _resolver.FindAsync(containerLocator, _session, ct);
+            return await ResolveFullyIntoViewAsync(itemLocator, container, ct);
+        }
     }
 
     // Scrolls the found item fully into view before returning it — a virtualized row can be realized in the tree right at a scroll's edge while still IsOffscreen.
-    private async Task<ElementHandle> ResolveFullyIntoViewAsync(Locator itemLocator, ElementHandle container, CancellationToken ct)
+    private async Task<ElementHandle> ResolveFullyIntoViewAsync(Locator itemLocator, ElementHandle container, CancellationToken ct, int? implicitWaitMs = null)
     {
-        var found = await _resolver.FindScopedAsync(itemLocator, _session, container, ct);
+        var found = await _resolver.FindScopedAsync(itemLocator, _session, container, ct, implicitWaitMs);
         await ScrollAction.ExecuteAsync(found, ct);
         // IsOffscreen/BoundingRect are init-only snapshots, so found's are now stale — re-resolve for fresh ones, same idiom FindSpatialAsync uses.
         return await _resolver.FindAsync(Locator.ByRuntimeId(found.Id), _session, ct);
@@ -196,11 +230,12 @@ public sealed class App : IAsyncDisposable
     public Task<int> RegisterCustomPropertyAsync(Guid propertyGuid, string programmaticName, UiaAutomationType type, CancellationToken ct = default)
         => UiaRegistrarInterop.RegisterCustomPropertyAsync(propertyGuid, programmaticName, type, ct);
 
-    // Finds the element and reads its current value via ValuePattern or TextPattern; returns null when the resolved provider has no operator (e.g. Win32) or neither pattern is supported.
+    // Finds the element and reads its current value via ValuePattern or TextPattern; returns null when the resolved provider has no operator (e.g. Win32) or neither pattern is supported. A stale element is re-resolved per ReresolveOnStale rather than read as null.
     public async Task<string?> GetValueAsync(Locator locator, CancellationToken ct = default)
     {
-        var element = await _resolver.FindAsync(locator, _session, ct);
-        return element.Operator is null ? null : await element.Operator.TryGetValueAsync(element, ct);
+        string? value = null;
+        await FindAndRunAsync(locator, async el => value = el.Operator is null ? null : await el.Operator.TryGetValueAsync(el, ct), ct);
+        return value;
     }
 
     // Snapshots the element tree from the first provider in the chain that returns a non-empty result; null if all providers return empty.
@@ -226,12 +261,10 @@ public sealed class App : IAsyncDisposable
     // Finds the element and clicks it; waits ActionDelayMs after the click for the UI to settle.
     public async Task ClickAsync(Locator locator, MouseButton button = MouseButton.Left, KeyModifiers modifiers = default, CancellationToken ct = default)
     {
-        var element = await _resolver.FindAsync(locator, _session, ct);
         EnsureWindowNotMinimized();
-        await ClickAction.ExecuteAsync(element, button, modifiers, ct);
+        await FindAndRunAsync(locator, el => ClickAction.ExecuteAsync(el, button, modifiers, ct), ct);
         _logger?.Info("Clicked", new { locator.Strategy, locator.Value });
-        if (_actionDelayMs > 0)
-            await Task.Delay(_actionDelayMs, ct);
+        await SettleAsync(ct);
     }
 
     // Finds the element and right-clicks it; waits ActionDelayMs after the click for the UI to settle.
@@ -241,54 +274,53 @@ public sealed class App : IAsyncDisposable
     // Finds the element and double-clicks it; waits ActionDelayMs after the click for the UI to settle.
     public async Task DoubleClickAsync(Locator locator, CancellationToken ct = default)
     {
-        var element = await _resolver.FindAsync(locator, _session, ct);
         EnsureWindowNotMinimized();
-        await DoubleClickAction.ExecuteAsync(element, ct);
+        await FindAndRunAsync(locator, el => DoubleClickAction.ExecuteAsync(el, ct), ct);
         _logger?.Info("Double-clicked", new { locator.Strategy, locator.Value });
-        if (_actionDelayMs > 0)
-            await Task.Delay(_actionDelayMs, ct);
+        await SettleAsync(ct);
     }
 
     // Finds the element and moves the mouse to its center without clicking, to trigger hover states/tooltips.
     public async Task HoverAsync(Locator locator, CancellationToken ct = default)
     {
-        var element = await _resolver.FindAsync(locator, _session, ct);
         EnsureWindowNotMinimized();
-        await HoverAction.ExecuteAsync(element, ct);
+        await FindAndRunAsync(locator, el => HoverAction.ExecuteAsync(el, ct), ct);
         _logger?.Info("Hovered", new { locator.Strategy, locator.Value });
-        if (_actionDelayMs > 0)
-            await Task.Delay(_actionDelayMs, ct);
+        await SettleAsync(ct);
     }
 
     // Finds the element and types the given text into it, replacing its whole value if the provider supports native set-value rather than typing at the caret or over a selection — see TypeDirectAsync for real keystroke behavior; waits ActionDelayMs after for the UI to settle.
     public async Task TypeAsync(Locator locator, string text, CancellationToken ct = default)
     {
-        var element = await _resolver.FindAsync(locator, _session, ct);
         EnsureWindowNotMinimized();
-        await TypeAction.ExecuteAsync(element, text, ct);
+        await FindAndRunAsync(locator, el => TypeAction.ExecuteAsync(el, text, ct), ct);
         _logger?.Info("Typed", new { locator.Strategy, locator.Value });
-        if (_actionDelayMs > 0)
-            await Task.Delay(_actionDelayMs, ct);
+        await SettleAsync(ct);
     }
 
     // Finds the element and clears its content; waits ActionDelayMs after clearing for the UI to settle.
     public async Task ClearAsync(Locator locator, CancellationToken ct = default)
     {
-        var element = await _resolver.FindAsync(locator, _session, ct);
         EnsureWindowNotMinimized();
-        await ClearAction.ExecuteAsync(element, ct);
+        await FindAndRunAsync(locator, el => ClearAction.ExecuteAsync(el, ct), ct);
         _logger?.Info("Cleared", new { locator.Strategy, locator.Value });
-        if (_actionDelayMs > 0)
-            await Task.Delay(_actionDelayMs, ct);
+        await SettleAsync(ct);
     }
 
     // Finds the element and clicks its screen center via SendInput; use for WinUI3 buttons where InvokePattern skips the pointer-event pipeline.
     public async Task ClickAtAsync(Locator locator, CancellationToken ct = default)
     {
-        var element = await _resolver.FindAsync(locator, _session, ct);
-        var (x, y) = ElementInputHelpers.GetCenter(element);
-        await ClickAtAsync(x, y, ct);
+        EnsureWindowNotMinimized();
+        await FindAndRunAsync(locator, el => Task.Run(() =>
+        {
+            // Root first, since EnsureForeground skips elements with no native window of their own; EnsureForeground still runs for its live read, the only staleness check here (GetCenter reads cached bounds).
+            EnsureWindowReady();
+            ElementInputHelpers.EnsureForeground(el);
+            var (x, y) = ElementInputHelpers.GetCenter(el);
+            NativeMethods.SendMouseClick(x, y, _logger);
+        }, ct), ct);
         _logger?.Info("Clicked at element center", new { locator.Strategy, locator.Value });
+        await SettleAsync(ct);
     }
 
     // Clicks at a physical screen coordinate without finding a UIA element; useful for tools like the fill bucket that have no accessible target.
@@ -365,37 +397,31 @@ public sealed class App : IAsyncDisposable
         if (_actionDelayMs > 0) await Task.Delay(_actionDelayMs, ct);
     }
 
-    // Finds the element and scrolls it into view; waits ActionDelayMs after scrolling for the UI to settle. 
-    // No EnsureWindowNotMinimized() call — ScrollAction only ever uses ScrollItemPattern, never SendInput or SetForegroundWindow, so window state doesn't affect it.
+    // Finds the element and scrolls it into view; waits ActionDelayMs after scrolling for the UI to settle.
+    // No minimized-window check (unlike the other actions' EnsureForeground) — ScrollAction only ever uses ScrollItemPattern, never SendInput or SetForegroundWindow, so window state doesn't affect it.
     public async Task ScrollIntoViewAsync(Locator locator, CancellationToken ct = default)
     {
-        var element = await _resolver.FindAsync(locator, _session, ct);
-        await ScrollAction.ExecuteAsync(element, ct);
+        await FindAndRunAsync(locator, el => ScrollAction.ExecuteAsync(el, ct), ct);
         _logger?.Info("Scrolled into view", new { locator.Strategy, locator.Value });
-        if (_actionDelayMs > 0)
-            await Task.Delay(_actionDelayMs, ct);
+        await SettleAsync(ct);
     }
 
     // Finds the element and scrolls under it via mouse wheel; deltaY/deltaX are in wheel notches (positive deltaY scrolls up).
     public async Task ScrollWheelAsync(Locator locator, int deltaX, int deltaY, CancellationToken ct = default)
     {
-        var element = await _resolver.FindAsync(locator, _session, ct);
         EnsureWindowNotMinimized();
-        await ScrollWheelAction.ExecuteAsync(element, deltaX, deltaY, ct);
+        await FindAndRunAsync(locator, el => ScrollWheelAction.ExecuteAsync(el, deltaX, deltaY, ct), ct);
         _logger?.Info("Scrolled", new { locator.Strategy, locator.Value, deltaX, deltaY });
-        if (_actionDelayMs > 0)
-            await Task.Delay(_actionDelayMs, ct);
+        await SettleAsync(ct);
     }
 
     // Finds the element and sets keyboard focus to it.
     public async Task SetFocusAsync(Locator locator, CancellationToken ct = default)
     {
-        var element = await _resolver.FindAsync(locator, _session, ct);
         EnsureWindowNotMinimized();
-        await SetFocusAction.ExecuteAsync(element, ct);
+        await FindAndRunAsync(locator, el => SetFocusAction.ExecuteAsync(el, ct), ct);
         _logger?.Info("Focused", new { locator.Strategy, locator.Value });
-        if (_actionDelayMs > 0)
-            await Task.Delay(_actionDelayMs, ct);
+        await SettleAsync(ct);
     }
 
     // ---- Window management (public) ----
@@ -505,14 +531,50 @@ public sealed class App : IAsyncDisposable
             throw new WindowMinimizedError(_session.RootWindowHandle);
     }
 
-    // Reads IUIAutomationScrollPattern.CurrentVerticalScrollPercent for container; null when it wasn't resolved via uia3 or doesn't support ScrollPattern, in which case FindByScrollingAsync's stall detection is skipped and maxScrolls alone bounds the loop.
+    // Finds locator and runs action on it; on a StaleElementError with AppOptions.ReresolveOnStale on, re-runs locator and retries — a recreated element gets a new RuntimeId, so the locator is the only reliable way back to it.
+    private async Task FindAndRunAsync(Locator locator, Func<ElementHandle, Task> action, CancellationToken ct)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        while (true)
+        {
+            var element = await _resolver.FindAsync(locator, _session, ct);
+            try
+            {
+                // Actions must raise StaleElementError before dispatching any input, since a retry here re-runs the whole action — staleness detected after a partial SendInput would duplicate it.
+                await action(element);
+                return;
+            }
+            // Same ImplicitWaitMs/PollIntervalMs budget FindAsync/WaitForAsync use; ReresolveOnStale=false lets the error propagate instead, for callers driving their own recovery.
+            catch (StaleElementError) when (_reresolveOnStale && stopwatch.ElapsedMilliseconds < ImplicitWaitMs)
+            {
+                _logger?.Warn("Element went stale mid-action, re-resolving via locator", new { locator.Strategy, locator.Value, staleId = element.Id, elapsedMs = stopwatch.ElapsedMilliseconds });
+                await Task.Delay(PollIntervalMs, ct);
+            }
+        }
+    }
+
+    // Last step for every element-targeting action: pauses ActionDelayMs so the UI can settle; no-op when it's 0.
+    private Task SettleAsync(CancellationToken ct)
+        => _actionDelayMs > 0
+            ? Task.Delay(_actionDelayMs, ct)
+            : Task.CompletedTask;
+
+    // Reads IUIAutomationScrollPattern.CurrentVerticalScrollPercent for container; null if unavailable, in which case FindByScrollingAsync's stall detection is skipped for this iteration.
     private static double? GetVerticalScrollPercent(ElementHandle container)
     {
         if (container.NativeHandle is not IUIAutomationElement uiaElement)
             return null;
-        if (uiaElement.GetCurrentPattern(UIA_PatternIds.UIA_ScrollPatternId) is not IUIAutomationScrollPattern scrollPattern)
+        try
+        {
+            if (uiaElement.GetCurrentPattern(UIA_PatternIds.UIA_ScrollPatternId) is not IUIAutomationScrollPattern scrollPattern)
+                return null;
+            return scrollPattern.CurrentVerticalScrollPercent;
+        }
+        catch (COMException)
+        {
+            // Broad on purpose (not narrowed to the stale HRESULT): this is not an action, so any COM failure degrades to the same "can't tell you" null this method already returns for an unsupported pattern.
             return null;
-        return scrollPattern.CurrentVerticalScrollPercent;
+        }
     }
 
     // Instantiates one provider per name in the chain; unknown names are silently dropped.

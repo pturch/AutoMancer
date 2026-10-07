@@ -1,5 +1,6 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
 using AutoMancer.Engine.Core;
+using AutoMancer.Engine.Errors;
 
 namespace AutoMancer.Engine.Providers;
 
@@ -55,23 +56,21 @@ public sealed class Win32Provider : IElementProvider
     public Task<IReadOnlyList<ElementHandle>> FindElementsAsync(Locator locator, AppSession session, CancellationToken ct = default) =>
         FindAllAsync(session.RootWindowHandle, locator, ct);
 
-    // Finds the first child window under scope's hwnd matching the locator; null if none match, scope's NativeHandle isn't an IntPtr (came from a different provider)
-    // In Win32 its possible the hwnd no longer belongs to this session's process (destroyed and recycled by the OS for an unrelated window).
+    // Finds the first child window under scope's hwnd matching the locator; null if none match or scope's NativeHandle isn't an IntPtr (came from a different provider), StaleElementError if scope is gone.
     public Task<ElementHandle?> FindScopedElementAsync(Locator locator, AppSession session, ElementHandle scope, CancellationToken ct = default) =>
         FindFirstAsync(ValidScopeHandle(scope, session), locator, ct);
 
-    // Finds all child windows under scope's hwnd matching the locator; empty if none match or scope came from a different provider
-    // In Win32 its possible the hwnd no longer belongs to this session's process (destroyed and recycled by the OS for an unrelated window).
-
+    // Finds all child windows under scope's hwnd matching the locator; empty if none match or scope came from a different provider, StaleElementError if scope is gone.
     public Task<IReadOnlyList<ElementHandle>> FindScopedElementsAsync(Locator locator, AppSession session, ElementHandle scope, CancellationToken ct = default) =>
         FindAllAsync(ValidScopeHandle(scope, session), locator, ct);
 
-    // Returns scope's hwnd only if it's still owned by session's own process.
+    // Returns scope's hwnd, or null if it came from a different provider; throws StaleElementError if it no longer belongs to session's process (destroyed, possibly recycled by the OS for an unrelated window).
     private static IntPtr? ValidScopeHandle(ElementHandle scope, AppSession session)
     {
         if (scope.NativeHandle is not IntPtr hwnd) return null;
         NativeMethods.GetWindowThreadProcessId(hwnd, out var pid);
-        if ((int)pid != session.ProcessId) return null;
+        if ((int)pid != session.ProcessId)
+            throw new StaleElementError(scope, $"Scope window \"{scope.Name}\" no longer belongs to this session's process.");
         return hwnd;
     }
 

@@ -51,7 +51,7 @@ public static class ClickAction
         inputs.Add(SendInputBuilders.MouseInputAt(normX, normY, downFlag, mouseData));
         inputs.Add(SendInputBuilders.MouseInputAt(normX, normY, upFlag, mouseData));
 
-        for (var i = modifierKeys.Count - 1; i >= 0; i--)
+        for (int i = modifierKeys.Count - 1; i >= 0; i--)
             inputs.Add(SendInputBuilders.VkInput(modifierKeys[i], isKeyUp: true));
 
         NativeMethods.SendInputs(inputs.ToArray(), logger);

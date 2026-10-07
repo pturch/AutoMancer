@@ -1,5 +1,6 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
 using System.Runtime.InteropServices;
+using AutoMancer.Engine.Actions;
 using AutoMancer.Engine.Core;
 using AutoMancer.Engine.Operators;
 using Interop.UIAutomationClient;
@@ -13,7 +14,7 @@ public sealed class Uia3Provider : IElementProvider
 
     private const int MaxTreeDepth = 20;
 
-    private static readonly IUIAutomation Automation = new CUIAutomation8Class();
+    internal static readonly IUIAutomation Automation = new CUIAutomation8Class();
 
     // ---- Control type maps ----
 
@@ -76,8 +77,8 @@ public sealed class Uia3Provider : IElementProvider
         catch (COMException) { return null; }
     }
 
-    // Finds the first descendant of root() matching the locator; null if none match or the strategy is unsupported. AutoMancerXPath/AutoMancerPath ignore root() and always search from the session root.
-    private Task<ElementHandle?> FindFirstAsync(Func<IUIAutomationElement?> root, Locator locator, AppSession session, CancellationToken ct)
+    // Finds the first descendant of scope (or the session's root window when scope is null) matching the locator; null if none match or the strategy is unsupported, but throws StaleElementError when a non-null scope is itself gone. AutoMancerXPath/AutoMancerPath ignore scope and always search from the session root.
+    private Task<ElementHandle?> FindFirstAsync(ElementHandle? scope, Locator locator, AppSession session, CancellationToken ct)
     {
         return Task.Run(() =>
         {
@@ -90,27 +91,32 @@ public sealed class Uia3Provider : IElementProvider
             if (condition is null)
                 return (ElementHandle?)null;
 
-            var element = root();
+            var element = scope is null ? TryGetRoot(session) : scope.NativeHandle as IUIAutomationElement;
             if (element is null) return (ElementHandle?)null;
 
-            // A stale element mid-search can abort FindFirst entirely — treat that as not-found instead of throwing.
+            // A stale element mid-search can abort FindFirst entirely — treat that as not-found instead of throwing, unless it's the scope itself that's gone.
             try
             {
                 var found = element.FindFirst(TreeScope.TreeScope_Descendants, condition);
                 if (found is null)
-                    return null; // no element in the tree matched the locator
+                {
+                    // FindFirst returns null rather than throwing when scope is gone, so only a liveness probe can tell "scope died" from "nothing matches".
+                    ElementInputHelpers.ThrowIfScopeGone(scope, null);
+                    return null;
+                }
 
                 return Wrap(found); // a match was located, but Wrap can still be null if it went stale before we could read it
             }
             catch (Exception ex) when (ex is COMException or InvalidOperationException)
             {
+                ElementInputHelpers.ThrowIfScopeGone(scope, ex);
                 return null;
             }
         }, ct);
     }
 
-    // Finds every descendant of root() matching the locator; empty if none match or a dynamic app invalidates an element mid-search. AutoMancerXPath/AutoMancerPath ignore root() and always search from the session root.
-    private Task<IReadOnlyList<ElementHandle>> FindAllAsync(Func<IUIAutomationElement?> root, Locator locator, AppSession session, CancellationToken ct)
+    // Finds every descendant of scope (or the session's root window when scope is null) matching the locator; empty if none match or a dynamic app invalidates an element mid-search, but throws StaleElementError when a non-null scope is itself gone. AutoMancerXPath/AutoMancerPath ignore scope and always search from the session root.
+    private Task<IReadOnlyList<ElementHandle>> FindAllAsync(ElementHandle? scope, Locator locator, AppSession session, CancellationToken ct)
     {
         return Task.Run(() =>
         {
@@ -123,15 +129,21 @@ public sealed class Uia3Provider : IElementProvider
             if (condition is null)
                 return (IReadOnlyList<ElementHandle>)Array.Empty<ElementHandle>();
 
-            var element = root();
+            var element = scope is null ? TryGetRoot(session) : scope.NativeHandle as IUIAutomationElement;
             if (element is null)
                 return (IReadOnlyList<ElementHandle>)Array.Empty<ElementHandle>();
 
             try
             {
                 var matches = element.FindAll(TreeScope.TreeScope_Descendants, condition);
+                // FindAll returns null/empty rather than throwing when scope is gone, so only a liveness probe can tell "scope died" from "nothing matches".
+                if (matches is null || matches.Length == 0)
+                    ElementInputHelpers.ThrowIfScopeGone(scope, null);
+                if (matches is null)
+                    return (IReadOnlyList<ElementHandle>)Array.Empty<ElementHandle>();
+
                 var results = new List<ElementHandle>(matches.Length);
-                for (var i = 0; i < matches.Length; i++)
+                for (int i = 0; i < matches.Length; i++)
                     if (Wrap(matches.GetElement(i)) is { } wrapped)
                         results.Add(wrapped);
 
@@ -139,6 +151,8 @@ public sealed class Uia3Provider : IElementProvider
             }
             catch (Exception ex) when (ex is COMException or InvalidOperationException)
             {
+                // A descendant invalidated mid-search can throw too — blame the scope only if it's actually the one that's gone.
+                ElementInputHelpers.ThrowIfScopeGone(scope, ex);
                 return (IReadOnlyList<ElementHandle>)Array.Empty<ElementHandle>();
             }
         }, ct);
@@ -146,19 +160,19 @@ public sealed class Uia3Provider : IElementProvider
 
     // Finds the first descendant of the session's root window matching the locator; null if none match or the strategy is unsupported.
     public Task<ElementHandle?> FindElementAsync(Locator locator, AppSession session, CancellationToken ct = default) =>
-        FindFirstAsync(() => TryGetRoot(session), locator, session, ct);
+        FindFirstAsync(null, locator, session, ct);
 
     // Finds every descendant of the session's root window matching the locator; empty if none match or a dynamic app invalidates an element mid-search.
     public Task<IReadOnlyList<ElementHandle>> FindElementsAsync(Locator locator, AppSession session, CancellationToken ct = default) =>
-        FindAllAsync(() => TryGetRoot(session), locator, session, ct);
+        FindAllAsync(null, locator, session, ct);
 
-    // Finds the first descendant of scope's subtree matching the locator; null if none match, or scope's NativeHandle came from a different provider (treated as not-found, never falls back to the whole session).
+    // Finds the first descendant of scope's subtree matching the locator; null if none match, or scope's NativeHandle came from a different provider (treated as not-found, never falls back to the whole session); StaleElementError if scope is gone.
     public Task<ElementHandle?> FindScopedElementAsync(Locator locator, AppSession session, ElementHandle scope, CancellationToken ct = default) =>
-        FindFirstAsync(() => scope.NativeHandle as IUIAutomationElement, locator, session, ct);
+        FindFirstAsync(scope, locator, session, ct);
 
-    // Finds every descendant of scope's subtree matching the locator; empty if none match or scope came from a different provider.
+    // Finds every descendant of scope's subtree matching the locator; empty if none match or scope came from a different provider, StaleElementError if scope is gone.
     public Task<IReadOnlyList<ElementHandle>> FindScopedElementsAsync(Locator locator, AppSession session, ElementHandle scope, CancellationToken ct = default) =>
-        FindAllAsync(() => scope.NativeHandle as IUIAutomationElement, locator, session, ct);
+        FindAllAsync(scope, locator, session, ct);
 
     // ---- Snapshotting (public SnapshotTreeAsync + private helper) ----
 
@@ -264,7 +278,7 @@ public sealed class Uia3Provider : IElementProvider
             return [];
 
         var candidates = new List<IUIAutomationElement> { root };
-        for (var i = 1; i < segments.Count && candidates.Count > 0; i++)
+        for (int i = 1; i < segments.Count && candidates.Count > 0; i++)
         {
             var segment = segments[i];
             var next = new List<IUIAutomationElement>();
@@ -375,6 +389,7 @@ public sealed class Uia3Provider : IElementProvider
         string id = "", name = "", automationId = "", className = "", controlTypeName = "Unknown";
         Rect rect = default;
         bool isEnabled = false, isOffscreen = false;
+        var processId = 0;
         try
         {
             id = GetRuntimeId(element);
@@ -385,6 +400,7 @@ public sealed class Uia3Provider : IElementProvider
             rect = ToRect(element.CurrentBoundingRectangle);
             isEnabled = element.CurrentIsEnabled != 0;
             isOffscreen = element.CurrentIsOffscreen != 0;
+            processId = element.CurrentProcessId;
         }
         catch (Exception ex) when (ex is COMException or InvalidOperationException) { }
 
@@ -400,6 +416,7 @@ public sealed class Uia3Provider : IElementProvider
             BoundingRect = rect,
             IsEnabled = isEnabled,
             IsOffscreen = isOffscreen,
+            ProcessId = processId,
             Provider = this,
             Operator = _op,
         };

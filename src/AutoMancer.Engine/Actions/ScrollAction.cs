@@ -17,9 +17,20 @@ public static class ScrollAction
     {
         if (element.NativeHandle is not IUIAutomationElement uiaElement)
             return;
-        if (uiaElement.GetCurrentPattern(UIA_PatternIds.UIA_ScrollItemPatternId) is not IUIAutomationScrollItemPattern scrollItem)
-            return;
-        scrollItem.ScrollIntoView();
+        // Both GetCurrentPattern and ScrollIntoView are live UIA calls that fail if the element has left the tree; surface that as StaleElementError, let any other failure propagate as-is.
+        try
+        {
+            if (uiaElement.GetCurrentPattern(UIA_PatternIds.UIA_ScrollItemPatternId) is not IUIAutomationScrollItemPattern scrollItem)
+                return;
+            // A detached element (e.g. from a closed XAML dialog) accepts ScrollIntoView as a silent no-op, so check before reporting success.
+            if (ElementInputHelpers.IsDetached(element))
+                throw ElementInputHelpers.Stale(element, null);
+            scrollItem.ScrollIntoView();
+        }
+        catch (Exception ex) when (ElementInputHelpers.IsStaleFailure(ex, element))
+        {
+            throw ElementInputHelpers.Stale(element, ex);
+        }
         logger?.Info("Scrolled into view via ScrollItemPattern", new { elementId = element.Id });
     }, ct);
 }

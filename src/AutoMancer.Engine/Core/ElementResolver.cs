@@ -31,9 +31,9 @@ public sealed class ElementResolver
 
     // ---- Finding a single element (public FindAsync/FindScopedAsync surface) ----
 
-    // Polls the provider chain every PollIntervalMs until find (given a provider) returns a match or ImplicitWaitMs elapses; throws ElementNotFoundError with a closest-match hint on timeout.
+    // Polls the provider chain every PollIntervalMs until find (given a provider) returns a match or ImplicitWaitMs (or the implicitWaitMs override) elapses; throws ElementNotFoundError with a closest-match hint on timeout.
     // Shared by the plain and scoped FindAsync paths — they only differ in which provider method find calls.
-    private async Task<ElementHandle> PollAsync(Locator locator, AppSession session, Func<IElementProvider, Task<ElementHandle?>> find, CancellationToken ct)
+    private async Task<ElementHandle> PollAsync(Locator locator, AppSession session, Func<IElementProvider, Task<ElementHandle?>> find, CancellationToken ct, int? implicitWaitMs = null)
     {
         var stopwatch = Stopwatch.StartNew();
         var attempted = new List<string>();
@@ -56,7 +56,7 @@ public sealed class ElementResolver
                 }
             }
 
-            if (stopwatch.ElapsedMilliseconds >= _options.ImplicitWaitMs)
+            if (stopwatch.ElapsedMilliseconds >= (implicitWaitMs ?? _options.ImplicitWaitMs))
                 break;
 
             await Task.Delay(_options.PollIntervalMs, ct).ConfigureAwait(false);
@@ -77,8 +77,8 @@ public sealed class ElementResolver
         return await PollAsync(locator, session, provider => provider.FindElementAsync(locator, session, ct), ct).ConfigureAwait(false);
     }
 
-    // Polls the provider chain within a scope handle held fixed for the whole call.
-    internal async Task<ElementHandle> FindScopedAsync(Locator locator, AppSession session, ElementHandle scope, CancellationToken ct = default)
+    // Polls the provider chain within a scope handle held fixed for the whole call, throwing StaleElementError if that scope is gone; implicitWaitMs overrides ImplicitWaitMs (0 = a single pass) for callers running their own retry loop.
+    internal async Task<ElementHandle> FindScopedAsync(Locator locator, AppSession session, ElementHandle scope, CancellationToken ct = default, int? implicitWaitMs = null)
     {
         // locator (what we're searching FOR) is Spatial — unsupported combined with any scope, since anchor-relative matching needs a whole-session snapshot; scope is dropped.
         if (locator.Strategy == LocatorStrategy.Spatial)
@@ -88,17 +88,25 @@ public sealed class ElementResolver
         }
 
         // Per-poll lookup: ask this provider for locator within scope's subtree.
-        return await PollAsync(locator, session, provider => provider.FindScopedElementAsync(locator, session, scope, ct), ct).ConfigureAwait(false);
+        return await PollAsync(locator, session, provider => provider.FindScopedElementAsync(locator, session, scope, ct), ct, implicitWaitMs).ConfigureAwait(false);
     }
 
     // Resolves scope fresh via provider, then finds locator within it — picks up a scope element replaced mid-wait (e.g. a dialog that closes and reopens) instead of getting stuck against a dead handle.
-    private static async Task<ElementHandle?> FindViaFreshScopeAsync(IElementProvider provider, Locator locator, Locator scope, AppSession session, CancellationToken ct)
+    private async Task<ElementHandle?> FindViaFreshScopeAsync(IElementProvider provider, Locator locator, Locator scope, AppSession session, CancellationToken ct)
     {
         var scopeMatch = await provider.FindElementAsync(scope, session, ct).ConfigureAwait(false);
         if (scopeMatch is null)
             return null;
 
-        return await provider.FindScopedElementAsync(locator, session, scopeMatch, ct).ConfigureAwait(false);
+        try
+        {
+            return await provider.FindScopedElementAsync(locator, session, scopeMatch, ct).ConfigureAwait(false);
+        }
+        // Scope died between being resolved and searched — a miss for this attempt; the next poll re-resolves it.
+        catch (StaleElementError) when (_options.ReresolveOnStale)
+        {
+            return null;
+        }
     }
 
     // Resolves scope fresh from the same provider on every poll attempt, instead of once up front.
@@ -111,23 +119,27 @@ public sealed class ElementResolver
             return await FindSpatialAsync(locator, session, ct).ConfigureAwait(false);
         }
 
-        // scope (the container we're searching WITHIN) is Spatial — a different, fully-supported case: only how the container is identified, not what we're searching for. No provider can redo this per attempt, so resolve it once up front and hold it fixed.
+        // scope (the container we're searching WITHIN) is Spatial — a different, fully-supported case: only how the container is identified, not what we're searching for. No provider can redo this per poll, so resolve it up front and hold it, re-resolving only if it goes stale.
         if (scope.Strategy == LocatorStrategy.Spatial)
         {
-            var scopeHandle = await FindAsync(scope, session, ct).ConfigureAwait(false);
-            return await FindScopedAsync(locator, session, scopeHandle, ct).ConfigureAwait(false);
+            return await RetryOnStaleScopeAsync(scope, async () =>
+            {
+                var scopeHandle = await FindAsync(scope, session, ct).ConfigureAwait(false);
+                return await FindScopedAsync(locator, session, scopeHandle, ct).ConfigureAwait(false);
+            }).ConfigureAwait(false);
         }
 
         return await PollAsync(locator, session, provider => FindViaFreshScopeAsync(provider, locator, scope, session, ct), ct).ConfigureAwait(false);
     }
 
-    // Resolves LocatorStrategy.Spatial: finds the anchor through the normal chain, snapshots the tree for candidates, and picks the nearest one via SpatialMatcher. The winner is re-resolved by RuntimeId so the caller gets a fully interactable handle rather than the snapshot-backed stand-in used only for rect matching.
+    // Resolves LocatorStrategy.Spatial: the element nearest the anchor in the given direction, via SpatialMatcher.
     private async Task<ElementHandle> FindSpatialAsync(Locator locator, AppSession session, CancellationToken ct)
     {
         var stopwatch = Stopwatch.StartNew();
         var anchor = await FindAsync(locator.Anchor!, session, ct).ConfigureAwait(false);
         var tree = await TrySnapshotAsync(session, ct).ConfigureAwait(false);
 
+        // Snapshot-backed stand-ins, only good for rect matching — they have no live native handle.
         var candidates = (tree ?? Array.Empty<ElementSnapshot>())
             .DescendantsAndSelf()
             .Where(s => s.Id != anchor.Id)
@@ -145,12 +157,9 @@ public sealed class ElementResolver
         if (nearest is null)
             throw new ElementNotFoundError(locator, new[] { "spatial" }, (int)stopwatch.ElapsedMilliseconds);
 
+        // Re-resolve the winner by RuntimeId so the caller gets a fully interactable handle, not the stand-in.
         return await FindAsync(Locator.ByRuntimeId(nearest.Id), session, ct).ConfigureAwait(false);
     }
-
-    // Throws ElementNotFoundError for a caller-detected failure (e.g. FindByScrollingAsync's scroll-stall check) that isn't a poll timeout — keeps this the one place in the engine that constructs the exception.
-    internal void ThrowNotFound(Locator locator, string attemptedVia, int elapsedMs) =>
-        throw new ElementNotFoundError(locator, new[] { attemptedVia }, elapsedMs);
 
     // ---- Waiting on element state (public) ----
 
@@ -237,7 +246,7 @@ public sealed class ElementResolver
     public async Task<IReadOnlyList<ElementHandle>> FindAllAsync(Locator locator, AppSession session, CancellationToken ct = default) =>
         await FindAllViaAsync(locator, provider => provider.FindElementsAsync(locator, session, ct), ct).ConfigureAwait(false);
 
-    // Single pass across the provider chain (no retry) — returns the first provider's non-empty match list within a scope handle held fixed for the call. Used directly for held-handle reuse and as the Spatial-scope fallback in the public overload below.
+    // Single pass across the provider chain (no retry) — returns the first provider's non-empty match list within a scope handle held fixed for the call; StaleElementError if that scope is gone. Used directly for held-handle reuse and as the Spatial-scope fallback in the public overload below.
     internal async Task<IReadOnlyList<ElementHandle>> FindAllScopedAsync(Locator locator, AppSession session, ElementHandle scope, CancellationToken ct = default) =>
         await FindAllViaAsync(locator, provider => provider.FindScopedElementsAsync(locator, session, scope, ct), ct).ConfigureAwait(false);
 
@@ -251,19 +260,40 @@ public sealed class ElementResolver
         return await provider.FindScopedElementsAsync(locator, session, scopeMatch, ct).ConfigureAwait(false);
     }
 
-    // Resolves scope fresh from the same provider on every attempt, instead of once up front.
+    // Resolves scope fresh from the same provider as part of this call, instead of taking a held handle; a scope that dies between being resolved and searched is re-resolved and searched again (see RetryOnStaleScopeAsync).
     // This also lets the whole provider chain work end to end — a scope resolved by one provider's native handle can't be honored by another.
     public async Task<IReadOnlyList<ElementHandle>> FindAllScopedAsync(Locator locator, AppSession session, Locator scope, CancellationToken ct = default)
     {
-        // If the scope is identified via a Spatial locator, we can't refresh the container element between searches.
+        // If the scope is identified via a Spatial locator, no provider can refresh it on its own — the whole Spatial resolution reruns instead.
         if (scope.Strategy == LocatorStrategy.Spatial)
         {
-            var scopeHandle = await FindAsync(scope, session, ct).ConfigureAwait(false);
-            return await FindAllScopedAsync(locator, session, scopeHandle, ct).ConfigureAwait(false);
+            return await RetryOnStaleScopeAsync(scope, async () =>
+            {
+                var scopeHandle = await FindAsync(scope, session, ct).ConfigureAwait(false);
+                return await FindAllScopedAsync(locator, session, scopeHandle, ct).ConfigureAwait(false);
+            }).ConfigureAwait(false);
         }
 
         // But for the others, we can refresh the scope element and provider before searching.
-        return await FindAllViaAsync(locator, provider => FindAllViaFreshScopeAsync(provider, locator, scope, session, ct), ct).ConfigureAwait(false);
+        return await RetryOnStaleScopeAsync(scope, () => FindAllViaAsync(locator, provider => FindAllViaFreshScopeAsync(provider, locator, scope, session, ct), ct)).ConfigureAwait(false);
+    }
+
+    // Reruns attempt immediately on StaleElementError, up to ImplicitWaitMs, so a Locator scope that PollAsync can't refresh (FindAll, Spatial) is re-resolved rather than reported as empty.
+    private async Task<T> RetryOnStaleScopeAsync<T>(Locator scope, Func<Task<T>> attempt)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        while (true)
+        {
+            try
+            {
+                return await attempt().ConfigureAwait(false);
+            }
+            // ReresolveOnStale=false lets the error propagate instead, for callers driving their own recovery.
+            catch (StaleElementError ex) when (_options.ReresolveOnStale && stopwatch.ElapsedMilliseconds < _options.ImplicitWaitMs)
+            {
+                _logger?.Warn("Scope went stale mid-search, re-resolving via locator", new { scope.Strategy, scope.Value, staleId = ex.Element.Id, elapsedMs = stopwatch.ElapsedMilliseconds });
+            }
+        }
     }
 
     // ---- Tree snapshot (public) ----

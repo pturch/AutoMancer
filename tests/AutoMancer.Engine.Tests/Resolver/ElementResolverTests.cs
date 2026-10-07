@@ -392,6 +392,144 @@ public sealed class ElementResolverTests
         Assert.Same(targets[1], result[1]);
     }
 
+    // A held scope that's gone can't be re-resolved, so the provider's StaleElementError reaches the caller instead of reading as "nothing matches".
+    [Fact]
+    public async Task FindAllScopedAsync_HeldScopeGoneStale_PropagatesStaleElementError()
+    {
+        var heldScope = Handle("dialog-old");
+        var provider = new Mock<IElementProvider>();
+        provider.SetupGet(p => p.ProviderName).Returns("uia3");
+        provider.Setup(p => p.FindScopedElementsAsync(TestLocator, Session, heldScope, It.IsAny<CancellationToken>())).ThrowsAsync(new StaleElementError(heldScope, "gone"));
+        var resolver = new ElementResolver([provider.Object], new ElementProviderOptions { ProviderChain = ["uia3"] });
+
+        var ex = await Assert.ThrowsAsync<StaleElementError>(() => resolver.FindAllScopedAsync(TestLocator, Session, heldScope));
+
+        Assert.Same(heldScope, ex.Element);
+    }
+
+    // Provider whose scope locator resolves to staleScope first and rebuiltScope after, with staleScope's FindAll raising StaleElementError — a dialog closed and reopened between resolve and search.
+    private static Mock<IElementProvider> ScopeRebuiltMidCallProvider(Locator scope, ElementHandle staleScope, ElementHandle? rebuiltScope, IReadOnlyList<ElementHandle> rebuiltMatches)
+    {
+        var provider = new Mock<IElementProvider>();
+        provider.SetupGet(p => p.ProviderName).Returns("uia3");
+        provider.SetupSequence(p => p.FindElementAsync(scope, Session, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(staleScope)
+            .ReturnsAsync(rebuiltScope);
+        provider.Setup(p => p.FindScopedElementsAsync(TestLocator, Session, staleScope, It.IsAny<CancellationToken>())).ThrowsAsync(new StaleElementError(staleScope, "gone"));
+        if (rebuiltScope is not null)
+            provider.Setup(p => p.FindScopedElementsAsync(TestLocator, Session, rebuiltScope, It.IsAny<CancellationToken>())).ReturnsAsync(rebuiltMatches);
+        return provider;
+    }
+
+    // A Locator scope is the engine's to keep fresh: one that dies mid-call is re-resolved and the rebuilt scope searched, immediately rather than after a PollIntervalMs wait.
+    [Fact]
+    public async Task FindAllScopedAsync_LocatorScopeGoesStaleMidCall_ReresolvesImmediatelyAndReturnsRebuiltScopesMatches()
+    {
+        var scope = Locator.ByName("Dialog");
+        var targets = new[] { Handle("t1"), Handle("t2") };
+        var provider = ScopeRebuiltMidCallProvider(scope, Handle("dialog-old"), Handle("dialog-new"), targets);
+        var resolver = new ElementResolver([provider.Object], new ElementProviderOptions { ProviderChain = ["uia3"], ImplicitWaitMs = 10_000, PollIntervalMs = 5_000 });
+        var stopwatch = Stopwatch.StartNew();
+
+        var results = await resolver.FindAllScopedAsync(TestLocator, Session, scope);
+
+        Assert.Equal(targets, results);
+        Assert.True(stopwatch.ElapsedMilliseconds < 2_000, $"took {stopwatch.ElapsedMilliseconds}ms — the re-resolve waited a PollIntervalMs instead of running immediately");
+    }
+
+    // The re-resolve ends on its own: a scope that's gone for good no longer resolves, which is a genuine empty result.
+    [Fact]
+    public async Task FindAllScopedAsync_LocatorScopeGoneForGood_ReturnsEmpty()
+    {
+        var scope = Locator.ByName("Dialog");
+        var provider = ScopeRebuiltMidCallProvider(scope, Handle("dialog-old"), null, []);
+        var resolver = new ElementResolver([provider.Object], new ElementProviderOptions { ProviderChain = ["uia3"], ImplicitWaitMs = 10_000 });
+
+        var results = await resolver.FindAllScopedAsync(TestLocator, Session, scope);
+
+        Assert.Empty(results);
+    }
+
+    // ImplicitWaitMs caps a UI that keeps rebuilding faster than it can be read — past it, the error propagates rather than becoming empty.
+    [Fact]
+    public async Task FindAllScopedAsync_LocatorScopeStaysStalePastImplicitWait_PropagatesStaleElementError()
+    {
+        var scope = Locator.ByName("Dialog");
+        var staleScope = Handle("dialog-old");
+        var provider = new Mock<IElementProvider>();
+        provider.SetupGet(p => p.ProviderName).Returns("uia3");
+        provider.Setup(p => p.FindElementAsync(scope, Session, It.IsAny<CancellationToken>())).ReturnsAsync(staleScope);
+        provider.Setup(p => p.FindScopedElementsAsync(TestLocator, Session, staleScope, It.IsAny<CancellationToken>())).ThrowsAsync(new StaleElementError(staleScope, "gone"));
+        var resolver = new ElementResolver([provider.Object], new ElementProviderOptions { ProviderChain = ["uia3"], ImplicitWaitMs = 50 });
+
+        await Assert.ThrowsAsync<StaleElementError>(() => resolver.FindAllScopedAsync(TestLocator, Session, scope));
+    }
+
+    [Fact]
+    public async Task FindAllScopedAsync_ReresolveOnStaleFalse_PropagatesOnFirstStale()
+    {
+        var scope = Locator.ByName("Dialog");
+        var provider = ScopeRebuiltMidCallProvider(scope, Handle("dialog-old"), Handle("dialog-new"), [Handle("t1")]);
+        var resolver = new ElementResolver([provider.Object], new ElementProviderOptions { ProviderChain = ["uia3"], ReresolveOnStale = false });
+
+        await Assert.ThrowsAsync<StaleElementError>(() => resolver.FindAllScopedAsync(TestLocator, Session, scope));
+        provider.Verify(p => p.FindElementAsync(scope, Session, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // Control: re-resolving is for staleness only — a genuinely empty result still makes exactly one pass, like Playwright's locator.all().
+    [Fact]
+    public async Task FindAllScopedAsync_LiveScopeWithNoMatches_MakesExactlyOnePass()
+    {
+        var scope = Locator.ByName("Dialog");
+        var liveScope = Handle("dialog");
+        var provider = new Mock<IElementProvider>();
+        provider.SetupGet(p => p.ProviderName).Returns("uia3");
+        provider.Setup(p => p.FindElementAsync(scope, Session, It.IsAny<CancellationToken>())).ReturnsAsync(liveScope);
+        provider.Setup(p => p.FindScopedElementsAsync(TestLocator, Session, liveScope, It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<ElementHandle>());
+        var resolver = new ElementResolver([provider.Object], new ElementProviderOptions { ProviderChain = ["uia3"], ImplicitWaitMs = 10_000 });
+
+        var results = await resolver.FindAllScopedAsync(TestLocator, Session, scope);
+
+        Assert.Empty(results);
+        provider.Verify(p => p.FindScopedElementsAsync(TestLocator, Session, liveScope, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // Single-element find: a scope that dies between being resolved and searched is a miss for that poll, and the next poll's fresh resolve finds the rebuilt scope.
+    [Fact]
+    public async Task FindScopedAsync_LocatorScopeGoesStaleBetweenResolveAndSearch_NextPollFindsRebuiltScope()
+    {
+        var scope = Locator.ByName("Dialog");
+        var staleScope = Handle("dialog-old");
+        var rebuiltScope = Handle("dialog-new");
+        var target = Handle("target");
+        var provider = new Mock<IElementProvider>();
+        provider.SetupGet(p => p.ProviderName).Returns("uia3");
+        provider.SetupSequence(p => p.FindElementAsync(scope, Session, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(staleScope)
+            .ReturnsAsync(rebuiltScope);
+        provider.Setup(p => p.FindScopedElementAsync(TestLocator, Session, staleScope, It.IsAny<CancellationToken>())).ThrowsAsync(new StaleElementError(staleScope, "gone"));
+        provider.Setup(p => p.FindScopedElementAsync(TestLocator, Session, rebuiltScope, It.IsAny<CancellationToken>())).ReturnsAsync(target);
+        var resolver = new ElementResolver([provider.Object], new ElementProviderOptions { ProviderChain = ["uia3"], ImplicitWaitMs = 5_000, PollIntervalMs = 10 });
+
+        var result = await resolver.FindScopedAsync(TestLocator, Session, scope);
+
+        Assert.Same(target, result);
+    }
+
+    [Fact]
+    public async Task FindScopedAsync_LocatorScopeGoesStale_ReresolveOnStaleFalse_PropagatesStaleElementError()
+    {
+        var scope = Locator.ByName("Dialog");
+        var staleScope = Handle("dialog-old");
+        var provider = new Mock<IElementProvider>();
+        provider.SetupGet(p => p.ProviderName).Returns("uia3");
+        provider.Setup(p => p.FindElementAsync(scope, Session, It.IsAny<CancellationToken>())).ReturnsAsync(staleScope);
+        provider.Setup(p => p.FindScopedElementAsync(TestLocator, Session, staleScope, It.IsAny<CancellationToken>())).ThrowsAsync(new StaleElementError(staleScope, "gone"));
+        var resolver = new ElementResolver([provider.Object], new ElementProviderOptions { ProviderChain = ["uia3"], ReresolveOnStale = false });
+
+        await Assert.ThrowsAsync<StaleElementError>(() => resolver.FindScopedAsync(TestLocator, Session, scope));
+    }
+
     // The locator being searched FOR is Spatial — unsupported combined with any scope, so scope must be dropped (never passed to FindScopedElementAsync) and a warning logged, rather than the search silently timing out.
     [Fact]
     public async Task FindScopedAsync_SpatialLocator_DropsScopeAndLogsWarning()
@@ -442,5 +580,57 @@ public sealed class ElementResolverTests
 
         Assert.Same(target, result);
         provider.Verify(p => p.FindElementAsync(spatialScope, Session, It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // Provider whose Spatial scope (a panel below a toolbar anchor) resolves to staleScope first and rebuiltScope after.
+    private static Mock<IElementProvider> SpatialScopeRebuiltProvider(Locator anchorLocator, ElementHandle staleScope, ElementHandle rebuiltScope)
+    {
+        var anchorHandle = new ElementHandle("anchor-rid", "test", new object()) { BoundingRect = new Rect(0, 0, 50, 20) };
+        var panelCandidate = new ElementSnapshot("panel-rid", "Panel", null, "Pane", "Pane", new Rect(0, 30, 200, 200), Array.Empty<ElementSnapshot>());
+        var provider = new Mock<IElementProvider>();
+        provider.SetupGet(p => p.ProviderName).Returns("uia3");
+        provider.Setup(p => p.FindElementAsync(anchorLocator, Session, It.IsAny<CancellationToken>())).ReturnsAsync(anchorHandle);
+        provider.Setup(p => p.SnapshotTreeAsync(Session, It.IsAny<CancellationToken>())).ReturnsAsync([panelCandidate]);
+        provider.SetupSequence(p => p.FindElementAsync(Locator.ByRuntimeId("panel-rid"), Session, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(staleScope)
+            .ReturnsAsync(rebuiltScope);
+        return provider;
+    }
+
+    // A Spatial scope is still a Locator the caller handed us, so a held scope that goes stale reruns the whole Spatial resolution rather than polling a dead handle until ElementNotFoundError.
+    [Fact]
+    public async Task FindScopedAsync_SpatialScopeGoesStale_RerunsSpatialResolutionAndFindsInRebuiltScope()
+    {
+        var anchorLocator = Locator.ByName("Toolbar");
+        var spatialScope = Locator.Near(anchorLocator, SpatialDirection.Below, maxDistancePx: 200);
+        var staleScope = Handle("panel-old");
+        var rebuiltScope = Handle("panel-new");
+        var target = Handle("target");
+        var provider = SpatialScopeRebuiltProvider(anchorLocator, staleScope, rebuiltScope);
+        provider.Setup(p => p.FindScopedElementAsync(TestLocator, Session, staleScope, It.IsAny<CancellationToken>())).ThrowsAsync(new StaleElementError(staleScope, "gone"));
+        provider.Setup(p => p.FindScopedElementAsync(TestLocator, Session, rebuiltScope, It.IsAny<CancellationToken>())).ReturnsAsync(target);
+        var resolver = new ElementResolver([provider.Object], new ElementProviderOptions { ProviderChain = ["uia3"], ImplicitWaitMs = 5_000 });
+
+        var result = await resolver.FindScopedAsync(TestLocator, Session, spatialScope);
+
+        Assert.Same(target, result);
+    }
+
+    [Fact]
+    public async Task FindAllScopedAsync_SpatialScopeGoesStale_RerunsSpatialResolutionAndSearchesRebuiltScope()
+    {
+        var anchorLocator = Locator.ByName("Toolbar");
+        var spatialScope = Locator.Near(anchorLocator, SpatialDirection.Below, maxDistancePx: 200);
+        var staleScope = Handle("panel-old");
+        var rebuiltScope = Handle("panel-new");
+        var targets = new[] { Handle("t1"), Handle("t2") };
+        var provider = SpatialScopeRebuiltProvider(anchorLocator, staleScope, rebuiltScope);
+        provider.Setup(p => p.FindScopedElementsAsync(TestLocator, Session, staleScope, It.IsAny<CancellationToken>())).ThrowsAsync(new StaleElementError(staleScope, "gone"));
+        provider.Setup(p => p.FindScopedElementsAsync(TestLocator, Session, rebuiltScope, It.IsAny<CancellationToken>())).ReturnsAsync(targets);
+        var resolver = new ElementResolver([provider.Object], new ElementProviderOptions { ProviderChain = ["uia3"], ImplicitWaitMs = 5_000 });
+
+        var results = await resolver.FindAllScopedAsync(TestLocator, Session, spatialScope);
+
+        Assert.Equal(targets, results);
     }
 }

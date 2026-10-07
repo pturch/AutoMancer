@@ -35,10 +35,10 @@ public static class KeyboardAction
             inputs.Add(KeyInput(key, isKeyUp: false));
 
         // Released in reverse order (last pressed, first released) to mirror the press order above.
-        for (var i = keys.Count - 1; i >= 0; i--)
+        for (int i = keys.Count - 1; i >= 0; i--)
             inputs.Add(KeyInput(keys[i], isKeyUp: true));
 
-        for (var i = modifierKeys.Count - 1; i >= 0; i--)
+        for (int i = modifierKeys.Count - 1; i >= 0; i--)
             inputs.Add(SendInputBuilders.VkInput(modifierKeys[i], isKeyUp: true));
 
         NativeMethods.SendInputs(inputs.ToArray(), logger);
@@ -64,7 +64,7 @@ public static class KeyboardAction
     {
         if (keys.Count == 0) return;
         var inputs = new NativeMethods.INPUT[keys.Count];
-        for (var i = 0; i < keys.Count; i++)
+        for (int i = 0; i < keys.Count; i++)
             inputs[i] = KeyInput(keys[i], isKeyUp: true);
         NativeMethods.SendInputs(inputs, logger);
     }

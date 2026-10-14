@@ -15,13 +15,17 @@ namespace AutoMancer.Engine;
 public sealed class App : IAsyncDisposable
 {
     private readonly AppSession _session;
+    private readonly IReadOnlyList<IElementProvider> _providers;
+    private readonly AppOptions _options;
     private readonly ElementResolver _resolver;
     private readonly int _actionDelayMs;
     private readonly int _foregroundActivationTimeoutMs;
     private readonly bool _killEntireProcessTree;
     private readonly bool _reresolveOnStale;
-    private readonly HeldKeyTracker _heldKeys = new();
-    private readonly HeldMouseButtonTracker _heldMouseButtons = new();
+    private readonly bool _force;
+    private App? _forceView;
+    private readonly HeldKeyTracker _heldKeys;
+    private readonly HeldMouseButtonTracker _heldMouseButtons;
     private readonly IEngineLogger? _logger;
     private readonly IEngineLogger? _windowsEventLogger;
     private readonly IEngineLogger? _combinedLogger;
@@ -49,10 +53,15 @@ public sealed class App : IAsyncDisposable
 
     // ---- Construction (public static factories) ----
 
-    // Private — callers use the static factory methods.
-    private App(AppSession session, IEnumerable<IElementProvider> providers, AppOptions options)
+    // Private — callers use the static factory methods; forcedFrom builds the parent's app.Force view, which doesn't own the session and shares the parent's held-input tracking.
+    private App(AppSession session, IEnumerable<IElementProvider> providers, AppOptions options, App? forcedFrom = null)
     {
         _session = session;
+        _providers = [.. providers];
+        _options = options;
+        _force = forcedFrom is not null;
+        _heldKeys = forcedFrom?._heldKeys ?? new();
+        _heldMouseButtons = forcedFrom?._heldMouseButtons ?? new();
         _actionDelayMs = options.ActionDelayMs;
         _foregroundActivationTimeoutMs = options.ForegroundActivationTimeoutMs;
         _killEntireProcessTree = options.KillEntireProcessTree;
@@ -63,7 +72,7 @@ public sealed class App : IAsyncDisposable
         ImplicitWaitMs = options.ImplicitWaitMs;
         PollIntervalMs = options.PollIntervalMs;
         _resolver = new ElementResolver(
-            providers,
+            _providers,
             new ElementProviderOptions
             {
                 ProviderChain = [.. options.ProviderChain],
@@ -72,7 +81,8 @@ public sealed class App : IAsyncDisposable
                 ReresolveOnStale = options.ReresolveOnStale,
             },
             logger: options.Logger,
-            foregroundActivationTimeoutMs: options.ForegroundActivationTimeoutMs);
+            foregroundActivationTimeoutMs: options.ForegroundActivationTimeoutMs)
+        { Force = _force };
     }
 
     // Starts the target executable and waits until its main window is visible; windowMatch disambiguates which window counts as "launched" when the executable might have multiple candidate windows.
@@ -126,11 +136,21 @@ public sealed class App : IAsyncDisposable
     // Returns a new App bound to the same session but with different options — useful for warmup or provider-specific operations without creating a new process.
     public App WithOptions(AppOptions options) => new(_session, BuildProviders(options.ProviderChain), options);
 
+    // A cached view of this App whose element actions skip the enabled/visible check and its wait, e.g. to click a hidden menu item on purpose.
+    // Still enforced: stale detection, non-empty bounds for synthesized pointer input, and keyboard focus for synthesized typing.
+    public App Force => _force ? this : LazyInitializer.EnsureInitialized(ref _forceView, () => new App(_session, _providers, _options, forcedFrom: this));
+
     // ---- Internal: test support only — not part of the public surface ----
 
     // Bypasses real provider construction to build an App around fake providers, for unit tests exercising App/Expect() retry and diagnostics logic without a live window.
     internal static App CreateForTesting(AppSession session, IEnumerable<IElementProvider> providers, AppOptions? options = null) =>
         new(session, providers, options ?? AppOptions.Default);
+
+    // Exposes the held-key tracker so tests can prove app.Force shares the parent's without sending real input.
+    internal HeldKeyTracker HeldKeysForTesting => _heldKeys;
+
+    // Exposes the held-mouse-button tracker for the same app.Force sharing test.
+    internal HeldMouseButtonTracker HeldMouseButtonsForTesting => _heldMouseButtons;
 
     // ---- Finding & querying elements (public) ----
 
@@ -403,7 +423,6 @@ public sealed class App : IAsyncDisposable
     public async Task ScrollIntoViewAsync(Locator locator, CancellationToken ct = default)
     {
         await FindAndRunAsync(locator, el => ScrollAction.ExecuteAsync(el, ct), ct);
-        _logger?.Info("Scrolled into view", new { locator.Strategy, locator.Value });
         await SettleAsync(ct);
     }
 
@@ -471,9 +490,10 @@ public sealed class App : IAsyncDisposable
     public Task WaitForExitAsync(int timeoutMs = 5_000, CancellationToken ct = default)
         => _session.WaitForExitAsync(timeoutMs, ct);
 
-    // Kills the app (if still running), writes the Windows Event Log / combined-timeline artifacts if configured, and releases the underlying process handle.
+    // Kills the app (if still running), writes the Windows Event Log / combined-timeline artifacts if configured, and releases the underlying process handle; a no-op for app.Force, which doesn't own the session.
     public ValueTask DisposeAsync()
     {
+        if (_force) return ValueTask.CompletedTask;
         ReleaseHeldInputBestEffort();
         KillAppBestEffort();
         TryWriteWindowsEventLogArtifact();
@@ -532,7 +552,7 @@ public sealed class App : IAsyncDisposable
             throw new WindowMinimizedError(_session.RootWindowHandle);
     }
 
-    // Finds locator and runs action on it; on a StaleElementError with AppOptions.ReresolveOnStale on, re-runs locator and retries — a recreated element gets a new RuntimeId, so the locator is the only reliable way back to it. ElementNotInteractableError is retried the same way (Playwright's wait-until-actionable).
+    // Finds locator and runs action on it; on a StaleElementError with AppOptions.ReresolveOnStale on, re-runs locator and retries — a recreated element gets a new RuntimeId, so the locator is the only reliable way back to it. ElementNotInteractableError is retried the same way (Playwright's wait-until-actionable), except through app.Force.
     private async Task FindAndRunAsync(Locator locator, Func<ElementHandle, Task> action, CancellationToken ct)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -551,8 +571,8 @@ public sealed class App : IAsyncDisposable
                 _logger?.Warn("Element went stale mid-action, re-resolving via locator", new { locator.Strategy, locator.Value, staleId = element.Id, elapsedMs = stopwatch.ElapsedMilliseconds });
                 await Task.Delay(PollIntervalMs, ct);
             }
-            // Re-finds too, rather than re-checking the same handle, so an element replaced while becoming actionable is followed.
-            catch (ElementNotInteractableError ex) when (stopwatch.ElapsedMilliseconds < ImplicitWaitMs)
+            // Re-finds too, rather than re-checking the same handle, so an element replaced while becoming actionable is followed. app.Force never waits — what still throws for it (empty bounds, no keyboard focus) fails immediately.
+            catch (ElementNotInteractableError ex) when (!_force && stopwatch.ElapsedMilliseconds < ImplicitWaitMs)
             {
                 _logger?.Info("Element not yet interactable, waiting", new { locator.Strategy, locator.Value, elementId = element.Id, reason = ex.Message, elapsedMs = stopwatch.ElapsedMilliseconds });
                 await Task.Delay(PollIntervalMs, ct);
@@ -566,20 +586,21 @@ public sealed class App : IAsyncDisposable
             ? Task.Delay(_actionDelayMs, ct)
             : Task.CompletedTask;
 
-    // Reads IUIAutomationScrollPattern.CurrentVerticalScrollPercent for container; null if unavailable, in which case FindByScrollingAsync's stall detection is skipped for this iteration.
+    // Reads ScrollPattern's vertical scroll percent (UIA3 or UIA2) for container; null if unavailable, in which case FindByScrollingAsync's stall detection is skipped for this iteration.
     private static double? GetVerticalScrollPercent(ElementHandle container)
     {
-        if (container.NativeHandle is not IUIAutomationElement uiaElement)
-            return null;
         try
         {
-            if (uiaElement.GetCurrentPattern(UIA_PatternIds.UIA_ScrollPatternId) is not IUIAutomationScrollPattern scrollPattern)
-                return null;
-            return scrollPattern.CurrentVerticalScrollPercent;
+            return container.NativeHandle switch
+            {
+                IUIAutomationElement uia3 => uia3.GetCurrentPattern(UIA_PatternIds.UIA_ScrollPatternId) is IUIAutomationScrollPattern pattern ? pattern.CurrentVerticalScrollPercent : null,
+                System.Windows.Automation.AutomationElement uia2 => uia2.TryGetCurrentPattern(System.Windows.Automation.ScrollPattern.Pattern, out var pattern) ? ((System.Windows.Automation.ScrollPattern)pattern).Current.VerticalScrollPercent : null,
+                _ => null,
+            };
         }
-        catch (COMException)
+        catch (Exception ex) when (ex is COMException or InvalidOperationException or System.Windows.Automation.ElementNotAvailableException)
         {
-            // Broad on purpose (not narrowed to the stale HRESULT): this is not an action, so any COM failure degrades to the same "can't tell you" null this method already returns for an unsupported pattern.
+            // Broad on purpose (not narrowed to the stale failures): this is not an action, so any failed read degrades to the same "can't tell you" null this method already returns for an unsupported pattern.
             return null;
         }
     }

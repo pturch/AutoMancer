@@ -121,7 +121,7 @@ internal static class ElementInputHelpers
         return new(element.IsEnabled, element.IsOffscreen, element.BoundingRect);
     }
 
-    // Brings the element's owning window to the foreground so synthesized input reaches it; throws StaleElementError if the element is gone.
+    // Brings the element's owning top-level window to the foreground so synthesized input reaches it; throws StaleElementError if the element is gone.
     internal static void EnsureForeground(ElementHandle element)
     {
         IntPtr windowHandle;
@@ -161,8 +161,11 @@ internal static class ElementInputHelpers
                 return;
             }
         }
+        else if (element.NativeHandle is IntPtr win32Handle)
+            // The handle is often a child control (an Edit in a dialog), but only top-level windows can be foreground.
+            windowHandle = NativeMethods.GetTopLevelWindow(win32Handle);
         else
-            return; // Non-UIA handles have no owning window to activate.
+            return; // Non-UIA stand-ins have no owning window to activate.
 
         // A successful read isn't proof of life: a closed XAML dialog's elements keep answering, detached, and a click would land wherever the element used to be.
         if (IsDetached(element))
@@ -191,7 +194,78 @@ internal static class ElementInputHelpers
             reason = "is currently offscreen (IsOffscreen=true)";
         else
             reason = "has empty on-screen bounds";
+
+        // Checked after the detached check, so a forced handle skips the gate but never stale detection.
+        if (element.Force)
+        {
+            element.Logger?.Info("Forced past actionability gate", new { elementId = element.Id, reason });
+            return;
+        }
         throw new ElementNotInteractableError(element, $"Element \"{element.Name}\" (AutomationId={element.AutomationId}) {reason} and cannot be interacted with.");
+    }
+
+    // Keyboard input's aim step: focuses the element, then confirms live that it or a descendant (e.g. a combo box's inner edit) holds keyboard focus, throwing ElementNotInteractableError if not (unless forced) or StaleElementError if it's gone. No-op for non-UIA stand-ins with nothing to focus.
+    internal static void EnsureKeyboardFocus(ElementHandle element)
+    {
+        bool focused;
+        // Stale always throws here — AppOptions.ReresolveOnStale only controls whether App retries it, not whether it's raised.
+        try
+        {
+            switch (element.NativeHandle)
+            {
+                case IUIAutomationElement uia3:
+                    TrySetFocus(element, uia3.SetFocus);
+                    // Searching the element's own subtree is one call on the element itself, rather than walking up from the session's focused element comparing each ancestor.
+                    focused = uia3.CurrentHasKeyboardFocus != 0
+                        || uia3.FindFirst(Interop.UIAutomationClient.TreeScope.TreeScope_Descendants, Uia3Provider.Automation.CreatePropertyCondition(UIA_PropertyIds.UIA_HasKeyboardFocusPropertyId, true)) is not null;
+                    break;
+                case AutomationElement uia2:
+                    TrySetFocus(element, uia2.SetFocus);
+                    focused = uia2.Current.HasKeyboardFocus
+                        || uia2.FindFirst(System.Windows.Automation.TreeScope.Descendants, new PropertyCondition(AutomationElement.HasKeyboardFocusProperty, true)) is not null;
+                    break;
+                case IntPtr win32:
+                    SetWin32Focus(element, win32);
+                    focused = NativeMethods.HasFocusWithin(win32);
+                    break;
+                default:
+                    return; // Nothing to focus — keystrokes go to whatever has focus in the foregrounded window, as before.
+            }
+        }
+        catch (Exception ex) when (IsStaleFailure(ex, element))
+        {
+            throw Stale(element, ex);
+        }
+
+        if (focused)
+            return;
+        // A forced handle still gets the SetFocus attempt and stale detection, but types even when focus didn't land — the caller owns where the keystrokes go.
+        if (element.Force)
+        {
+            element.Logger?.Warn("Forced past keyboard focus check", new { elementId = element.Id });
+            return;
+        }
+        throw new ElementNotInteractableError(element, $"Element \"{element.Name}\" (AutomationId={element.AutomationId}) did not take keyboard focus, so keystrokes would land elsewhere.");
+    }
+
+    // Calls setFocus, logging rather than throwing a non-stale failure (e.g. an element that rejects SetFocus yet already holds focus) — the focus read that follows is what decides.
+    private static void TrySetFocus(ElementHandle element, Action setFocus)
+    {
+        try
+        {
+            setFocus();
+        }
+        catch (Exception ex) when (ex is COMException or InvalidOperationException && !IsStaleFailure(ex, element))
+        {
+            element.Logger?.Warn("SetFocus failed, checking focus anyway", new { elementId = element.Id, error = ex.Message });
+        }
+    }
+
+    // Focuses a Win32 window via NativeMethods.TrySetFocus, throwing StaleElementError if the window no longer exists.
+    internal static void SetWin32Focus(ElementHandle element, IntPtr windowHandle)
+    {
+        if (!NativeMethods.TrySetFocus(windowHandle))
+            throw Stale(element, null);
     }
 
     // The point synthesized pointer input should hit: the center of the element's live bounds (already physical pixels; see DpiAwareness). Independent of EnsureInteractable — it validates its own read, throwing ElementNotInteractableError when there's no on-screen area to aim at.

@@ -26,6 +26,7 @@ public static class ClearAction
         await Task.Run(() =>
         {
             ElementInputHelpers.EnsureForeground(element);
+            ElementInputHelpers.EnsureKeyboardFocus(element);
             SendCtrlADelete(logger);
         }, ct).ConfigureAwait(false);
         logger?.Info("Cleared via synthesized input", new { elementId = element.Id });

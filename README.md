@@ -232,9 +232,19 @@ await app.ScrollWheelAsync(Locator.ByControlType("Document"), deltaX: 0, deltaY:
 
 ### Actionability:
 
-Element actions (`ClickAsync`, `TypeAsync`, `ClearAsync`, `DoubleClickAsync`, `HoverAsync`, `ScrollWheelAsync`, ...) only act on an element a user could use: enabled, and visible — not offscreen, with a real on-screen size. The check reads the element  right before acting, and applies to the app's accessibility shortcuts as well as simulated mouse and keyboard input. AutoMancer stays grounded in ony performing behaviors that a user could.
+Element actions (`ClickAsync`, `TypeAsync`, `ClearAsync`, `DoubleClickAsync`, `HoverAsync`, `ScrollWheelAsync`, ...) only act on an element a user could use: enabled, and visible — not offscreen, with a real on-screen size. The check reads the element right before acting, and applies to the app's accessibility shortcuts as well as simulated mouse and keyboard input. AutoMancer stays grounded in only performing behaviors that a user could.
 
 If the element isn't usable yet the action finds it again and keeps checking until the implicit wait runs out, then throws `ElementNotInteractableError` saying why (disabled, offscreen, or no on-screen size). `ScrollIntoViewAsync`, `SetFocusAsync`, and `GetValueAsync` don't check, since making an element visible or reading it is their job. `WaitConditions.IsVisible()` and `IsEnabled()` use the same rules, so a wait and the action after it agree on what counts as usable.
+
+#### Forcing an action:
+
+Sometimes acting on an element no user could reach is exactly what you want. Can you verify no text gets entered into a disabled textbox? You might just need a workaround for an app that wrongly reports a visible control as offscreen. `app.Force` runs the same actions without the readiness checks:
+
+```csharp
+await app.Force.ClickAsync(Locator.ByName("New tab"));   // clicks it even while its menu is closed
+```
+
+A stale element still throws `StaleElementError`, and simulated mouse inputs still need an on-screen point to aim at. Through `app.Force` those fail right away instead of waiting. `app.Force` is the same session as `app`, so disposing it never closes the app, and keys held through it are released when `app` is disposed.
 
 ### Screenshots and Waiting:
 

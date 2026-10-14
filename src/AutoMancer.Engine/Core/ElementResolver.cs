@@ -13,6 +13,9 @@ public sealed class ElementResolver
     private readonly IEngineLogger? _logger;
     private readonly int _foregroundActivationTimeoutMs;
 
+    // Set for app.Force's resolver, so every handle it returns skips the enabled/visible gate.
+    internal bool Force { get; init; }
+
     // ---- Construction ----
 
     // Orders providers by ElementProviderOptions.ProviderChain, dropping any chain entry with no matching provider.
@@ -27,6 +30,14 @@ public sealed class ElementResolver
             .Where(byName.ContainsKey)
             .Select(name => byName[name])
             .ToList();
+    }
+
+    // Copies this resolver's per-App settings onto a handle it returns, so actions can read them without taking separate parameters.
+    private void ApplySettingsTo(ElementHandle handle)
+    {
+        handle.Logger = _logger;
+        handle.ForegroundActivationTimeoutMs = _foregroundActivationTimeoutMs;
+        handle.Force = Force;
     }
 
     // ---- Finding a single element (public FindAsync/FindScopedAsync surface) ----
@@ -49,8 +60,7 @@ public sealed class ElementResolver
                 var found = await find(provider).ConfigureAwait(false);
                 if (found is not null)
                 {
-                    found.Logger = _logger;
-                    found.ForegroundActivationTimeoutMs = _foregroundActivationTimeoutMs;
+                    ApplySettingsTo(found);
                     _logger?.Info("Element resolved", new { provider = provider.ProviderName, locator.Strategy, locator.Value, elapsedMs = stopwatch.ElapsedMilliseconds });
                     return found;
                 }
@@ -205,8 +215,7 @@ public sealed class ElementResolver
                 var found = await provider.FindElementAsync(locator, session, ct).ConfigureAwait(false);
                 if (found is not null && condition(found))
                 {
-                    found.Logger = _logger;
-                    found.ForegroundActivationTimeoutMs = _foregroundActivationTimeoutMs;
+                    ApplySettingsTo(found);
                     _logger?.Info("Wait condition met", new { provider = provider.ProviderName, locator.Strategy, locator.Value, elapsedMs = stopwatch.ElapsedMilliseconds });
                     return found;
                 }
@@ -230,10 +239,7 @@ public sealed class ElementResolver
             if (matches.Count > 0)
             {
                 foreach (var match in matches)
-                {
-                    match.Logger = _logger;
-                    match.ForegroundActivationTimeoutMs = _foregroundActivationTimeoutMs;
-                }
+                    ApplySettingsTo(match);
                 _logger?.Info("Elements found", new { provider = provider.ProviderName, locator.Strategy, locator.Value, count = matches.Count });
                 return matches;
             }

@@ -9,11 +9,13 @@ All notable changes to AutoMancer are documented here, described by what you'll 
 #### Added
 
 - **Ready-made wait conditions** — common things to wait for (an element becoming visible or enabled, its name or text matching, its ID, class, or control type matching, or the opposite of any of these) no longer need a hand-written check. "Visible" and "enabled" use the same rules actions check before acting, so a wait and the action that follows it agree on what counts as usable.
+- **Force an action past the usability check** — `app.Force` performs the same actions on an element even when it's disabled or hidden, without waiting, for when acting on something no user could reach is intentional (e.g. invoking a menu command without opening its menu). It also skips the keyboard focus check, so simulated typing goes ahead even when the element doesn't take focus. It still reports gone elements and still needs a real on-screen point for simulated clicks. See [Forcing an action](README.md#forcing-an-action).
 - **Automatic recovery when you search by description** — when an element you described (by name, ID, position, and so on) turns out to be gone, AutoMancer looks it up again and carries on. This includes the container a scoped search runs in, so a dialog that closed and reopened is searched fresh. To handle this yourself instead, turn off the `ReresolveOnStale` option and you'll get a stale-element error. See [Locators vs. Element Handles](README.md#locators-vs-element-handles).
 
 #### Changed
 
 - **Actions wait for elements to be usable, checked at the moment of acting** — clicks, typing, clearing, hovering, and wheel scrolling now check that the element is enabled and visible right then, rather than trusting what was true when it was found, and wait up to the usual timeout for it to become usable. Previously, clicking, typing, or clearing could succeed on a hidden or disabled element through the app's accessibility interface — doing something no user could — because only the fallback to simulated mouse and keyboard input was checked, and an element kept from earlier (e.g. an item in a menu that has since closed) was judged by its old state. Clicks also aim at where the element is now, not where it was when found.
+- **Simulated typing goes to the element you named** — when typing or clearing falls back to simulated keystrokes, the element now gets keyboard focus first, and AutoMancer checks it took focus before sending anything. Previously the keystrokes went to whichever control already had focus, so text could land in the wrong box. An element that won't take focus is now waited on and then reported, instead of the text going elsewhere.
 
 - **Gone elements are reported, not silently mishandled** — acting on or reading an element that has left the UI now fails with a clear "stale element" error. Previously a click could land wherever the element used to be, a value read could come back empty, and a search inside a container that vanished partway through looked the same as "nothing matched." This covers elements from a closed dialog that Windows itself doesn't report as gone (e.g. Notepad's Go to line), and the brief moment after an app exits.
 - **An element you already found and kept** now fails with the stale-element error if it's gone, instead of acting on its old position or doing nothing. Nothing can look it up again for you, since it points at one specific element.
@@ -23,6 +25,9 @@ All notable changes to AutoMancer are documented here, described by what you'll 
 #### Fixed
 
 - Searching for all matches inside a container that had disappeared could crash with an internal error under the `uia3` provider.
+- Setting focus and scrolling into view silently did nothing for elements found by the `uia2` provider; they now work. Setting focus also works for elements found by the `win32` provider.
+- Actions on elements found by the `win32` provider never brought their window to the front, so simulated clicks and keystrokes could go to whatever app was in front instead.
+- Scrolling into view no longer logs "Scrolled into view" when the element doesn't support it and nothing scrolled; the log now says which happened.
 
 ### Stage 2.1 — Locator Power Tools
 

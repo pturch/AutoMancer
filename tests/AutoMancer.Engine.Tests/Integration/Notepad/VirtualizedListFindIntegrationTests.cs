@@ -67,6 +67,29 @@ public sealed class VirtualizedListFindIntegrationTests
         }
     }
 
+    // Same through UIA2-resolved handles: ScrollAction's ScrollIntoView used to be a silent no-op for them, which left the found row IsOffscreen.
+    [Fact]
+    public async Task FindByScrollingAsync_Uia2_FarDownItemInLongList_ScrollsUntilFoundAndIntoView()
+    {
+        var folder = CreateFolderWithManyFiles();
+        var app = await App.LaunchAsync("notepad.exe");
+        try
+        {
+            var dialog = (await OpenFileDialogOnFolderAsync(app, folder)).WithOptions(new AppOptions { ProviderChain = ["uia2"] });
+
+            var found = await dialog.FindByScrollingAsync(Locator.ByClassName("UIItemsView"), Locator.ByName(TargetFileName), maxScrolls: 5);
+
+            Assert.IsType<System.Windows.Automation.AutomationElement>(found.NativeHandle);
+            Assert.Equal(TargetFileName, found.Name);
+            Assert.False(found.IsOffscreen);
+        }
+        finally
+        {
+            await app.KillAsync();
+            try { Directory.Delete(folder, true); } catch { /* best-effort cleanup */ }
+        }
+    }
+
     [Fact]
     public async Task FindByScrollingAsync_ItemThatDoesNotExist_ThrowsElementNotFoundErrorInsteadOfHanging()
     {

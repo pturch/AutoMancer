@@ -4,6 +4,7 @@ using AutoMancer.Engine.Actions;
 using AutoMancer.Engine.Core;
 using AutoMancer.Engine.Diagnostics;
 using AutoMancer.Engine.Errors;
+using AutoMancer.Engine.Providers;
 using Interop.UIAutomationClient;
 using Moq;
 
@@ -224,6 +225,35 @@ public sealed class ElementInputHelpersTests
         {
             DestroyWindow(windowHandle);
         }
+    }
+
+    // This test thread owns the window, so SetFocus needs no input-queue join and never touches the user's foreground window.
+    [Fact]
+    public void EnsureKeyboardFocus_Win32_FocusesWindowAndConfirmsIt()
+    {
+        var windowHandle = CreateHiddenWindow(100, 100, 200, 100);
+        try
+        {
+            var element = new ElementHandle($"hwnd:{windowHandle}", "win32", windowHandle);
+
+            ElementInputHelpers.EnsureKeyboardFocus(element);
+
+            Assert.True(NativeMethods.HasFocusWithin(windowHandle));
+        }
+        finally
+        {
+            DestroyWindow(windowHandle);
+        }
+    }
+
+    [Fact]
+    public void EnsureKeyboardFocus_Win32_DestroyedWindow_ThrowsStaleElementError()
+    {
+        var windowHandle = CreateHiddenWindow(100, 100, 200, 100);
+        DestroyWindow(windowHandle);
+        var element = new ElementHandle($"hwnd:{windowHandle}", "win32", windowHandle);
+
+        Assert.Same(element, Assert.Throws<StaleElementError>(() => ElementInputHelpers.EnsureKeyboardFocus(element)).Element);
     }
 
     // Find time said visible, but the window isn't shown: the live user32 read wins.

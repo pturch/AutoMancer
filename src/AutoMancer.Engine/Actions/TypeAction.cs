@@ -27,6 +27,7 @@ public static class TypeAction
         await Task.Run(() =>
         {
             ElementInputHelpers.EnsureForeground(element);
+            ElementInputHelpers.EnsureKeyboardFocus(element);
             SendUnicodeText(text, logger);
         }, ct).ConfigureAwait(false);
         logger?.Info("Typed via synthesized input", new { elementId = element.Id, textLength = text.Length });

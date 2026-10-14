@@ -283,6 +283,23 @@ public sealed class NotepadInteractionTests(NotepadFixture fixture) : IClassFixt
         await _app.ClickAsync(Locator.ByControlType("Document"));
     }
 
+    // Same through a UIA2-resolved handle, which SetFocusAction used to accept as a silent no-op.
+    [Fact]
+    public async Task SetFocusAsync_Uia2Handle_SetsKeyboardFocusToElement()
+    {
+        var uia2 = _app.WithOptions(new AppOptions { ProviderChain = ["uia2"] });
+        await _app.ClickAsync(Locator.ByControlType("Document"));
+        await Task.Delay(100);
+
+        await uia2.SetFocusAsync(Locator.ByName("File"));
+        await Task.Delay(200);
+
+        var fileButton = await uia2.FindAsync(Locator.ByName("File"));
+        Assert.True(((System.Windows.Automation.AutomationElement)fileButton.NativeHandle).Current.HasKeyboardFocus);
+
+        await _app.ClickAsync(Locator.ByControlType("Document"));
+    }
+
     // Resolves the live Document element's TextPattern, for reading its text/selection and for TextRange bounding rects to click at.
     private async Task<IUIAutomationTextPattern> GetTextPatternAsync()
     {

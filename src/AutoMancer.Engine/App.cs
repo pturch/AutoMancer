@@ -313,8 +313,9 @@ public sealed class App : IAsyncDisposable
         EnsureWindowNotMinimized();
         await FindAndRunAsync(locator, el => Task.Run(() =>
         {
-            // Root first, since EnsureForeground skips elements with no native window of their own; EnsureForeground still runs for its live read, the only staleness check here (GetCenter reads cached bounds).
+            // Root first, since EnsureForeground skips elements with no native window of their own.
             EnsureWindowReady();
+            ElementInputHelpers.EnsureInteractable(el);
             ElementInputHelpers.EnsureForeground(el);
             var (x, y) = ElementInputHelpers.GetCenter(el);
             NativeMethods.SendMouseClick(x, y, _logger);
@@ -531,7 +532,7 @@ public sealed class App : IAsyncDisposable
             throw new WindowMinimizedError(_session.RootWindowHandle);
     }
 
-    // Finds locator and runs action on it; on a StaleElementError with AppOptions.ReresolveOnStale on, re-runs locator and retries — a recreated element gets a new RuntimeId, so the locator is the only reliable way back to it.
+    // Finds locator and runs action on it; on a StaleElementError with AppOptions.ReresolveOnStale on, re-runs locator and retries — a recreated element gets a new RuntimeId, so the locator is the only reliable way back to it. ElementNotInteractableError is retried the same way (Playwright's wait-until-actionable).
     private async Task FindAndRunAsync(Locator locator, Func<ElementHandle, Task> action, CancellationToken ct)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -548,6 +549,12 @@ public sealed class App : IAsyncDisposable
             catch (StaleElementError) when (_reresolveOnStale && stopwatch.ElapsedMilliseconds < ImplicitWaitMs)
             {
                 _logger?.Warn("Element went stale mid-action, re-resolving via locator", new { locator.Strategy, locator.Value, staleId = element.Id, elapsedMs = stopwatch.ElapsedMilliseconds });
+                await Task.Delay(PollIntervalMs, ct);
+            }
+            // Re-finds too, rather than re-checking the same handle, so an element replaced while becoming actionable is followed.
+            catch (ElementNotInteractableError ex) when (stopwatch.ElapsedMilliseconds < ImplicitWaitMs)
+            {
+                _logger?.Info("Element not yet interactable, waiting", new { locator.Strategy, locator.Value, elementId = element.Id, reason = ex.Message, elapsedMs = stopwatch.ElapsedMilliseconds });
                 await Task.Delay(PollIntervalMs, ct);
             }
         }

@@ -111,7 +111,7 @@ public sealed class Win32Provider : IElementProvider
             ClassName = NativeMethods.GetWindowClassName(windowHandle),
             BoundingRect = rect,
             IsEnabled = NativeMethods.IsWindowEnabled(windowHandle),
-            // GetWindowRect failing (e.g. a stale handle from a window that closed mid-enumeration) can't be surfaced as an exception — providers never throw — so it's signaled as IsOffscreen=true instead of a silently-zeroed rect, which ElementInputHelpers.GetCenter's interactability guard already checks for.
+            // Providers never throw, so a failed GetWindowRect is signaled as IsOffscreen=true rather than a silently-zeroed rect.
             IsOffscreen = rectOk ? null : true,
             Provider = this,
         };
@@ -122,7 +122,7 @@ public sealed class Win32Provider : IElementProvider
         new($"hwnd:{windowHandle}", NativeMethods.GetWindowTitle(windowHandle), null, NativeMethods.GetWindowClassName(windowHandle), null, GetRect(windowHandle).Rect, children);
 
     // Returns windowHandle's current bounding rectangle in physical screen coordinates, and whether GetWindowRect actually succeeded — a stale/closed handle returns false with a zeroed rect.
-    private static (Rect Rect, bool Success) GetRect(IntPtr windowHandle)
+    internal static (Rect Rect, bool Success) GetRect(IntPtr windowHandle)
     {
         var ok = NativeMethods.GetWindowRect(windowHandle, out var rect);
         return (new Rect(rect.Left, rect.Top, rect.Right - rect.Left, rect.Bottom - rect.Top), ok);

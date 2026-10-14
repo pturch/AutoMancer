@@ -14,7 +14,7 @@ public sealed class NotepadInteractionTests(NotepadFixture fixture) : IClassFixt
 {
     private readonly App _app = fixture.App.WithOptions(new AppOptions { ProviderChain = ["uia3"] });
 
-    // Double-clicking a word selects it; DoubleClickAction targets a synthetic handle over the word's rect (via TextPattern.FindText) since a locator would only give the whole Document.
+    // Double-clicking a word selects it; clicks the center of the word's rect (via TextPattern.FindText) twice by point, since a locator would only give the whole Document — ActionDelayMs (150ms by default) keeps the pair well inside Windows' double-click time.
     [Fact]
     public async Task DoubleClickAsync_SelectsWordUnderCursor()
     {
@@ -23,18 +23,18 @@ public sealed class NotepadInteractionTests(NotepadFixture fixture) : IClassFixt
         await _app.TypeAsync(Locator.ByControlType("Document"), "Hello AutoMancer");
         await Task.Delay(200);
 
-        var (textPattern, uiaElement) = await GetTextPatternAsync();
+        var textPattern = await GetTextPatternAsync();
         var wordRange = textPattern.DocumentRange.FindText("AutoMancer", 0, 0);
         Assert.NotNull(wordRange);
 
         var rects = wordRange.GetBoundingRectangles();
         Assert.True(rects.Length >= 4);
-        var wordCenter = new ElementHandle("word-AutoMancer", "test", uiaElement)
-        {
-            BoundingRect = new Rect(rects[0], rects[1], rects[2], rects[3]),
-        };
 
-        await DoubleClickAction.ExecuteAsync(wordCenter);
+        var wordRect = new Rect(rects[0], rects[1], rects[2], rects[3]);
+        var (centerX, centerY) = wordRect.Center;
+
+        await _app.ClickAtAsync((int)centerX, (int)centerY);
+        await _app.ClickAtAsync((int)centerX, (int)centerY);
         await Task.Delay(200);
 
         var selection = textPattern.GetSelection();
@@ -55,7 +55,7 @@ public sealed class NotepadInteractionTests(NotepadFixture fixture) : IClassFixt
         await _app.PressKeyAsync(Key.A, new KeyModifiers(Control: true));
         await Task.Delay(200);
 
-        var (textPattern, _) = await GetTextPatternAsync();
+        var textPattern = await GetTextPatternAsync();
         var selection = textPattern.GetSelection();
 
         Assert.True(selection.Length > 0);
@@ -73,7 +73,7 @@ public sealed class NotepadInteractionTests(NotepadFixture fixture) : IClassFixt
         await _app.HotkeyAsync(new KeyModifiers(Shift: true), [Key.A, Key.B]);
         await Task.Delay(200);
 
-        var (textPattern, _) = await GetTextPatternAsync();
+        var textPattern = await GetTextPatternAsync();
         Assert.Equal("AB", textPattern.DocumentRange.GetText(-1));
     }
 
@@ -111,20 +111,22 @@ public sealed class NotepadInteractionTests(NotepadFixture fixture) : IClassFixt
         await _app.PressKeyAsync(Key.Home);
         await Task.Delay(100);
 
-        var (textPattern, uiaElement) = await GetTextPatternAsync();
+        var textPattern = await GetTextPatternAsync();
         var wordRange = textPattern.DocumentRange.FindText("AutoMancer", 0, 0);
         Assert.NotNull(wordRange);
         var rects = wordRange.GetBoundingRectangles();
         Assert.True(rects.Length >= 4);
         Assert.True(rects[2] > 50, $"Unexpectedly narrow word rect (width={rects[2]}) — text may not have finished rendering.");
 
-        // A point just past the word's right edge — resolves to the boundary right after the last character.
-        var endOfText = new ElementHandle("end-of-text", "test", uiaElement)
-        {
-            BoundingRect = new Rect(rects[0] + rects[2] + 2, rects[1] + rects[3] / 2, 0, 0),
-        };
+        var wordRect = new Rect(rects[0], rects[1], rects[2], rects[3]);
 
-        await ClickAction.ExecuteAsync(endOfText, MouseButton.Left, new KeyModifiers(Shift: true));
+        // A point just past the word's right edge — resolves to the boundary right after the last character.
+        var endOfTextX = (int)(wordRect.X + wordRect.Width + 2);
+        var endOfTextY = (int)wordRect.Center.Y;
+
+        await _app.KeyDownAsync(Key.LeftShift);
+        await _app.ClickAtAsync(endOfTextX, endOfTextY);
+        await _app.KeyUpAsync(Key.LeftShift);
         await Task.Delay(200);
 
         var selection = textPattern.GetSelection();
@@ -142,25 +144,65 @@ public sealed class NotepadInteractionTests(NotepadFixture fixture) : IClassFixt
         await _app.TypeAsync(Locator.ByControlType("Document"), text);
         await Task.Delay(400);
 
-        var (textPattern, uiaElement) = await GetTextPatternAsync();
+        var textPattern = await GetTextPatternAsync();
         var wordRange = textPattern.DocumentRange.FindText("AutoMancer", 0, 0);
         Assert.NotNull(wordRange);
         var rects = wordRange.GetBoundingRectangles();
         Assert.True(rects.Length >= 4);
 
-        // A point just inside the left edge of "AutoMancer" — resolves to the boundary right before the "A".
-        var startOfWord = new ElementHandle("start-of-word", "test", uiaElement)
-        {
-            BoundingRect = new Rect(rects[0] + 1, rects[1] + rects[3] / 2, 0, 0),
-        };
+        var wordRect = new Rect(rects[0], rects[1], rects[2], rects[3]);
 
-        await ClickAction.ExecuteAsync(startOfWord, MouseButton.Left, new KeyModifiers(Control: true));
+        // A point just inside the left edge of "AutoMancer" — resolves to the boundary right before the "A".
+        var startOfWordX = (int)(wordRect.X + 1);
+        var startOfWordY = (int)wordRect.Center.Y;
+
+        await _app.KeyDownAsync(Key.LeftControl);
+        await _app.ClickAtAsync(startOfWordX, startOfWordY);
+        await _app.KeyUpAsync(Key.LeftControl);
         await Task.Delay(200);
 
         await _app.TypeDirectAsync("X");
         await Task.Delay(200);
 
         Assert.Equal("Hello XAutoMancer", textPattern.DocumentRange.GetText(-1));
+    }
+
+    // ClickAction's modifier path end to end through a locator (gate, then one batched Shift+click): the Document's center lies below and past the end of one short line, so Shift+clicking it from Home selects the whole line.
+    [Fact]
+    public async Task ClickAsync_Locator_WithShiftModifier_ExtendsSelectionToEnd()
+    {
+        const string text = "Hello AutoMancer";
+        await _app.ClickAsync(Locator.ByControlType("Document"));
+        await _app.ClearAsync(Locator.ByControlType("Document"));
+        await _app.TypeAsync(Locator.ByControlType("Document"), text);
+        await _app.PressKeyAsync(Key.Home);
+        await Task.Delay(200);
+
+        await _app.ClickAsync(Locator.ByControlType("Document"), MouseButton.Left, new KeyModifiers(Shift: true));
+        await Task.Delay(200);
+
+        var selection = (await GetTextPatternAsync()).GetSelection();
+        Assert.True(selection.Length > 0);
+        Assert.Equal(text, selection.GetElement(0).GetText(-1));
+    }
+
+    // DoubleClickAction end to end through a locator: every line is one long unbroken word, so the Document's center is guaranteed to land on a word, and the double-click selects exactly one whole line's word.
+    [Fact]
+    public async Task DoubleClickAsync_Locator_SelectsWordAtDocumentCenter()
+    {
+        var word = string.Concat(Enumerable.Repeat("AutoMancer", 40));
+        await _app.ClickAsync(Locator.ByControlType("Document"));
+        await _app.ClearAsync(Locator.ByControlType("Document"));
+        await _app.TypeAsync(Locator.ByControlType("Document"), string.Join(Environment.NewLine, Enumerable.Repeat(word, 80)));
+        await _app.PressKeyAsync(Key.Home, new KeyModifiers(Control: true));
+        await Task.Delay(200);
+
+        await _app.DoubleClickAsync(Locator.ByControlType("Document"));
+        await Task.Delay(200);
+
+        var selection = (await GetTextPatternAsync()).GetSelection();
+        Assert.True(selection.Length > 0);
+        Assert.Equal(word, selection.GetElement(0).GetText(-1));
     }
 
     // HoverAsync moves the mouse without clicking; since Notepad has no reliable hover-triggered visual state, this verifies the OS cursor position via GetCursorPos instead.
@@ -241,12 +283,10 @@ public sealed class NotepadInteractionTests(NotepadFixture fixture) : IClassFixt
         await _app.ClickAsync(Locator.ByControlType("Document"));
     }
 
-    // Resolves the live Document element and its TextPattern together, since callers need both for reads and for building synthetic click targets from TextRange bounding rects.
-    private async Task<(IUIAutomationTextPattern TextPattern, IUIAutomationElement Element)> GetTextPatternAsync()
+    // Resolves the live Document element's TextPattern, for reading its text/selection and for TextRange bounding rects to click at.
+    private async Task<IUIAutomationTextPattern> GetTextPatternAsync()
     {
         var editor = await _app.FindAsync(Locator.ByControlType("Document"));
-        var uiaElement = (IUIAutomationElement)editor.NativeHandle;
-        var textPattern = (IUIAutomationTextPattern)uiaElement.GetCurrentPattern(UIA_PatternIds.UIA_TextPatternId);
-        return (textPattern, uiaElement);
+        return (IUIAutomationTextPattern)((IUIAutomationElement)editor.NativeHandle).GetCurrentPattern(UIA_PatternIds.UIA_TextPatternId);
     }
 }

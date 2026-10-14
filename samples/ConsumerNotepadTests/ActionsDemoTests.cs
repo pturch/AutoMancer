@@ -44,7 +44,7 @@ public sealed class ActionsDemoTests(NotepadFixture fixture) : AutoMancerTest(fi
     public async Task HoverAsync_CompletesWithoutThrowing()
         => await App.HoverAsync(FileMenu);
 
-    // DoubleClickAsync on the whole Document is a coarse smoke test — selecting a specific word needs a synthetic ElementHandle over a TextPattern range, which is an internal-test technique, not part of the public API this sample demonstrates.
+    // Coarse smoke test: double-clicks the whole Document, since a locator can't target a single word inside it.
     [Fact]
     public async Task DoubleClickAsync_CompletesWithoutThrowing()
     {

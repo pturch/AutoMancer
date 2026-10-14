@@ -54,11 +54,11 @@ public sealed class StaleElementResilienceTests
             Task.FromResult((IReadOnlyList<ElementSnapshot>)Array.Empty<ElementSnapshot>());
     }
 
-    // A handle whose native operator declines (forcing the SendInput fallback) and whose live CurrentNativeWindowHandle read fails with hresult — UIA_E_ELEMENTNOTAVAILABLE for a genuinely gone element.
+    // A handle whose native operator declines (forcing the SendInput fallback) and whose live state read fails with hresult — UIA_E_ELEMENTNOTAVAILABLE for a genuinely gone element.
     private static ElementHandle FailingHandle(string id, int hresult, bool? isEnabled = null)
     {
         var native = new Mock<IUIAutomationElement>();
-        native.SetupGet(e => e.CurrentNativeWindowHandle).Throws(new COMException("live read failed", hresult));
+        native.Setup(e => e.BuildUpdatedCache(It.IsAny<IUIAutomationCacheRequest>())).Throws(new COMException("live read failed", hresult));
         return new ElementHandle(id, "uia3", native.Object) { Name = "Save", AutomationId = "SaveButton", IsEnabled = isEnabled, Operator = new Mock<IElementOperator>().Object };
     }
 
@@ -68,7 +68,7 @@ public sealed class StaleElementResilienceTests
         var op = new Mock<IElementOperator>();
         op.Setup(o => o.TryClickAsync(It.IsAny<ElementHandle>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
         op.Setup(o => o.TrySetValueAsync(It.IsAny<ElementHandle>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
-        return (new ElementHandle(id, "uia3", new object()) { Name = "Save", AutomationId = "SaveButton", Operator = op.Object }, op);
+        return (new ElementHandle(id, "uia3", new object()) { Name = "Save", AutomationId = "SaveButton", BoundingRect = new Rect(0, 0, 100, 30), Operator = op.Object }, op);
     }
 
     private static Task Run(App app, string action) => action switch
@@ -114,7 +114,7 @@ public sealed class StaleElementResilienceTests
         Assert.Equal(1, findCalls);
     }
 
-    // Control: a COM failure that isn't UIA_E_ELEMENTNOTAVAILABLE (the VLC split-button timeout) is still logged and skipped, either way the flag is set — reaching EnsureInteractable's disabled-element error proves EnsureForeground carried on rather than raising staleness, without sending any input.
+    // Control: a COM failure that isn't UIA_E_ELEMENTNOTAVAILABLE (the VLC split-button timeout) is still logged and skipped, either way the flag is set — the read falls back to the find-time state, so reaching EnsureInteractable's disabled-element error proves it wasn't raised as staleness, without sending any input. ImplicitWaitMs=0 so that error isn't waited on.
     [Theory]
     [InlineData("click", true)]
     [InlineData("click", false)]
@@ -126,7 +126,7 @@ public sealed class StaleElementResilienceTests
     {
         var timedOut = FailingHandle("42.1.1", unchecked((int)0x80131505), isEnabled: false);
         var findCalls = 0;
-        var app = BuildApp(new DelegateProvider(_ => { findCalls++; return timedOut; }), reresolveOnStale);
+        var app = BuildApp(new DelegateProvider(_ => { findCalls++; return timedOut; }), reresolveOnStale, implicitWaitMs: 0);
 
         await Assert.ThrowsAsync<ElementNotInteractableError>(() => Run(app, action));
 

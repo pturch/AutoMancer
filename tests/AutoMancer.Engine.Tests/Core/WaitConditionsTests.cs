@@ -6,12 +6,14 @@ namespace AutoMancer.Engine.Tests.Core;
 
 public sealed class WaitConditionsTests
 {
+    // On-screen bounds by default, so visibility tests vary only what they're about.
     private static ElementHandle Element(string? name = null, bool? isEnabled = null, bool? isOffscreen = null,
-        string? automationId = null, string? className = null, string? controlType = null) =>
+        string? automationId = null, string? className = null, string? controlType = null, Rect? bounds = null) =>
         new("id", "test", new object())
         {
             Name = name, IsEnabled = isEnabled, IsOffscreen = isOffscreen,
             AutomationId = automationId, ClassName = className, ControlType = controlType,
+            BoundingRect = bounds ?? new Rect(10, 10, 100, 30),
         };
 
     [Fact]
@@ -21,6 +23,11 @@ public sealed class WaitConditionsTests
     [Fact]
     public void IsVisible_Offscreen_ReturnsFalse()
         => Assert.False(WaitConditions.IsVisible()(Element(isOffscreen: true)));
+
+    // A closed menu's item reads IsOffscreen=false with no on-screen area — not visible, matching what actions wait on.
+    [Fact]
+    public void IsVisible_EmptyBounds_ReturnsFalse()
+        => Assert.False(WaitConditions.IsVisible()(Element(isOffscreen: false, bounds: new Rect(0, 0, 0, 0))));
 
     [Fact]
     public void NameEquals_ExactMatch_ReturnsTrue()
@@ -55,11 +62,13 @@ public sealed class WaitConditionsTests
         => Assert.True(WaitConditions.IsEnabled()(Element(isEnabled: true)));
 
     [Fact]
-    public void IsEnabled_FalseOrNull_ReturnsFalse()
-    {
-        Assert.False(WaitConditions.IsEnabled()(Element(isEnabled: false)));
-        Assert.False(WaitConditions.IsEnabled()(Element(isEnabled: null)));
-    }
+    public void IsEnabled_False_ReturnsFalse()
+        => Assert.False(WaitConditions.IsEnabled()(Element(isEnabled: false)));
+
+    // Unknown (a provider that can't tell) counts as enabled — the same rule actions use, so a wait never hangs on what an action would accept.
+    [Fact]
+    public void IsEnabled_Unknown_ReturnsTrue()
+        => Assert.True(WaitConditions.IsEnabled()(Element(isEnabled: null)));
 
     [Fact]
     public void AutomationIdEquals_ExactMatch_ReturnsTrue()

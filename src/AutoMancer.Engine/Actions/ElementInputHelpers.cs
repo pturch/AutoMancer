@@ -9,7 +9,7 @@ using Interop.UIAutomationClient;
 
 namespace AutoMancer.Engine.Actions;
 
-// Pre-flight checks and coordinate lookups shared by every action that falls back to synthesized SendInput against a resolved element.
+// Pre-flight checks and coordinate lookups shared by every action that targets a resolved element, via native pattern or synthesized SendInput.
 internal static class ElementInputHelpers
 {
     // UIA's fixed HRESULT for "element no longer in the tree"; unchecked because HRESULTs are unsigned but Exception.HResult is a signed int.
@@ -74,6 +74,53 @@ internal static class ElementInputHelpers
         if (IsDetached(scope)) throw Stale(scope, searchFailure, "Scope element");
     }
 
+    // An element's IsEnabled/IsOffscreen/bounds as read live at action time.
+    private readonly record struct ElementState(bool? IsEnabled, bool? IsOffscreen, Rect Bounds);
+
+    // Reads the element's state live — one batched UIA call (a cache request), or user32 reads for a Win32 hwnd; throws StaleElementError if it's gone. Handles with nothing live to read, and a read that fails without the element being gone, get the find-time values.
+    private static ElementState ReadState(ElementHandle element)
+    {
+        // Stale always throws here — AppOptions.ReresolveOnStale only controls whether App retries it, not whether it's raised.
+        try
+        {
+            switch (element.NativeHandle)
+            {
+                case IUIAutomationElement uia3:
+                    var request = Uia3Provider.Automation.CreateCacheRequest();
+                    // Raw view, so an element outside the default control view (one the raw-view walkers can reach) still gets its own state cached.
+                    request.TreeFilter = Uia3Provider.Automation.RawViewCondition;
+                    request.AddProperty(UIA_PropertyIds.UIA_BoundingRectanglePropertyId);
+                    request.AddProperty(UIA_PropertyIds.UIA_IsEnabledPropertyId);
+                    request.AddProperty(UIA_PropertyIds.UIA_IsOffscreenPropertyId);
+                    var uia3State = uia3.BuildUpdatedCache(request);
+                    var r = uia3State.CachedBoundingRectangle;
+                    return new(uia3State.CachedIsEnabled != 0, uia3State.CachedIsOffscreen != 0, new Rect(r.left, r.top, r.right - r.left, r.bottom - r.top));
+                case AutomationElement uia2:
+                    var request2 = new CacheRequest { TreeFilter = Automation.RawViewCondition };
+                    request2.Add(AutomationElement.BoundingRectangleProperty);
+                    request2.Add(AutomationElement.IsEnabledProperty);
+                    request2.Add(AutomationElement.IsOffscreenProperty);
+                    var uia2State = uia2.GetUpdatedCache(request2).Cached;
+                    var b = uia2State.BoundingRectangle;
+                    return new(uia2State.IsEnabled, uia2State.IsOffscreen, new Rect(b.X, b.Y, b.Width, b.Height));
+                case IntPtr windowHandle:
+                    // Plain user32 calls with no cross-process marshaling, so no batching is needed; a closed window's failed rect reads as not visible, as Win32Provider reports it.
+                    var (rect, rectOk) = Win32Provider.GetRect(windowHandle);
+                    return new(NativeMethods.IsWindowEnabled(windowHandle), !rectOk || !NativeMethods.IsWindowVisible(windowHandle), rect);
+            }
+        }
+        catch (Exception ex) when (IsStaleFailure(ex, element))
+        {
+            throw Stale(element, ex);
+        }
+        catch (Exception ex) when (ex is COMException or InvalidOperationException)
+        {
+            // Some UIA elements (e.g. split-button MenuItems observed against VLC) throw or time out on reads even though they're still present; log and act on the find-time values rather than failing the action.
+            element.Logger?.Warn("Live state read failed, using find-time state", new { elementId = element.Id, error = ex.Message });
+        }
+        return new(element.IsEnabled, element.IsOffscreen, element.BoundingRect);
+    }
+
     // Brings the element's owning window to the foreground so synthesized input reaches it; throws StaleElementError if the element is gone.
     internal static void EnsureForeground(ElementHandle element)
     {
@@ -125,20 +172,35 @@ internal static class ElementInputHelpers
             NativeMethods.EnsureForegroundOrThrow(windowHandle, element.ForegroundActivationTimeoutMs);
     }
 
-    // Throws ElementNotInteractableError when IsEnabled/IsOffscreen say a synthesized action can't land meaningfully; shared by every action that falls back to SendInput (click, type, clear), not just click.
+    // Throws ElementNotInteractableError unless the element is enabled and visible right now per WaitConditions' shared rules, or StaleElementError if it's gone; the guard every input action runs before any native-pattern or synthesized input.
     internal static void EnsureInteractable(ElementHandle element)
     {
-        if (element.IsEnabled == false)
-            throw new ElementNotInteractableError(element, $"Element \"{element.Name}\" (AutomationId={element.AutomationId}) is disabled (IsEnabled=false) and cannot be interacted with.");
-        if (element.IsOffscreen == true)
-            throw new ElementNotInteractableError(element, $"Element \"{element.Name}\" (AutomationId={element.AutomationId}) is currently offscreen (IsOffscreen=true) and cannot be interacted with.");
+        var state = ReadState(element);
+        if (WaitConditions.Enabled(state.IsEnabled) && WaitConditions.Visible(state.IsOffscreen, state.Bounds))
+            return;
+
+        // A detached element (closed XAML dialog) reads back blank instead of throwing — report it as stale, not merely hidden.
+        if (IsDetached(element))
+            throw Stale(element, null);
+
+        // Name the specific check that failed, so the error says why the element can't be used.
+        string reason;
+        if (!WaitConditions.Enabled(state.IsEnabled))
+            reason = "is disabled (IsEnabled=false)";
+        else if (state.IsOffscreen == true)
+            reason = "is currently offscreen (IsOffscreen=true)";
+        else
+            reason = "has empty on-screen bounds";
+        throw new ElementNotInteractableError(element, $"Element \"{element.Name}\" (AutomationId={element.AutomationId}) {reason} and cannot be interacted with.");
     }
 
-    // Computes the absolute physical-screen point at the center of the element's bounding rect (already physical pixels; see DpiAwareness)
+    // The point synthesized pointer input should hit: the center of the element's live bounds (already physical pixels; see DpiAwareness). Independent of EnsureInteractable — it validates its own read, throwing ElementNotInteractableError when there's no on-screen area to aim at.
     internal static (int X, int Y) GetCenter(ElementHandle element)
     {
-        EnsureInteractable(element);
-        var (x, y) = element.BoundingRect.Center;
+        var bounds = ReadState(element).Bounds;
+        if (!(bounds.Width > 0 && bounds.Height > 0))
+            throw new ElementNotInteractableError(element, $"Element \"{element.Name}\" (AutomationId={element.AutomationId}) has empty on-screen bounds, so there is no point to aim synthesized input at.");
+        var (x, y) = bounds.Center;
         return ((int)x, (int)y);
     }
 }

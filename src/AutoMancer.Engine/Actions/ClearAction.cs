@@ -15,6 +15,7 @@ public static class ClearAction
     // Same as ExecuteAsync, with an explicit logger override — for App and the test suite to inject/inspect logging directly.
     internal static async Task ExecuteCoreAsync(ElementHandle element, IEngineLogger? logger, CancellationToken ct)
     {
+        await Task.Run(() => ElementInputHelpers.EnsureInteractable(element), ct).ConfigureAwait(false);
         if (element.Operator is not null)
             if (await element.Operator.TrySetValueAsync(element, "", ct).ConfigureAwait(false))
             {
@@ -25,7 +26,6 @@ public static class ClearAction
         await Task.Run(() =>
         {
             ElementInputHelpers.EnsureForeground(element);
-            ElementInputHelpers.EnsureInteractable(element);
             SendCtrlADelete(logger);
         }, ct).ConfigureAwait(false);
         logger?.Info("Cleared via synthesized input", new { elementId = element.Id });

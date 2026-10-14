@@ -20,6 +20,7 @@ public static class DoubleClickAction
     // Same as ExecuteAsync, with an explicit logger override — for App and the test suite to inject/inspect logging directly.
     internal static Task ExecuteCoreAsync(ElementHandle element, IEngineLogger? logger, CancellationToken ct) => Task.Run(() =>
     {
+        ElementInputHelpers.EnsureInteractable(element);
         ElementInputHelpers.EnsureForeground(element);
 
         // Leading move required — see NativeMethods.SendMouseClick's comment on WinUI3 hit-testing.

@@ -230,6 +230,12 @@ await app.DragThroughAsync([(100, 100), (150, 140), (200, 180)]);         // cli
 await app.ScrollWheelAsync(Locator.ByControlType("Document"), deltaX: 0, deltaY: -3);
 ```
 
+### Actionability:
+
+Element actions (`ClickAsync`, `TypeAsync`, `ClearAsync`, `DoubleClickAsync`, `HoverAsync`, `ScrollWheelAsync`, ...) only act on an element a user could use: enabled, and visible — not offscreen, with a real on-screen size. The check reads the element  right before acting, and applies to the app's accessibility shortcuts as well as simulated mouse and keyboard input. AutoMancer stays grounded in ony performing behaviors that a user could.
+
+If the element isn't usable yet the action finds it again and keeps checking until the implicit wait runs out, then throws `ElementNotInteractableError` saying why (disabled, offscreen, or no on-screen size). `ScrollIntoViewAsync`, `SetFocusAsync`, and `GetValueAsync` don't check, since making an element visible or reading it is their job. `WaitConditions.IsVisible()` and `IsEnabled()` use the same rules, so a wait and the action after it agree on what counts as usable.
+
 ### Screenshots and Waiting:
 
 Use these methods to help with test execution and debugging:

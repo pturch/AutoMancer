@@ -229,6 +229,36 @@ public sealed class LocatorExpectTests
         Assert.Contains("found 2", ex.Message);
     }
 
+    // An element with no on-screen bounds has nothing to hit, which IsUnobscuredAsync reports as false without touching the live desktop.
+    [Fact]
+    public async Task ToBeObscuredAsync_NoOnScreenBounds_DoesNotThrow()
+    {
+        var app = FakeApp(Handle(name: "Submit", rect: default));
+
+        await Expect(app, TestLocator).ToBeObscuredAsync();
+    }
+
+    [Fact]
+    public async Task ToBeUnobscuredAsync_NoOnScreenBounds_ThrowsExpectFailedError()
+    {
+        var app = FakeApp(Handle(name: "Submit", rect: default));
+
+        var ex = await Assert.ThrowsAsync<ExpectFailedError>(() => Expect(app, TestLocator).ToBeUnobscuredAsync());
+
+        Assert.Contains("to be unobscured", ex.Message);
+        Assert.Contains("still covered or had no on-screen bounds", ex.Message);
+    }
+
+    [Fact]
+    public async Task ToBeUnobscuredAsync_ElementNeverFound_ThrowsExpectFailedErrorSayingNoMatchingElement()
+    {
+        var app = FakeApp(findResult: null);
+
+        var ex = await Assert.ThrowsAsync<ExpectFailedError>(() => Expect(app, TestLocator).ToBeUnobscuredAsync());
+
+        Assert.Contains("no matching element was ever found", ex.Message);
+    }
+
     [Fact]
     public async Task ToHaveTextAsync_ContainsSubstring_DoesNotThrow()
     {

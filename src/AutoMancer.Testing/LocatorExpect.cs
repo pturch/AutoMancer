@@ -42,41 +42,45 @@ public sealed class LocatorExpect
         => WaitOrFailAsync(e => e.Name?.Contains(expected, StringComparison.Ordinal) == true, $"to have text containing \"{expected}\"", ct);
 
     // Polls until the element's value equals expected, via Poll rather than WaitOrFailAsync since reading a value is async; throws ExpectFailedError on timeout.
-    public async Task ToHaveValueAsync(string expected, int? timeoutMs = null, int? pollIntervalMs = null, CancellationToken ct = default)
+    public Task ToHaveValueAsync(string expected, int? timeoutMs = null, int? pollIntervalMs = null, CancellationToken ct = default)
+        => PollOrFailAsync(() => _app.GetValueAsync(_locator, ct), v => v == expected, $"to have value \"{expected}\"",
+            v => v is null ? "no matching element was ever found" : $"found value \"{v}\"", timeoutMs, pollIntervalMs, ct);
+
+    // Polls single-pass FindAllAsync until exactly expected elements match — the wait FindAllAsync itself leaves out; throws ExpectFailedError reporting the last count on timeout.
+    public Task ToHaveCountAsync(int expected, int? timeoutMs = null, int? pollIntervalMs = null, CancellationToken ct = default)
+        => PollOrFailAsync(() => _app.FindAllAsync(_locator, ct), m => m.Count == expected, $"to have count {expected}",
+            m => $"found {m.Count}", timeoutMs, pollIntervalMs, ct);
+
+    // Polls App.IsUnobscuredAsync until a click at the element's center would reach it — polled because overlays animate in and out, and Chromium's first hit-test after a change can be stale; throws ExpectFailedError on timeout.
+    public Task ToBeUnobscuredAsync(int? timeoutMs = null, int? pollIntervalMs = null, CancellationToken ct = default)
+        => PollOrFailAsync(() => _app.IsUnobscuredAsync(_locator, ct), clear => clear, "to be unobscured",
+            _ => "it was still covered or had no on-screen bounds", timeoutMs, pollIntervalMs, ct);
+
+    // Polls App.IsUnobscuredAsync until something covers the element's center (or it has no on-screen bounds); throws ExpectFailedError on timeout.
+    public Task ToBeObscuredAsync(int? timeoutMs = null, int? pollIntervalMs = null, CancellationToken ct = default)
+        => PollOrFailAsync(() => _app.IsUnobscuredAsync(_locator, ct), clear => !clear, "to be obscured",
+            _ => "it was still clear", timeoutMs, pollIntervalMs, ct);
+
+    // Polls a live async read until accept holds, for assertions WaitOrFailAsync can't express; on timeout throws ExpectFailedError with describeLast's account of the last read, or "no matching element was ever found" if the locator never resolved.
+    private async Task PollOrFailAsync<T>(Func<Task<T>> read, Func<T, bool> accept, string description, Func<T, string> describeLast, int? timeoutMs, int? pollIntervalMs, CancellationToken ct)
     {
-        var effectiveTimeoutMs = timeoutMs ?? _app.ImplicitWaitMs;
-        var effectivePollIntervalMs = pollIntervalMs ?? _app.PollIntervalMs;
         var stopwatch = Stopwatch.StartNew();
-        bool success;
-        string? actual;
+        string describedActual;
         long elapsedMs;
         try
         {
-            (success, actual, elapsedMs) = await Poll.UntilAsync(() => _app.GetValueAsync(_locator, ct), v => v == expected, effectiveTimeoutMs, effectivePollIntervalMs, ct);
+            var (success, last, pollElapsedMs) = await Poll.UntilAsync(read, accept, timeoutMs ?? _app.ImplicitWaitMs, pollIntervalMs ?? _app.PollIntervalMs, ct);
+            if (success)
+                return;
+            (describedActual, elapsedMs) = (describeLast(last), pollElapsedMs);
         }
         catch (ElementNotFoundError)
         {
-            (success, actual, elapsedMs) = (false, null, stopwatch.ElapsedMilliseconds);
+            (describedActual, elapsedMs) = ("no matching element was ever found", stopwatch.ElapsedMilliseconds);
         }
 
-        if (success)
-            return;
-
-        var describedActual = actual is null ? "no matching element was ever found" : $"found value \"{actual}\"";
         var screenshot = await ExpectDiagnostics.DescribeScreenshotAsync(_app, _options, ct);
-        throw new ExpectFailedError($"Expected {_locator.Strategy}={_locator.Value} to have value \"{expected}\", but {describedActual} (elapsed {elapsedMs}ms){screenshot}");
-    }
-
-    // Polls single-pass FindAllAsync until exactly expected elements match — the wait FindAllAsync itself leaves out; throws ExpectFailedError reporting the last count on timeout.
-    public async Task ToHaveCountAsync(int expected, int? timeoutMs = null, int? pollIntervalMs = null, CancellationToken ct = default)
-    {
-        var (success, actual, elapsedMs) = await Poll.UntilAsync(
-            () => _app.FindAllAsync(_locator, ct), m => m.Count == expected, timeoutMs ?? _app.ImplicitWaitMs, pollIntervalMs ?? _app.PollIntervalMs, ct);
-        if (success)
-            return;
-
-        var screenshot = await ExpectDiagnostics.DescribeScreenshotAsync(_app, _options, ct);
-        throw new ExpectFailedError($"Expected {_locator.Strategy}={_locator.Value} to have count {expected}, but found {actual.Count} (elapsed {elapsedMs}ms){screenshot}");
+        throw new ExpectFailedError($"Expected {_locator.Strategy}={_locator.Value} {description}, but {describedActual} (elapsed {elapsedMs}ms){screenshot}");
     }
 
     // Delegates to App.WaitForAsync and rewraps a timeout as ExpectFailedError carrying what was actually found, self-contained with no logger required.

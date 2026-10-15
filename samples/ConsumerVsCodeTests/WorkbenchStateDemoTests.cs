@@ -24,7 +24,7 @@ public sealed class WorkbenchStateDemoTests(VsCodeFixture fixture) : AutoMancerT
         // Two new editors, so the second can navigate back to the first.
         await App.ClickAsync(EmptyEditorGroup);
         await App.PressKeyAsync(Key.N, new KeyModifiers(Control: true));
-        await Task.Delay(300); // a keystroke right after a new editor opens can be swallowed while focus settles.
+        await App.FindAsync(Locator.ByXPath("//Edit[@Name='Untitled-1']")); // a keystroke sent before the new editor mounts can be swallowed.
         await App.PressKeyAsync(Key.N, new KeyModifiers(Control: true));
         try
         {
@@ -61,14 +61,14 @@ public sealed class WorkbenchStateDemoTests(VsCodeFixture fixture) : AutoMancerT
         // Short enough that the palette's list reaches past the editor area's center; also keeps the status bar clear of the taskbar.
         await App.MoveWindowAsync(100, 60);
         await App.ResizeWindowAsync(1400, 450);
-        await Expect(() => App.IsUnobscuredAsync(EmptyEditorGroup)).ToSatisfyAsync(clear => clear, "to be clear");
+        await Expect(EmptyEditorGroup).ToBeUnobscuredAsync();
 
         var palette = Locator.ByName("Type the name of a command to run.");
         await App.HotkeyAsync(new KeyModifiers(Control: true, Shift: true), [Key.P]);
         try
         {
             await Expect(palette).ToBeVisibleAsync();
-            await Expect(() => App.IsUnobscuredAsync(EmptyEditorGroup)).ToSatisfyAsync(clear => !clear, "to be covered by the Command Palette");
+            await Expect(EmptyEditorGroup).ToBeObscuredAsync();
             Assert.True(await App.IsUnobscuredAsync(palette));
         }
         finally
@@ -76,6 +76,6 @@ public sealed class WorkbenchStateDemoTests(VsCodeFixture fixture) : AutoMancerT
             await App.PressKeyAsync(Key.Escape);
             await App.WaitUntilGoneAsync(palette);
         }
-        await Expect(() => App.IsUnobscuredAsync(EmptyEditorGroup)).ToSatisfyAsync(clear => clear, "to be clear again");
+        await Expect(EmptyEditorGroup).ToBeUnobscuredAsync();
     }
 }

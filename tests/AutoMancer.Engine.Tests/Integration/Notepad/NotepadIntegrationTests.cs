@@ -4,6 +4,7 @@ using AutoMancer.Engine;
 using AutoMancer.Engine.Core;
 using AutoMancer.Engine.Errors;
 using Interop.UIAutomationClient;
+using static AutoMancer.Testing.Assertions;
 
 namespace AutoMancer.Engine.Tests.Integration;
 
@@ -82,12 +83,8 @@ public sealed class NotepadIntegrationTests(NotepadFixture fixture) : IClassFixt
         const string text = "Hello AutoMancer";
         await _app.ClickAsync(Locator.ByControlType("Document"));
         await _app.TypeAsync(Locator.ByControlType("Document"), text);
-        await Task.Delay(200);
 
-        var editor = await _app.FindAsync(Locator.ByControlType("Document"));
-        var uiaElement = (IUIAutomationElement)editor.NativeHandle;
-        var textPattern = (IUIAutomationTextPattern)uiaElement.GetCurrentPattern(UIA_PatternIds.UIA_TextPatternId);
-        Assert.Contains(text, textPattern.DocumentRange.GetText(-1));
+        await Expect(_app, Locator.ByControlType("Document")).ToHaveValueAsync(text);
     }
 
     [Fact]
@@ -95,38 +92,26 @@ public sealed class NotepadIntegrationTests(NotepadFixture fixture) : IClassFixt
     {
         await _app.ClickAsync(Locator.ByControlType("Document"));
         await _app.TypeAsync(Locator.ByControlType("Document"), "text to clear");
-        await Task.Delay(200);
+        await Expect(_app, Locator.ByControlType("Document")).ToHaveValueAsync("text to clear");
 
         await _app.ClearAsync(Locator.ByControlType("Document"));
-        await Task.Delay(200);
 
-        var editor = await _app.FindAsync(Locator.ByControlType("Document"));
-        var uiaElement = (IUIAutomationElement)editor.NativeHandle;
-        var textPattern = (IUIAutomationTextPattern)uiaElement.GetCurrentPattern(UIA_PatternIds.UIA_TextPatternId);
-        Assert.Empty(textPattern.DocumentRange.GetText(-1).Trim());
+        await Expect(_app, Locator.ByControlType("Document")).ToHaveValueAsync("");
     }
 
     [Fact]
     public async Task ClickFileMenu_OpensMenu()
     {
         await _app.ClickAsync(Locator.ByControlType("Document"));
-        await Task.Delay(100);
 
         await _app.ClickAsync(Locator.ByName("File"));
-        await Task.Delay(500);
 
-        // WinUI3 Notepad pre-loads all menu items into the UIA tree so popup-window counting won't change.
-        // The reliable signal that clicking File worked is that focus moved off the Document control.
-        var focusedControlType = await Task.Run(() =>
-        {
-            var automation = new CUIAutomation8Class();
-            return automation.GetFocusedElement()?.CurrentControlType ?? -1;
-        });
-        Assert.NotEqual(UIA_ControlTypeIds.UIA_DocumentControlTypeId, focusedControlType);
+        // The menu's items only exist in the tree while it's open, so one appearing is the signal that clicking File worked.
+        await _app.WaitForAsync(Locator.ByName("New tab"), WaitConditions.IsVisible());
 
-        // Close the menu so subsequent tests in this shared session aren't affected.
+        // Close the menu and wait for its items to leave the tree, so subsequent tests in this shared session aren't affected; focus stays on the File item, so it can't signal this.
         NotepadFixture.SendEscape();
-        await Task.Delay(200);
+        await _app.WaitUntilGoneAsync(Locator.ByName("New tab"));
     }
 
     // Depth-first search for the first element name at least minLength characters long.

@@ -1,7 +1,5 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
 using AutoMancer.Engine;
-using AutoMancer.Engine.Actions;
-using AutoMancer.Engine.Core;
 using AutoMancer.Testing.XUnit;
 
 namespace ConsumerVsCodeTests;
@@ -18,12 +16,7 @@ public sealed class VsCodeFixture : AppFixture
         var app = await VsCodeLauncher.LaunchAsync(_sandbox);
         try
         {
-            await VsCodeLauncher.DismissFirstRunDialogIfPresentAsync(app);
-            await Task.Delay(500); // the walkthrough's close animation is still settling; an immediate keystroke can land mid-transition.
-            // Clicking the already-active Explorer icon moves focus off the chat panel (and collapses the primary side bar, which tests rely on starting hidden).
-            await app.ClickAsync(Locator.ByName("Explorer (Ctrl+Shift+E)"));
-            await app.HotkeyAsync(new KeyModifiers(Control: true, Alt: true), [Key.B]);
-            await Task.Delay(300);
+            await VsCodeLauncher.PrepareWorkbenchAsync(app);
             return app;
         }
         catch

@@ -1,7 +1,10 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
 using System.Diagnostics;
 using AutoMancer.Engine;
+using AutoMancer.Engine.Core;
 using AutoMancer.Engine.Providers;
+using AutoMancer.Testing;
+using static AutoMancer.Testing.Assertions;
 using Xunit.Sdk;
 
 namespace AutoMancer.Engine.Tests.Integration;
@@ -41,12 +44,14 @@ public sealed class WindowCloseIntegrationTests
 
         try
         {
+            // WM_CLOSE sent while the window is still coming up can be dropped, so close only once its UI is on screen.
+            await app.WithOptions(new AppOptions { ImplicitWaitMs = 10_000 }).WaitForAsync(Locator.ByAutomationId("CalculatorResults"), WaitConditions.IsVisible());
+
             for (int attempt = 0; attempt < 3 && IsStillOpen(); attempt++)
             {
                 await app.CloseWindowAsync();
-                var deadline = DateTime.UtcNow.AddSeconds(20);
-                while (DateTime.UtcNow < deadline && IsStillOpen())
-                    await Task.Delay(200);
+                try { await Expect(app, () => Task.FromResult(IsStillOpen())).ToSatisfyAsync(open => !open, "the window to close", timeoutMs: 20_000); }
+                catch (ExpectFailedError) { /* still open — the loop resends WM_CLOSE */ }
             }
 
             Assert.False(IsStillOpen());

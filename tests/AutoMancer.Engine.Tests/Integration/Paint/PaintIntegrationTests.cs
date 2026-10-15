@@ -2,6 +2,7 @@
 using AutoMancer.Engine;
 using AutoMancer.Engine.Actions;
 using AutoMancer.Engine.Core;
+using AutoMancer.Engine.Errors;
 
 namespace AutoMancer.Engine.Tests.Integration;
 
@@ -18,11 +19,14 @@ public sealed class PaintFixture : IAsyncLifetime
         await warmup.FindAsync(Locator.ByAutomationId("PencilTool"));
 
         // The welcome popup's Close button is targeted via XPath to avoid matching the title-bar Close button, which shares AutomationId="Close".
+        var popupClose = Locator.ByXPath("//Window[@Name='Popup']//Button[@Name='Close']");
         var quick = App.WithOptions(new AppOptions { ProviderChain = ["uia3"], ImplicitWaitMs = 2_000 });
-        try { await quick.ClickAsync(Locator.ByXPath("//Window[@Name='Popup']//Button[@Name='Close']")); }
-        catch { /* popup absent — already dismissed on this Windows install */ }
-
-        await Task.Delay(300);
+        try
+        {
+            await quick.ClickAsync(popupClose);
+            await App.WaitUntilGoneAsync(popupClose);
+        }
+        catch (ElementNotFoundError) { /* popup absent — already dismissed on this Windows install */ }
     }
 
     // Kills Paint without triggering the save dialog (Kill bypasses it).

@@ -3,6 +3,7 @@ using AutoMancer.Engine;
 using AutoMancer.Engine.Actions;
 using AutoMancer.Engine.Core;
 using AutoMancer.Testing.XUnit;
+using static AutoMancer.Testing.Assertions;
 
 namespace ConsumerVsCodeTests;
 
@@ -10,6 +11,11 @@ namespace ConsumerVsCodeTests;
 [Collection("VsCode")]
 public sealed class HelloWorldScriptDemoTests
 {
+    // Keystrokes here go to whatever has focus, so each step first waits for the element that should receive them to appear.
+    private static readonly Locator NewEditor = Locator.ByXPath("//Edit[@Name='Untitled-1']");
+    private static readonly Locator PaletteInput = Locator.ByXPath("//Edit[@Name='Type the name of a command to run.']");
+    private static readonly Locator TerminalInput = Locator.ByClassName("xterm-helper-textarea");
+
     [Fact]
     public async Task CreateSaveAndRunScript_ProducesExpectedOutput()
     {
@@ -17,40 +23,35 @@ public sealed class HelloWorldScriptDemoTests
         var app = await VsCodeLauncher.LaunchAsync(sandbox);
         try
         {
-            await VsCodeLauncher.DismissFirstRunDialogIfPresentAsync(app);
-            await Task.Delay(500); // dialog's close animation/focus handoff is still settling; an immediate keystroke can land mid-transition.
-
-            // AI Chat panel can default-focus; Ctrl+N there runs "New Chat" instead. Click a known workbench element to move focus away first.
-            await app.ClickAsync(Locator.ByName("Explorer (Ctrl+Shift+E)"));
-            await app.HotkeyAsync(new KeyModifiers(Control: true, Alt: true), [Key.B]); // hide chat panel so it can't reclaim focus later.
-            await Task.Delay(300);
+            await VsCodeLauncher.PrepareWorkbenchAsync(app);
 
             await app.PressKeyAsync(Key.N, new KeyModifiers(Control: true));
-            await Task.Delay(300); // first keystroke on a brand-new buffer settles focus rather than being typed.
+            await app.FindAsync(NewEditor);
             await TypeLineAsync(app, "@echo off");
             await TypeLineAsync(app, "echo Hello, World!");
             await app.TypeDirectAsync("echo Hello, World!>output.txt");
 
             var scriptPath = Path.Combine(sandbox.WorkspaceDir, "hello.bat");
             await SaveAsAsync(app, scriptPath);
+            // Exact content, so a keystroke swallowed while the new editor took focus fails here rather than going unnoticed.
+            Assert.Equal("@echo off\r\necho Hello, World!\r\necho Hello, World!>output.txt", await File.ReadAllTextAsync(scriptPath));
 
             // "Focus on Terminal View" over "Toggle Terminal" (which doesn't guarantee focus); still follow with a real click since even this command's focus handoff is unreliable.
             await RunCommandAsync(app, "Terminal: Focus on Terminal View");
-            await Task.Delay(500); // panel still takes a moment to finish opening/rendering after focus moves.
-            await ClickInWindowAsync(app, xFraction: 0.5, yFraction: 0.9); // terminal has no reliable UIA element to click instead.
-            await Task.Delay(300);
+            await app.ClickAsync(TerminalInput);
 
             // ".\hello.bat" not bare "hello.bat" — NoDefaultCurrentDirectoryInExePath can disable cmd.exe's implicit cwd search for bare filenames.
             await app.TypeDirectAsync(".\\hello.bat");
             await app.PressKeyAsync(Key.Enter);
 
+            // The file the script writes is proof it ran to completion, not just got typed.
             var outputPath = Path.Combine(sandbox.WorkspaceDir, "output.txt");
-            var output = await WaitForFileContentAsync(outputPath, timeoutMs: 15_000);
+            var output = await WaitForFileAsync(app, outputPath, timeoutMs: 15_000);
             Assert.Contains("Hello, World!", output);
         }
         catch (Exception ex)
         {
-            // TestSetup's CaptureScreenshotsOnFailure only covers Expect() assertions; this test uses Assert.*, so it captures its own screenshot.
+            // TestSetup's CaptureScreenshotsOnFailure only covers Expect() failures; this also covers Assert.* and the engine's own errors, so it captures its own screenshot.
             var path = Path.Combine(AutoMancerTestOptions.ScreenshotDirectory, $"vscode-hello-world-failure-{DateTime.UtcNow:yyyyMMdd-HHmmss}.png");
             await File.WriteAllBytesAsync(path, await app.ScreenshotAsync());
             throw new Exception($"{ex.Message} (screenshot saved to {path})", ex);
@@ -65,7 +66,7 @@ public sealed class HelloWorldScriptDemoTests
     private static async Task RunCommandAsync(App app, string commandTitle)
     {
         await app.HotkeyAsync(new KeyModifiers(Control: true, Shift: true), [Key.P]);
-        await Task.Delay(300); // palette's input box takes a moment to mount and take focus.
+        await app.FindAsync(PaletteInput);
         await app.TypeDirectAsync(commandTitle);
         await app.PressKeyAsync(Key.Enter);
     }
@@ -75,13 +76,6 @@ public sealed class HelloWorldScriptDemoTests
     {
         await app.TypeDirectAsync(line);
         await app.PressKeyAsync(Key.Enter);
-    }
-
-    // Clicks a point at the given fraction of the window's width/height, for surfaces with no clickable UIA element.
-    private static async Task ClickInWindowAsync(App app, double xFraction, double yFraction)
-    {
-        var rect = await app.GetWindowSizeAsync();
-        await app.ClickAtAsync((int)(rect.X + rect.Width * xFraction), (int)(rect.Y + rect.Height * yFraction));
     }
 
     // Ctrl+S on an untitled buffer opens the native Save As dialog; typing the path into its default-focused field saves without resolving any UIA element.
@@ -95,24 +89,17 @@ public sealed class HelloWorldScriptDemoTests
         await dialog.TypeDirectAsync(fullPath);
         await dialog.PressKeyAsync(Key.Enter);
 
-        for (int attempt = 0; attempt < 20 && !File.Exists(fullPath); attempt++)
-            await Task.Delay(250);
-        Assert.True(File.Exists(fullPath), $"Expected '{fullPath}' to exist after Save As.");
+        await WaitForFileAsync(app, fullPath, timeoutMs: 5_000);
     }
 
-    // Polls for the output file and reads it back; its presence means the script ran to completion, not just got typed.
-    private static async Task<string> WaitForFileContentAsync(string path, int timeoutMs)
+    // Waits for path to be written and returns its contents; polled, because a file shows up some time after whatever writes it was set off.
+    private static async Task<string> WaitForFileAsync(App app, string path, int timeoutMs)
+        => (await Expect(app, () => TryReadAsync(path)).ToSatisfyAsync(text => text is not null, $"'{path}' to be written", timeoutMs: timeoutMs))!;
+
+    // Reads path, or null while it doesn't exist yet or is still being written.
+    private static async Task<string?> TryReadAsync(string path)
     {
-        var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
-        while (DateTime.UtcNow < deadline)
-        {
-            if (File.Exists(path))
-            {
-                try { return await File.ReadAllTextAsync(path); }
-                catch (IOException) { /* still being written */ }
-            }
-            await Task.Delay(300);
-        }
-        throw new TimeoutException($"'{path}' did not appear within {timeoutMs} ms — the script may not have run.");
+        try { return await File.ReadAllTextAsync(path); }
+        catch (IOException) { return null; }
     }
 }

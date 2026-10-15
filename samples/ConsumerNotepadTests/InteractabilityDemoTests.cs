@@ -32,7 +32,8 @@ public sealed class InteractabilityDemoTests(NotepadFixture fixture) : AutoMance
         finally
         {
             await App.SetWindowStateAsync(WindowState.Normal);
-            await Task.Delay(200);
+            // A minimized window's elements read offscreen, so this waits out the restore before the next test acts.
+            await App.WaitForAsync(Locator.ByControlType("Document"), WaitConditions.IsVisible());
         }
     }
 
@@ -47,7 +48,8 @@ public sealed class InteractabilityDemoTests(NotepadFixture fixture) : AutoMance
         var held = await App.FindAsync(Locator.ByName("New tab"));
         var forced = await App.Force.FindAsync(Locator.ByName("New tab"));
         await App.PressKeyAsync(Key.Escape);
-        await Task.Delay(500);
+        // A closed menu's items drop out of search, so waiting for one to go waits for the menu to close.
+        await App.WaitUntilGoneAsync(Locator.ByName("New tab"));
 
         try
         {

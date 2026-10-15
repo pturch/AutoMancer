@@ -1,7 +1,7 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
-using System.Diagnostics;
 using AutoMancer.Engine;
 using AutoMancer.Engine.Core;
+using static AutoMancer.Testing.Assertions;
 
 namespace AutoMancer.Engine.Tests.Integration;
 
@@ -23,12 +23,8 @@ public sealed class AppOptionsArgumentsIntegrationTests
                 windowMatch: new WindowMatchOptions { RequireNewWindow = true });
             try
             {
-                // The window first appears titled plain "Notepad" and only picks up the file's name once it loads (~400ms later), so poll rather than read once.
-                var title = "";
-                var deadline = Environment.TickCount64 + 5_000;
-                while (!(title = Process.GetProcessById(app.ProcessId).MainWindowTitle).Contains(Path.GetFileName(filePath)) && Environment.TickCount64 < deadline)
-                    await Task.Delay(100);
-                Assert.Contains(Path.GetFileName(filePath), title);
+                // The title first reads plain "Notepad" and only picks up the file's name once it loads (~400ms later), so poll rather than read once.
+                await Expect(app, Locator.ByControlType("TitleBar")).ToContainTextAsync(Path.GetFileName(filePath));
             }
             finally
             {

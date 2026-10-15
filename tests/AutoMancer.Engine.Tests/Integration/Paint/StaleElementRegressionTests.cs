@@ -5,6 +5,7 @@ using AutoMancer.Engine.Actions;
 using AutoMancer.Engine.Core;
 using AutoMancer.Engine.Errors;
 using AutoMancer.Engine.Providers;
+using static AutoMancer.Testing.Assertions;
 
 namespace AutoMancer.Engine.Tests.Integration;
 
@@ -44,9 +45,7 @@ public sealed class StaleElementRegressionTests
 
         await app.PressKeyAsync(Key.Escape);
         // Search stops matching the button mid close-animation, a moment before it detaches; its raw Name going blank is the detach itself, independent of the check under test.
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (RawName(cancel) != "" && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        await Expect(app, () => Task.FromResult(RawName(cancel))).ToSatisfyAsync(name => name == "", "to go blank once the dialog detaches", timeoutMs: 5_000, pollIntervalMs: 50);
 
         Assert.Same(cancel, Assert.Throws<StaleElementError>(() => ElementInputHelpers.EnsureForeground(cancel)).Element);
         Assert.Same(cancel, (await Assert.ThrowsAsync<StaleElementError>(() => cancel.Operator!.TryGetValueAsync(cancel))).Element);
@@ -101,8 +100,7 @@ public sealed class StaleElementRegressionTests
         var element = await app.FindAsync(Locator.ByAutomationId("PencilTool"));
         Assert.Equal("uia2", element.ResolvedVia);
 
-        System.Diagnostics.Process.GetProcessById(app.ProcessId).Kill();
-        await Task.Delay(200);
+        await KillWindowOwnerAsync(app);
 
         var results = await app.FindAllAsync(Locator.ByAutomationId("PencilTool"));
         Assert.NotNull(results);
@@ -116,8 +114,7 @@ public sealed class StaleElementRegressionTests
         var element = await app.FindAsync(Locator.ByAutomationId("PencilTool"));
         Assert.Equal("uia3", element.ResolvedVia);
 
-        System.Diagnostics.Process.GetProcessById(app.ProcessId).Kill();
-        await Task.Delay(200);
+        await KillWindowOwnerAsync(app);
 
         var results = await app.FindAllAsync(Locator.ByAutomationId("PencilTool"));
         Assert.NotNull(results);

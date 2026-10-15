@@ -26,11 +26,12 @@ public sealed class OcclusionDemoTests(NotepadFixture fixture) : AutoMancerTest(
         var dontSave = Locator.ByAutomationId("SecondaryButton");
         await App.FindAsync(dontSave);
 
-        Assert.False(await App.IsUnobscuredAsync(Settings));
-        Assert.True(await App.IsUnobscuredAsync(dontSave));
+        // Expect assertions rather than single IsUnobscuredAsync calls: the dialog's backdrop fades in and out, so one read can still see the previous state.
+        await Expect(Settings).ToBeObscuredAsync();
+        await Expect(dontSave).ToBeUnobscuredAsync();
 
         await App.ClickAsync(dontSave);
         await App.WaitUntilGoneAsync(dontSave);
-        Assert.True(await App.IsUnobscuredAsync(Settings));
+        await Expect(Settings).ToBeUnobscuredAsync();
     }
 }

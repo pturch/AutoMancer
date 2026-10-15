@@ -5,6 +5,7 @@ using AutoMancer.Engine.Core;
 using AutoMancer.Engine.Errors;
 using AutoMancer.Engine.Providers;
 using Interop.UIAutomationClient;
+using static AutoMancer.Testing.Assertions;
 
 namespace AutoMancer.Engine.Tests.Integration;
 
@@ -14,35 +15,35 @@ namespace AutoMancer.Engine.Tests.Integration;
 public sealed class ActionabilityIntegrationTests(NotepadFixture fixture) : IClassFixture<NotepadFixture>
 {
     private static readonly Locator Document = Locator.ByControlType("Document");
+    private static readonly Locator Tabs = Locator.ByControlType("TabItem");
     private readonly App _app = fixture.App.WithOptions(new AppOptions { ProviderChain = ["uia3"] });
 
     // The case that motivated the gate: a held "New tab" item, clicked after its menu closed, used to open a tab no user could reach. Both handles are found while the menu is open, since no locator can reach the item once it's closed.
     [Fact]
     public async Task HeldMenuItem_AfterMenuCloses_RejectedByDefault_InvokedThroughForce()
     {
-        var tabsBefore = (await _app.FindAllAsync(Locator.ByControlType("TabItem"))).Count;
+        var tabsBefore = (await _app.FindAllAsync(Tabs)).Count;
         await _app.ClickAsync(Locator.ByName("File"));
         var held = await _app.FindAsync(Locator.ByName("New tab"));
         var forced = await _app.Force.FindAsync(Locator.ByName("New tab"));
         NotepadFixture.SendEscape();
-        await Task.Delay(500);
+        // A closed menu's items drop out of search, so waiting for one to go waits for the menu to close.
+        await _app.WaitUntilGoneAsync(Locator.ByName("New tab"));
 
         try
         {
             await Assert.ThrowsAsync<ElementNotInteractableError>(() => ClickAction.ExecuteAsync(held));
-            await Task.Delay(500);
-            Assert.Equal(tabsBefore, (await _app.FindAllAsync(Locator.ByControlType("TabItem"))).Count);
 
+            // Exactly one new tab, so a tab the rejected click had opened too would fail this.
             await ClickAction.ExecuteAsync(forced);
-            await Task.Delay(500);
-            Assert.Equal(tabsBefore + 1, (await _app.FindAllAsync(Locator.ByControlType("TabItem"))).Count);
+            await Expect(_app, Tabs).ToHaveCountAsync(tabsBefore + 1);
         }
         finally
         {
             // Close the empty tab the forced click opened (no save prompt for an empty tab), leaving the shared window as it was.
-            if ((await _app.FindAllAsync(Locator.ByControlType("TabItem"))).Count > tabsBefore)
+            if ((await _app.FindAllAsync(Tabs)).Count > tabsBefore)
                 await _app.PressKeyAsync(Key.W, new KeyModifiers(Control: true));
-            await Task.Delay(300);
+            await Expect(_app, Tabs).ToHaveCountAsync(tabsBefore);
         }
     }
 
@@ -68,10 +69,8 @@ public sealed class ActionabilityIntegrationTests(NotepadFixture fixture) : ICla
         try
         {
             await TypeAction.ExecuteAsync(synthesizedOnly, "focus check");
-            await Task.Delay(200);
 
-            var textPattern = (IUIAutomationTextPattern)((IUIAutomationElement)document.NativeHandle).GetCurrentPattern(UIA_PatternIds.UIA_TextPatternId);
-            Assert.Equal("focus check", textPattern.DocumentRange.GetText(-1).Trim());
+            await Expect(_app, Document).ToHaveValueAsync("focus check");
         }
         finally
         {
@@ -104,7 +103,7 @@ public sealed class ActionabilityIntegrationTests(NotepadFixture fixture) : ICla
         {
             // Never dispose the dialog's App — it would kill Notepad; WM_CLOSE cancels the dialog instead.
             await dialog!.CloseWindowAsync();
-            await Task.Delay(300);
+            await Expect(_app, () => Task.FromResult(NativeMethods.IsWindowVisible(dialog.RootWindowHandle))).ToSatisfyAsync(visible => !visible, "the Open dialog to close");
         }
     }
 }

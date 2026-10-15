@@ -1,5 +1,6 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
 using AutoMancer.Engine.Core;
+using Interop.UIAutomationClient;
 using Xunit.Abstractions;
 
 namespace AutoMancer.Engine.Tests.Integration;
@@ -43,106 +44,95 @@ public sealed class PaintFrogTests(ITestOutputHelper output) : PaintArtTestBase
         var cheekRadius = r * 10 / 100;
 
         // ── Outlines (pencil, black) ──────────────────────────────────────
+        // No pauses between strokes or clicks: Paint handles queued input in order, and the pixel checks at the end catch a dropped stroke (its fill leaks out through the gap).
         await _app.ClickAtAsync(Locator.ByAutomationId("PencilTool"));
         await _app.ClickAsync(Locator.ByName("Black"));
-        await Task.Delay(200);
+        // A 1px pencil line can drop a pixel mid-segment depending on where it falls on screen, and the fill bucket leaks through that hole; a thicker line can't be holed through.
+        var sizeSlider = (IUIAutomationElement)(await _app.FindAsync(Locator.ByXPath("//Slider[@Name='Size']"))).NativeHandle;
+        var sizeRange = (IUIAutomationRangeValuePattern)sizeSlider.GetCurrentPattern(UIA_PatternIds.UIA_RangeValuePatternId);
+        sizeRange.SetValue(3);
+        output.WriteLine($"Pencil size range {sizeRange.CurrentMinimum}-{sizeRange.CurrentMaximum}, now {sizeRange.CurrentValue}");
+        Assert.Equal(3, sizeRange.CurrentValue);
 
         await _app.DragThroughAsync(EllipsePoints(bodyCenter.X, bodyCenter.Y, bodyRx, bodyRy, segments: 48));
-        await Task.Delay(80);
-
         await _app.DragThroughAsync(EllipsePoints(legL.X, legL.Y, legRx, legRy, segments: 32));
-        await Task.Delay(60);
         await _app.DragThroughAsync(EllipsePoints(legR.X, legR.Y, legRx, legRy, segments: 32));
-        await Task.Delay(80);
-
         await _app.DragThroughAsync(CirclePoints(bumpL.X, bumpL.Y, bumpRadius, segments: 32));
-        await Task.Delay(60);
         await _app.DragThroughAsync(CirclePoints(bumpR.X, bumpR.Y, bumpRadius, segments: 32));
-        await Task.Delay(80);
-
         await _app.DragThroughAsync(CirclePoints(eyeL.X, eyeL.Y, eyeRadius, segments: 24));
-        await Task.Delay(60);
         await _app.DragThroughAsync(CirclePoints(eyeR.X, eyeR.Y, eyeRadius, segments: 24));
-        await Task.Delay(60);
-
         await _app.DragThroughAsync(CirclePoints(eyeL.X, eyeL.Y, pupilRadius, segments: 16));
-        await Task.Delay(60);
         await _app.DragThroughAsync(CirclePoints(eyeR.X, eyeR.Y, pupilRadius, segments: 16));
-        await Task.Delay(60);
-
         await _app.DragThroughAsync(CirclePoints(cheekL.X, cheekL.Y, cheekRadius, segments: 24));
-        await Task.Delay(60);
         await _app.DragThroughAsync(CirclePoints(cheekR.X, cheekR.Y, cheekRadius, segments: 24));
-        await Task.Delay(60);
-
         await _app.DragThroughAsync(GrinPoints(cx, cy - r * 5 / 100, halfWidth: r * 45 / 100, depth: r * 18 / 100, steps: 40));
-        await Task.Delay(100);
 
         // ── Fill with colours (fill bucket); ClickAtAsync is required since InvokePattern skips the pointer-event pipeline that switches the active tool.
         await _app.ClickAtAsync(Locator.ByName("Fill"));
-        await Task.Delay(200);
 
-        // Green body, bumps and legs — click each region separately since the overlapping outlines split them into distinct enclosed areas,
-        // including the lens-shaped slivers where a bump or leg outline crosses the body outline.
+        // Green body, bumps and legs — click each region separately since the overlapping outlines split them into distinct enclosed areas, including the lens-shaped slivers where a bump or leg outline crosses the body outline.
+        var bodyFill = (X: cx, Y: cy + r * 45 / 100);
+        var bumpFillL = (X: bumpL.X, Y: bumpL.Y - bumpRadius + r * 6 / 100);
         await _app.ClickAsync(Locator.ByName("Green"));
-        await _app.ClickAtAsync(cx, cy + r * 45 / 100);
-        await Task.Delay(250);
-        await _app.ClickAtAsync(bumpL.X, bumpL.Y - bumpRadius + r * 6 / 100);
-        await Task.Delay(250);
+        await _app.ClickAtAsync(bodyFill.X, bodyFill.Y);
+        await _app.ClickAtAsync(bumpFillL.X, bumpFillL.Y);
         await _app.ClickAtAsync(bumpR.X, bumpR.Y - bumpRadius + r * 6 / 100);
-        await Task.Delay(250);
         await _app.ClickAtAsync(bumpL.X, cy - r * 35 / 100);
-        await Task.Delay(200);
         await _app.ClickAtAsync(bumpR.X, cy - r * 35 / 100);
-        await Task.Delay(250);
         await _app.ClickAtAsync(legL.X, legL.Y);
-        await Task.Delay(200);
         await _app.ClickAtAsync(legR.X, legR.Y);
-        await Task.Delay(200);
         await _app.ClickAtAsync(legL.X + r * 15 / 100, legL.Y - r * 10 / 100);
-        await Task.Delay(200);
         await _app.ClickAtAsync(legR.X - r * 15 / 100, legR.Y - r * 10 / 100);
-        await Task.Delay(300);
 
         // Black pupils.
         await _app.ClickAsync(Locator.ByName("Black"));
         await _app.ClickAtAsync(eyeL.X, eyeL.Y);
-        await Task.Delay(200);
         await _app.ClickAtAsync(eyeR.X, eyeR.Y);
-        await Task.Delay(300);
 
         // Rose blush.
         await _app.ClickAsync(Locator.ByName("Rose"));
         await _app.ClickAtAsync(cheekL.X, cheekL.Y);
-        await Task.Delay(200);
         await _app.ClickAtAsync(cheekR.X, cheekR.Y);
-        await Task.Delay(300);
 
-        // ── Text label ────────────────────────────────────────────────────
+        // ── Text label; the text box exists only while text is being edited, so it appearing and going away brackets the edit.
+        var textBox = Locator.ByName("Text edit box");
         await _app.ClickAsync(Locator.ByName("Black"));
         await _app.ClickAtAsync(Locator.ByName("Text"));
-        await Task.Delay(300);
-
         await _app.ClickAtAsync(cx - r * 30 / 100, cy + r * 100 / 100);
-        await Task.Delay(400);
-
+        await _app.FindAsync(textBox);
         await _app.TypeDirectAsync("Ribbit!");
-        await Task.Delay(300);
-
         await _app.ClickAtAsync(cx, cy - r * 120 / 100);
-        await Task.Delay(400);
+        await _app.WaitUntilGoneAsync(textBox);
 
         // Switch away from the text tool before saving; leaving it active can interfere with the Save click.
         await _app.ClickAtAsync(Locator.ByAutomationId("PencilTool"));
-        await Task.Delay(200);
 
         // ── Save ──────────────────────────────────────────────────────────
         var stamp    = DateTime.Now.ToString("yyyyMMdd-HHmmss");
         var savePath = Path.Combine(Path.GetTempPath(), $"automancer-frog-{stamp}.png");
         await SaveAsync(savePath);
-
-        Assert.True(File.Exists(savePath), $"File not found at {savePath}");
         output.WriteLine($"Frog saved — open to view: {savePath}");
+
+        // ── Verify the picture: each fill landed in its own region and none leaked out to the background.
+        var png = TryDecodePng(savePath)!;
+        (byte R, byte G, byte B) At((int X, int Y) screen) => png[
+            (int)((screen.X - rect.X) * png.Width / rect.Width),
+            (int)((screen.Y - rect.Y) * png.Height / rect.Height)];
+        static bool IsGreen((byte R, byte G, byte B) c) => c.G > c.R + 50 && c.G > c.B + 50;
+        static bool IsBlack((byte R, byte G, byte B) c) => Math.Max(c.R, Math.Max(c.G, c.B)) < 80;
+        static bool IsWhite((byte R, byte G, byte B) c) => Math.Min(c.R, Math.Min(c.G, c.B)) > 235;
+        static bool IsRose((byte R, byte G, byte B) c) => c.R > 180 && c.R > c.G + 40 && !IsWhite(c);
+
+        Assert.True(IsWhite(png[5, 5]), $"Background {png[5, 5]} should stay white; a fill leaked through a broken outline.");
+        Assert.True(IsGreen(At(bodyFill)), $"Body {At(bodyFill)} should be green.");
+        Assert.True(IsGreen(At(bumpFillL)), $"Left eye-bump {At(bumpFillL)} should be green.");
+        Assert.True(IsGreen(At(legL)), $"Left leg {At(legL)} should be green.");
+        Assert.True(IsBlack(At(eyeL)), $"Left pupil {At(eyeL)} should be black.");
+        Assert.True(IsBlack(At(eyeR)), $"Right pupil {At(eyeR)} should be black.");
+        var eyeWhite = (X: eyeL.X + (eyeRadius + pupilRadius) / 2, Y: eyeL.Y);
+        Assert.True(IsWhite(At(eyeWhite)), $"Left eye white {At(eyeWhite)} should stay white.");
+        Assert.True(IsRose(At(cheekL)), $"Left cheek {At(cheekL)} should be rose.");
+        Assert.True(IsRose(At(cheekR)), $"Right cheek {At(cheekR)} should be rose.");
     }
 
     // Returns waypoints for an open grin arc: a parabola from the left mouth corner to the right, curving down.

@@ -23,9 +23,20 @@ public sealed class StaleHandleDemoTests(NotepadFixture fixture) : AutoMancerTes
 
         var held = await App.FindAsync(DontSave);
         await App.ClickAsync(DontSave);
+        // Gone from search isn't gone yet: the button leaves search results partway through the close animation, a moment before it detaches, and until then the held handle still acts.
         await App.WaitUntilGoneAsync(DontSave);
+        await WaitUntilStaleAsync(held);
 
         var error = await Assert.ThrowsAsync<StaleElementError>(() => ClickAction.ExecuteAsync(held));
         Assert.Same(held, error.Element);
     }
+
+    // Waits for a held handle's element to really be gone, the handle counterpart of WaitUntilGoneAsync: a hover is harmless, and like every action it raises StaleElementError once the element is gone.
+    private async Task WaitUntilStaleAsync(ElementHandle handle)
+        => await Expect(async () =>
+        {
+            try { await HoverAction.ExecuteAsync(handle); return false; }
+            catch (ElementNotInteractableError) { return false; } // still there mid-animation, just not usable
+            catch (StaleElementError) { return true; }
+        }).ToSatisfyAsync(stale => stale, "the held handle to report its element stale");
 }

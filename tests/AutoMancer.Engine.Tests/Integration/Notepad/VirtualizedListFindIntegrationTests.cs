@@ -3,6 +3,7 @@ using AutoMancer.Engine;
 using AutoMancer.Engine.Actions;
 using AutoMancer.Engine.Core;
 using AutoMancer.Engine.Errors;
+using static AutoMancer.Testing.Assertions;
 
 namespace AutoMancer.Engine.Tests.Integration;
 
@@ -39,7 +40,8 @@ public sealed class VirtualizedListFindIntegrationTests
         // The "File name:" combo and its nested Edit both carry AutomationId "1148", and ByControlType("Edit") separately matches the file list's per-row rename-in-place cells first — either ambiguity misses the real target. ClassName "Edit" (the native Win32 class) is unique to the combo's actual text box.
         await dialog!.TypeAsync(Locator.ByClassName("Edit"), folder);
         await dialog.PressKeyAsync(Key.Enter);
-        await Task.Delay(500);
+        // The folder's first file showing up in the list means the navigation finished.
+        await dialog.FindAsync(Locator.ByName("file-0000"));
 
         return dialog;
     }
@@ -177,7 +179,8 @@ public sealed class VirtualizedListFindIntegrationTests
                     navigated = true;
                     await dialog.TypeAsync(Locator.ByClassName("Edit"), otherFolder, ct);
                     await dialog.PressKeyAsync(Key.Enter, ct: ct);
-                    await Task.Delay(500, ct);
+                    // Wait for the new folder's list, so the scroll below is guaranteed to hit the old, now-stale container.
+                    await dialog.FindAsync(Locator.ByName("other-0000"), ct);
                 }
                 // Still targets the handle from before the navigation, so a rebuilt list surfaces here as a stale container.
                 await ScrollWheelAction.ExecuteAsync(container, 0, -1, ct);
@@ -207,10 +210,8 @@ public sealed class VirtualizedListFindIntegrationTests
             var found = await dialog.FindByScrollingAsync(itemsView, Locator.ByName(TargetFileName), maxScrolls: 5);
 
             await DoubleClickAction.ExecuteAsync(found);
-            await Task.Delay(500);
 
-            var content = await app.GetValueAsync(Locator.ByControlType("Document"));
-            Assert.Equal("contents of file-0010", content);
+            await Expect(app, Locator.ByControlType("Document")).ToHaveValueAsync("contents of file-0010");
         }
         finally
         {

@@ -44,14 +44,12 @@ public sealed class KeyboardDragScrollDemoTests(NotepadFixture fixture) : AutoMa
         await App.ClickAsync(Document);
         await App.ClearAsync(Document);
         await App.TypeAsync(Document, "Hello");
+        await Expect(Document).ToHaveValueAsync("Hello");
         await App.PressKeyAsync(Key.Home);
-        await Task.Delay(150);
 
         await App.KeyDownAsync(Key.LeftShift);
         await App.PressKeyAsync(Key.Right);
-        await Task.Delay(100);
         await App.PressKeyAsync(Key.Right);
-        await Task.Delay(100);
         await App.KeyUpAsync(Key.LeftShift);
         await App.TypeDirectAsync("XX");
 
@@ -73,7 +71,7 @@ public sealed class KeyboardDragScrollDemoTests(NotepadFixture fixture) : AutoMa
         await App.ClickAsync(Document);
         await App.ClearAsync(Document);
         await App.TypeAsync(Document, "Hello AutoMancer");
-        await Task.Delay(200);
+        await Expect(Document).ToHaveValueAsync("Hello AutoMancer");
 
         var document = await App.FindAsync(Document);
         var startX = (int)document.BoundingRect.X + 5;

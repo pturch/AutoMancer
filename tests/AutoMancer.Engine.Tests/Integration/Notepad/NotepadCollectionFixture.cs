@@ -22,6 +22,7 @@ public sealed class NotepadCollectionFixture
                 try { File.Delete(file); } catch { /* still locked — retried below */ }
             if (!Directory.EnumerateFiles(tabStateDir).Any() || Environment.TickCount64 > deadline)
                 return;
+            // Backoff between delete attempts, not a UI-timing guess: nothing signals when Notepad releases the file locks, so retrying is the only option.
             Thread.Sleep(100);
         }
     }

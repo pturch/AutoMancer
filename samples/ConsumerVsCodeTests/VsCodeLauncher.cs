@@ -1,5 +1,6 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
 using AutoMancer.Engine;
+using AutoMancer.Engine.Actions;
 using AutoMancer.Engine.Core;
 using AutoMancer.Engine.Errors;
 
@@ -92,25 +93,32 @@ internal static class VsCodeLauncher
                     Console.Error.WriteLine($"Warning: could not delete sandbox directory '{sandbox.RootDir}': {ex.Message}");
                     return;
                 }
+                // Backoff between delete attempts, not a UI-timing guess: nothing signals when the helper processes release their file locks, so retrying is the only option.
                 await Task.Delay(500);
             }
         }
     }
 
-    // Dismisses the fresh-profile first-run walkthrough (Copilot sign-in, then theme picker) if present, using short probes to avoid slowing runs where a step is absent.
-    internal static async Task DismissFirstRunDialogIfPresentAsync(App app)
+    // Readies a fresh launch for keystrokes: dismisses the first-run walkthrough (Copilot sign-in, then theme picker), then hides the AI Chat panel, which default-focuses and would take chords like Ctrl+N ("New Chat").
+    internal static async Task PrepareWorkbenchAsync(App app)
     {
         await ClickIfPresentAsync(app, "Continue without Signing In");
         await ClickIfPresentAsync(app, "Get Started");
+        // Clicking the already-active Explorer icon moves focus off the chat panel, and also collapses the primary side bar, which WorkbenchStateDemoTests relies on starting hidden.
+        await app.ClickAsync(Locator.ByName("Explorer (Ctrl+Shift+E)"));
+        await app.HotkeyAsync(new KeyModifiers(Control: true, Alt: true), [Key.B]);
+        await app.WaitUntilGoneAsync(Locator.ByXPath("//Edit[starts-with(@Name, 'Chat Input')]"));
     }
 
-    // Clicks the named element if it resolves within a short timeout; no-ops if it never appears.
+    // Clicks the named element and waits for it to close if it resolves within a short timeout; no-ops if it never appears.
     private static async Task ClickIfPresentAsync(App app, string name)
     {
         var probe = app.WithOptions(new AppOptions { ImplicitWaitMs = 2_000, PollIntervalMs = 300 });
         try
         {
             await probe.ClickAsync(Locator.ByName(name));
+            // A keystroke sent while the walkthrough is still closing can be swallowed or land mid-transition.
+            await app.WaitUntilGoneAsync(Locator.ByName(name));
         }
         catch (ElementNotFoundError)
         {

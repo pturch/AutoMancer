@@ -25,9 +25,17 @@ public sealed class LocatorExpect
     public Task ToHaveNameAsync(string expected, CancellationToken ct = default)
         => WaitOrFailAsync(e => e.Name == expected, $"to have name \"{expected}\"", ct);
 
-    // Polls until the located element has a non-zero bounding rectangle; throws ExpectFailedError on timeout.
+    // Polls until the located element is visible by the same rule actions wait on (WaitConditions.IsVisible); throws ExpectFailedError on timeout.
     public Task ToBeVisibleAsync(CancellationToken ct = default)
-        => WaitOrFailAsync(e => e.BoundingRect.Width > 0 && e.BoundingRect.Height > 0, "to be visible", ct);
+        => WaitOrFailAsync(WaitConditions.IsVisible(), "to be visible", ct);
+
+    // Polls until the located element is enabled by the same rule actions wait on (WaitConditions.IsEnabled); throws ExpectFailedError on timeout.
+    public Task ToBeEnabledAsync(CancellationToken ct = default)
+        => WaitOrFailAsync(WaitConditions.IsEnabled(), "to be enabled", ct);
+
+    // Polls until the located element's Name contains substring; throws ExpectFailedError on timeout.
+    public Task ToContainTextAsync(string substring, CancellationToken ct = default)
+        => WaitOrFailAsync(WaitConditions.NameContains(substring), $"to contain text \"{substring}\"", ct);
 
     // Polls until the located element's Name contains expected as a substring; throws ExpectFailedError on timeout.
     public Task ToHaveTextAsync(string expected, CancellationToken ct = default)
@@ -59,6 +67,18 @@ public sealed class LocatorExpect
         throw new ExpectFailedError($"Expected {_locator.Strategy}={_locator.Value} to have value \"{expected}\", but {describedActual} (elapsed {elapsedMs}ms){screenshot}");
     }
 
+    // Polls single-pass FindAllAsync until exactly expected elements match — the wait FindAllAsync itself leaves out; throws ExpectFailedError reporting the last count on timeout.
+    public async Task ToHaveCountAsync(int expected, int? timeoutMs = null, int? pollIntervalMs = null, CancellationToken ct = default)
+    {
+        var (success, actual, elapsedMs) = await Poll.UntilAsync(
+            () => _app.FindAllAsync(_locator, ct), m => m.Count == expected, timeoutMs ?? _app.ImplicitWaitMs, pollIntervalMs ?? _app.PollIntervalMs, ct);
+        if (success)
+            return;
+
+        var screenshot = await ExpectDiagnostics.DescribeScreenshotAsync(_app, _options, ct);
+        throw new ExpectFailedError($"Expected {_locator.Strategy}={_locator.Value} to have count {expected}, but found {actual.Count} (elapsed {elapsedMs}ms){screenshot}");
+    }
+
     // Delegates to App.WaitForAsync and rewraps a timeout as ExpectFailedError carrying what was actually found, self-contained with no logger required.
     private async Task WaitOrFailAsync(Func<ElementHandle, bool> condition, string description, CancellationToken ct)
     {
@@ -80,6 +100,7 @@ public sealed class LocatorExpect
         var matches = await _app.FindAllAsync(_locator, ct);
         if (matches.Count == 0)
             return "no matching element was ever found";
-        return $"found Name=\"{matches[0].Name}\", BoundingRect={matches[0].BoundingRect}";
+        var m = matches[0];
+        return $"found Name=\"{m.Name}\", BoundingRect={m.BoundingRect}, IsEnabled={m.IsEnabled?.ToString() ?? "unknown"}, IsOffscreen={m.IsOffscreen?.ToString() ?? "unknown"}";
     }
 }

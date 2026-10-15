@@ -2,7 +2,6 @@
 using AutoMancer.Engine;
 using AutoMancer.Engine.Actions;
 using AutoMancer.Engine.Core;
-using AutoMancer.Engine.Errors;
 using AutoMancer.Testing.XUnit;
 
 namespace ConsumerVsCodeTests;
@@ -18,7 +17,7 @@ public sealed class HelloWorldScriptDemoTests
         var app = await VsCodeLauncher.LaunchAsync(sandbox);
         try
         {
-            await DismissFirstRunDialogIfPresentAsync(app);
+            await VsCodeLauncher.DismissFirstRunDialogIfPresentAsync(app);
             await Task.Delay(500); // dialog's close animation/focus handoff is still settling; an immediate keystroke can land mid-transition.
 
             // AI Chat panel can default-focus; Ctrl+N there runs "New Chat" instead. Click a known workbench element to move focus away first.
@@ -78,32 +77,11 @@ public sealed class HelloWorldScriptDemoTests
         await app.PressKeyAsync(Key.Enter);
     }
 
-    // Dismisses the fresh-profile first-run walkthrough (Copilot sign-in, then theme picker) if present, using short probes to avoid slowing runs where a step is absent.
-    private static async Task DismissFirstRunDialogIfPresentAsync(App app)
-    {
-        await ClickIfPresentAsync(app, "Continue without Signing In");
-        await ClickIfPresentAsync(app, "Get Started");
-    }
-
     // Clicks a point at the given fraction of the window's width/height, for surfaces with no clickable UIA element.
     private static async Task ClickInWindowAsync(App app, double xFraction, double yFraction)
     {
         var rect = await app.GetWindowSizeAsync();
         await app.ClickAtAsync((int)(rect.X + rect.Width * xFraction), (int)(rect.Y + rect.Height * yFraction));
-    }
-
-    // Clicks the named element if it resolves within a short timeout; no-ops if it never appears.
-    private static async Task ClickIfPresentAsync(App app, string name)
-    {
-        var probe = app.WithOptions(new AppOptions { ImplicitWaitMs = 2_000, PollIntervalMs = 300 });
-        try
-        {
-            await probe.ClickAsync(Locator.ByName(name));
-        }
-        catch (ElementNotFoundError)
-        {
-            // Not shown this run — nothing to dismiss.
-        }
     }
 
     // Ctrl+S on an untitled buffer opens the native Save As dialog; typing the path into its default-focused field saves without resolving any UIA element.

@@ -466,9 +466,13 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration&FullyQ
 
 **Creates:**
 - `src/AutoMancer.Testing/LocatorExpect.cs` — add `ToBeEnabledAsync(CancellationToken ct = default)`, `ToContainTextAsync(string substring, CancellationToken ct = default)`, `ToHaveCountAsync(int expected, int? timeoutMs = null, int? pollIntervalMs = null, CancellationToken ct = default)`
-- `tests/AutoMancer.Engine.Tests/TestingAdapter/LocatorExpectTests.cs` — extend with cases mirroring the existing `ToHaveNameAsync` tests (matches immediately, retries until match, times out with a descriptive message)
+- `src/AutoMancer.Testing/ElementExpect.cs` — `ToBeVisible()` delegates to `WaitConditions.IsVisible()`, its message adding `IsOffscreen`
+- `tests/AutoMancer.Engine.Tests/TestingAdapter/LocatorExpectTests.cs` — extend with cases mirroring the existing `ToHaveNameAsync` tests (matches immediately, retries until match, times out with a descriptive message); `ToBeEnabledAsync` also passes for an unknown enabled state, `ToHaveCountAsync` also passes immediately for zero expected and no matches, and `ToBeVisibleAsync` rejects an offscreen element with non-empty bounds
+- `tests/AutoMancer.Engine.Tests/TestingAdapter/ElementExpectTests.cs` — `ToBeVisible()` rejects an offscreen element with non-empty bounds
 
-- [ ] **Write tests, run (expect FAIL), implement, run (expect PASS)**
+As built: `DescribeActualAsync`'s failure message adds the found element's `IsEnabled`/`IsOffscreen` (`unknown` when unreported), since `ToBeEnabledAsync`/`ToBeVisibleAsync` failures can't be explained by `Name` and `BoundingRect` alone.
+
+- [x] **Write tests, run (expect FAIL), implement, run (expect PASS)**
 
 ```bash
 dotnet test tests/AutoMancer.Engine.Tests/ --filter "FullyQualifiedName~LocatorExpectTests"
@@ -495,7 +499,13 @@ If it's later folded into actions (Task 2.2.4's future extension, Playwright's "
 - `src/AutoMancer.Engine/Actions/ElementInputHelpers.cs` — internal `IsUnobscured(element, point)`
 - `src/AutoMancer.Engine/App.cs` — `IsUnobscuredAsync(Locator locator, CancellationToken ct = default)`
 
-- [ ] **Implement and build**
+As built: the helper is `Uia3Provider.HitTestReaches(target, x, y)`, walking raw-view ancestors (the same view `IsDetached` uses). A windowless UIA element (XAML, Electron) has a `NativeWindowHandle` of 0, so the cross-window half looks up its owning window as the nearest raw-view ancestor that has one. If that lookup fails without the element being gone, it logs and skips the cross-window half, the way `ReadState` handles a failed read. A failed `ElementFromPoint`/ancestor walk logs and reports `false`, because the failure comes from the hit element rather than the target, which `GetCenter` has just read live. `IsUnobscuredAsync` runs through `FindAndRunAsync`, so a stale element is re-resolved according to `ReresolveOnStale`, as in `GetValueAsync`. It catches `GetCenter`'s empty-bounds error inside the action, so that case returns `false` straight away without waiting. `HitTestReaches` returns `bool?`. When `ElementFromPoint` stops at one of the target's own ancestors, it returns `null` ("can't tell"), and `IsUnobscured` then falls back to the cross-window result, the same way `uia2`/`win32` handles do. Task 2.2.8 found the reason: once the managed UIA2 client loads in-process (any find that falls through to `uia2` in the default chain), UIA3's hit-test stops at a XAML island's `DesktopChildSiteBridge` host window instead of descending into it. Before this fallback, every XAML element then reported covered for the rest of the process. Checked live against VS Code (Electron) in `samples/ConsumerVsCodeTests/WorkbenchStateDemoTests.cs`:
+- The Command Palette is reported covering the editor area.
+- Right after the UI changes, Chromium can answer the first hit-test from the previous state, about one call within ~200ms. Every later call was correct. So poll (`Expect(() => app.IsUnobscuredAsync(…)).ToSatisfyAsync(…)`) rather than trusting a single call.
+- The title-bar caption buttons (Minimize/Maximize/Close) report covered when nothing covers them, because Chromium's hit-test returns the web content drawn underneath them.
+- Elements on the taskbar-overlapped bottom edge of a window that extends under the taskbar correctly report covered.
+
+- [x] **Implement and build**
 
 ```bash
 dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
@@ -504,7 +514,7 @@ dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
 **Done when:** `app.IsUnobscuredAsync(locator)` returns `false` when another window or an in-app overlay is covering the element's hit point (the point `ElementInputHelpers.GetCenter` returns — what a synthesized click would hit), `false` for an element with no on-screen bounds, and `true` once it's clear.
 
 **Future extensions, once this lands:**
-- `EnsureUnobscured` folded into pointer actions after `EnsureForeground`, per "Where it sits" above, once it's proven reliable on real apps.
+- `EnsureUnobscured` folded into pointer actions after `EnsureForeground`, per "Where it sits" above, once it's proven reliable on real apps. Folding it in would also absorb Chromium's stale first hit-test, since `FindAndRunAsync` already retries a not-yet-actionable element.
 - `WaitConditions.ToBeClickable()` — a composite of `IsVisible()` + `IsEnabled()` (Task 2.2.1) + this task's live occlusion check; Selenium's single most-used `ExpectedCondition`. Needs this task first since it can't be a pure cached-state predicate like the rest of `WaitConditions`.
 - `App.IsForegroundAsync(locator)` — a focus/foreground-window check via `GetForegroundWindow` comparison, same live-check shape as this task. Arguably higher real-world value than occlusion alone, since input silently landing on the wrong window is one of the most common WinAppDriver flake sources.
 - A hung-window ("Not Responding") check via `IsHungAppWindow` or a `SendMessageTimeout` probe — same actionability-primitive family, catches slow-app flake that today has no engine-level answer.
@@ -516,9 +526,11 @@ dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
 **What:** Integration test against live Notepad — an on-screen button reports unobscured; the same button reports obscured once the Save-changes `ContentDialog` covers it.
 
 **Creates:**
-- `tests/AutoMancer.Engine.Tests/Integration/OcclusionIntegrationTests.cs`
+- `tests/AutoMancer.Engine.Tests/Integration/Notepad/OcclusionIntegrationTests.cs`
 
-- [ ] **Run integration tests**
+As built: the file sits with the other Notepad suites under `Integration/Notepad/`, on the shared `NotepadFixture`. The button is `SettingsButton`. The obscured case opens a second tab, types into it, presses Ctrl+W, and asserts Settings reports covered while the dialog's own "Don't save" reports clear. It then dismisses the dialog and asserts Settings is clear again, which covers Task 2.2.7's "`true` once it's clear". Seen live: the dialog's smoke layer covers the whole window, title-bar caption buttons included. A `uia2`-resolved Settings handle, which gets only the cross-window half, also reports covered, because `WindowFromPoint` puts the dialog's popup in a different top-level window from the button's. So this test can't isolate UIA3's same-window hit-test. It's an end-to-end check that both halves agree, not proof that the UIA3 half catches overlays by itself. A third case does a `uia2` find first and asserts Settings is still clear. It guards the UIA2 hit-test fallback described in Task 2.2.7's "As built"; these tests failed on that problem when the whole integration suite ran together, though they passed alone.
+
+- [x] **Run integration tests**
 
 ```bash
 dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration&FullyQualifiedName~Occlusion"
@@ -1066,7 +1078,7 @@ Mirrors roadmap-spec.md's per-phase checklist; see there for the authoritative, 
 
 - [x] Task 2.1.6 — spatial and property locators find elements the fixed strategy set can't reach
 - [x] Task 2.1.9 — scoped find disambiguates identically-matched elements, and virtualized-list find locates unrealized items
-- [ ] Task 2.2.6 — `Expect()` and `WaitForAsync` share a wait-condition vocabulary
+- [x] Task 2.2.6 — `Expect()` and `WaitForAsync` share a wait-condition vocabulary
 - [ ] Task 2.3.4 — native context menu fallback works when UIA can't see the popup
 - [ ] Task 2.4.2 — resource watch returns a plausible sample series against a live app
 - [ ] Task 2.5.3 — accessibility audit reports a deliberately-unnamed control

@@ -1,6 +1,7 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
 using AutoMancer.Engine;
 using AutoMancer.Engine.Core;
+using AutoMancer.Engine.Errors;
 
 namespace ConsumerVsCodeTests;
 
@@ -74,7 +75,12 @@ internal static class VsCodeLauncher
     {
         await app.KillAsync();
         await app.DisposeAsync();
+        await DeleteSandboxAsync(sandbox);
+    }
 
+    // Best-effort deletes the sandbox once VS Code has exited, retrying briefly while its helper processes release their file locks.
+    internal static async Task DeleteSandboxAsync(VsCodeSandbox sandbox)
+    {
         for (int attempt = 0; attempt < 5; attempt++)
         {
             try { Directory.Delete(sandbox.RootDir, recursive: true); return; }
@@ -88,6 +94,27 @@ internal static class VsCodeLauncher
                 }
                 await Task.Delay(500);
             }
+        }
+    }
+
+    // Dismisses the fresh-profile first-run walkthrough (Copilot sign-in, then theme picker) if present, using short probes to avoid slowing runs where a step is absent.
+    internal static async Task DismissFirstRunDialogIfPresentAsync(App app)
+    {
+        await ClickIfPresentAsync(app, "Continue without Signing In");
+        await ClickIfPresentAsync(app, "Get Started");
+    }
+
+    // Clicks the named element if it resolves within a short timeout; no-ops if it never appears.
+    private static async Task ClickIfPresentAsync(App app, string name)
+    {
+        var probe = app.WithOptions(new AppOptions { ImplicitWaitMs = 2_000, PollIntervalMs = 300 });
+        try
+        {
+            await probe.ClickAsync(Locator.ByName(name));
+        }
+        catch (ElementNotFoundError)
+        {
+            // Not shown this run — nothing to dismiss.
         }
     }
 

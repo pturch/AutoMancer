@@ -7,8 +7,8 @@ namespace AutoMancer.Engine.Tests.TestingAdapter;
 
 public sealed class ElementExpectTests
 {
-    private static ElementHandle Handle(string? name = null, Rect rect = default) =>
-        new ElementHandle("1", "test", new object()) { Name = name, BoundingRect = rect };
+    private static ElementHandle Handle(string? name = null, Rect rect = default, bool? isOffscreen = null) =>
+        new ElementHandle("1", "test", new object()) { Name = name, BoundingRect = rect, IsOffscreen = isOffscreen };
 
     [Fact]
     public void ToHaveName_MatchingName_DoesNotThrow()
@@ -35,6 +35,14 @@ public sealed class ElementExpectTests
     public void ToBeVisible_ZeroRect_ThrowsExpectFailedError()
     {
         Assert.Throws<ExpectFailedError>(() => Expect(Handle(rect: default)).ToBeVisible());
+    }
+
+    [Fact]
+    public void ToBeVisible_NonZeroRectButOffscreen_ThrowsExpectFailedError()
+    {
+        var ex = Assert.Throws<ExpectFailedError>(() => Expect(Handle(rect: new Rect(0, 0, 10, 10), isOffscreen: true)).ToBeVisible());
+
+        Assert.Contains("IsOffscreen=True", ex.Message);
     }
 
     [Fact]

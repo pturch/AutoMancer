@@ -563,10 +563,10 @@ Batch numbers below match `sdks-spec.md`'s task numbers 1:1 (batch `3.4.4` is Ta
 - [ ] `RegisterCustomPropertyAsync` resolves an app-registered custom property's GUID to an ID, and `Locator.ByProperty(int, ...)` finds an element via it
 - [x] `app.FindScopedAsync(locator, element)` only matches descendants of `element`, ignoring identically-matched elements elsewhere in the tree
 - [x] `app.FindByScrollingAsync(container, itemLocator)` finds an item in a live virtualized list that isn't realized in the tree until scrolled into view, and throws (rather than looping forever) when the item genuinely isn't there
-- [ ] A canned `WaitConditions` predicate works as a drop-in `WaitForAsync` condition
-- [ ] `Expect(locator).ToBeEnabledAsync()` (or another `WaitConditions`-backed assertion) polls and fails the same way the Stage 1.9 `Expect()` checks already do
-- [ ] Stale-element re-resolve is opt-in and covered by a test — calls that don't opt in behave exactly as before
-- [ ] `app.IsUnobscuredAsync(locator)` returns `false` when another window or an in-app overlay covers the element's hit point, `true` once it's clear, and doesn't change the behavior of any existing action
+- [x] A canned `WaitConditions` predicate works as a drop-in `WaitForAsync` condition
+- [x] `Expect(locator).ToBeEnabledAsync()` (or another `WaitConditions`-backed assertion) polls and fails the same way the Stage 1.9 `Expect()` checks already do
+- [x] Stale-element re-resolve is on by default (`AppOptions.ReresolveOnStale`) and covered by a test — setting it `false` lets `StaleElementError` propagate to the caller
+- [x] `app.IsUnobscuredAsync(locator)` returns `false` when another window or an in-app overlay covers the element's hit point, `true` once it's clear, and doesn't change the behavior of any existing action
 - [ ] A native context-menu item is found and clicked via the `HMENU` fallback on an app where UIA doesn't expose it
 - [ ] `WatchResourcesAsync()` returns a non-empty handle/memory sample series over a live test run
 - [ ] `automancer audit <session>` reports at least one finding against a deliberately-unnamed test control

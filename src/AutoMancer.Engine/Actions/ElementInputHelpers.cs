@@ -277,4 +277,69 @@ internal static class ElementInputHelpers
         var (x, y) = bounds.Center;
         return ((int)x, (int)y);
     }
+
+    // True when pointer input at point (from GetCenter) would reach element right now: the top-level window under point is element's own (every provider), and for a uia3 element UIA's hit-test there doesn't land on something else. Throws StaleElementError if element is gone.
+    internal static bool IsUnobscured(ElementHandle element, (int X, int Y) point)
+    {
+        // Cross-window half, plain user32 so it works for every provider: another app's window over point means a click lands there instead.
+        var hitWindow = NativeMethods.WindowFromPoint(new NativeMethods.POINT { X = point.X, Y = point.Y });
+        if (hitWindow == IntPtr.Zero)
+            return false;
+        var containingWindow = GetContainingWindow(element);
+        if (containingWindow != IntPtr.Zero && NativeMethods.GetTopLevelWindow(hitWindow) != NativeMethods.GetTopLevelWindow(containingWindow))
+            return false;
+        // Same-window half catches in-app overlays (e.g. a XAML ContentDialog) but needs UIA3, so uia2/win32 stop here; for uia3 the half above is just an early-out.
+        if (element.NativeHandle is not IUIAutomationElement uia3)
+            return true;
+        try
+        {
+            var reaches = Uia3Provider.HitTestReaches(uia3, point.X, point.Y);
+            if (reaches is null)
+                element.Logger?.Debug("Hit-test stopped at an ancestor, relying on the cross-window check", new { elementId = element.Id });
+            return reaches ?? true;
+        }
+        catch (COMException ex)
+        {
+            // The failure is from the hit element or its ancestors, not element (GetCenter just read it live), so it isn't stale — just unconfirmed.
+            element.Logger?.Warn("Hit-test failed, reporting obscured", new { elementId = element.Id, error = ex.Message });
+            return false;
+        }
+    }
+
+    // The native window element lives in — its own hwnd, or for a windowless UIA element (XAML, Electron) the nearest raw-view ancestor's; Zero when unknown. Throws StaleElementError if element is gone.
+    private static IntPtr GetContainingWindow(ElementHandle element)
+    {
+        try
+        {
+            switch (element.NativeHandle)
+            {
+                case IntPtr win32:
+                    return win32;
+                case IUIAutomationElement uia3:
+                    for (var current = uia3; current is not null; current = Uia3Provider.Automation.RawViewWalker.GetParentElement(current))
+                    {
+                        var windowHandle = current.CurrentNativeWindowHandle;
+                        if (windowHandle != IntPtr.Zero) return windowHandle;
+                    }
+                    break;
+                case AutomationElement uia2:
+                    for (var current = uia2; current is not null; current = TreeWalker.RawViewWalker.GetParent(current))
+                    {
+                        var windowHandle = current.Current.NativeWindowHandle;
+                        if (windowHandle != 0) return new IntPtr(windowHandle);
+                    }
+                    break;
+            }
+        }
+        catch (Exception ex) when (IsStaleFailure(ex, element))
+        {
+            throw Stale(element, ex);
+        }
+        catch (Exception ex) when (ex is COMException or InvalidOperationException or ElementNotAvailableException)
+        {
+            // Same tolerance as ReadState; the cross-window half is skipped and the uia3 hit-test (if any) decides.
+            element.Logger?.Warn("Owning window read failed, skipping cross-window check", new { elementId = element.Id, error = ex.Message });
+        }
+        return IntPtr.Zero;
+    }
 }

@@ -72,8 +72,11 @@ Asserting against an element you already resolved yourself doesn't retry. It che
 | Assertion | On | Checks |
 |---|---|---|
 | `ToHaveName(string)` / `ToHaveNameAsync(string)` | element / locator | `Name` equals exactly |
-| `ToBeVisible()` / `ToBeVisibleAsync()` | element / locator | `BoundingRect` is non-zero |
+| `ToBeVisible()` / `ToBeVisibleAsync()` | element / locator | Not reported offscreen, and `BoundingRect` is non-zero (the same rule actions wait on) |
+| `ToBeEnabledAsync()` | locator only | Not reported disabled; an unknown enabled state passes (the same rule actions wait on) |
 | `ToHaveText(string)` / `ToHaveTextAsync(string)` | element / locator | `Name` contains the substring |
+| `ToContainTextAsync(string)` | locator only | `Name` contains the substring |
+| `ToHaveCountAsync(int, timeoutMs?, pollIntervalMs?)` | locator only | Exactly that many elements match; waits for a list still populating, which `FindAllAsync` alone doesn't |
 | `ToHaveValueAsync(string, timeoutMs?, pollIntervalMs?)` | locator only | The element's live value (not its `Name`) equals exactly. This is the one that reads what's actually typed into an editor. |
 
 The locator-based, retrying assertions and the element-based, one-shot ones live in separate helper classes internally, but you call both the same way, through the `Expect` you saw above. Either kind throws on failure, and the message names what was expected alongside what was actually found.

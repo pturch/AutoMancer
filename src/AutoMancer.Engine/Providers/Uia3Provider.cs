@@ -16,6 +16,28 @@ public sealed class Uia3Provider : IElementProvider
 
     internal static readonly IUIAutomation Automation = new CUIAutomation8Class();
 
+    // IsUnobscured's same-window half: true when UIA's hit-test at (x, y) lands on target or a descendant, false when it lands elsewhere, null when it stops at one of target's ancestors and so can't tell.
+    internal static bool? HitTestReaches(IUIAutomationElement target, int x, int y)
+    {
+        var hit = Automation.ElementFromPoint(new tagPOINT { x = x, y = y });
+        // Raw view, matching IsDetached, so a hit element outside the control view still walks up to target.
+        var current = hit;
+        for (var depth = 0; current is not null && depth <= MaxTreeDepth; depth++)
+        {
+            if (Automation.CompareElements(current, target) != 0) return true;
+            current = Automation.RawViewWalker.GetParentElement(current);
+        }
+        if (hit is null) return false;
+        // Once UIA2 loads in-process, hit-tests stop at a XAML island's host HWND instead of descending into it, so a hit on target's own ancestor proves nothing either way.
+        current = Automation.RawViewWalker.GetParentElement(target);
+        for (var depth = 0; current is not null && depth <= MaxTreeDepth; depth++)
+        {
+            if (Automation.CompareElements(current, hit) != 0) return null;
+            current = Automation.RawViewWalker.GetParentElement(current);
+        }
+        return false;
+    }
+
     // ---- Control type maps ----
 
     // AutoMancer's control type names mapped to their UIA_*ControlTypeId constants.

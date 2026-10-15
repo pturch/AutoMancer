@@ -123,6 +123,10 @@ internal static class NativeMethods
         public int Y;
     }
 
+    // Returns the visible, enabled window (often a child) at a physical-screen point, or Zero when there is none — what a click there would hit at the window level.
+    [DllImport("user32.dll")]
+    internal static extern IntPtr WindowFromPoint(POINT point);
+
     // Reads a system display metric (e.g. primary screen width/height in physical pixels).
     [DllImport("user32.dll")]
     internal static extern int GetSystemMetrics(int nIndex);

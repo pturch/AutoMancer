@@ -246,6 +246,17 @@ await app.Force.ClickAsync(Locator.ByName("New tab"));   // clicks it even while
 
 A stale element still throws `StaleElementError`, and simulated mouse inputs still need an on-screen point to aim at. Through `app.Force` those fail right away instead of waiting. `app.Force` is the same session as `app`, so disposing it never closes the app, and keys held through it are released when `app` is disposed.
 
+#### Checking for something in the way:
+
+Actions don't check whether something is covering the element. `IsUnobscuredAsync` is an opt-in check of whether a click at the element's center would actually reach it:
+
+```csharp
+bool clear = await app.IsUnobscuredAsync(Locator.ByAutomationId("SettingsButton"));
+```
+
+It returns `false` when another window covers that point, when an overlay (like a dimmed backdrop) covers it, or when the element has no on-screen size. 
+Overlays inside the app are only detected for elements found by the `uia3` provider. For `uia2` and `win32` elements it checks other windows only. 
+
 ### Screenshots and Waiting:
 
 Use these methods to help with test execution and debugging:

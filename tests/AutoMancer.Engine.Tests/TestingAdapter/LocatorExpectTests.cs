@@ -14,8 +14,21 @@ public sealed class LocatorExpectTests
     private static readonly AppSession Session = AppSession.CreateForTesting(Process.GetCurrentProcess(), (IntPtr)1);
     private static readonly Locator TestLocator = Locator.ByName("Submit");
 
-    private static ElementHandle Handle(string? name = null, Rect rect = default, IElementOperator? op = null) =>
-        new ElementHandle("1", "test", new object()) { Name = name, BoundingRect = rect, Operator = op };
+    private static ElementHandle Handle(string? name = null, Rect rect = default, IElementOperator? op = null, bool? isEnabled = null, bool? isOffscreen = null) =>
+        new ElementHandle("1", "test", new object()) { Name = name, BoundingRect = rect, Operator = op, IsEnabled = isEnabled, IsOffscreen = isOffscreen };
+
+    // Builds an App over a single fake provider named "uia3" whose FindElementsAsync for TestLocator returns each of counts' sizes in turn, repeating the last.
+    private static (App App, Mock<IElementProvider> Provider) FakeAppWithCounts(params int[] counts)
+    {
+        var provider = new Mock<IElementProvider>();
+        provider.SetupGet(p => p.ProviderName).Returns("uia3");
+        var call = 0;
+        provider.Setup(p => p.FindElementsAsync(TestLocator, Session, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => Enumerable.Range(0, counts[Math.Min(call++, counts.Length - 1)]).Select(i => Handle(name: $"Item {i}")).ToList());
+        provider.Setup(p => p.SnapshotTreeAsync(Session, It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<ElementSnapshot>());
+        var options = new AppOptions { ProviderChain = ["uia3"], ImplicitWaitMs = 50, PollIntervalMs = 10, Logger = null };
+        return (App.CreateForTesting(Session, [provider.Object], options), provider);
+    }
 
     // Builds an App over a single fake provider named "uia3" that always returns findResult for TestLocator.
     private static App FakeApp(ElementHandle? findResult, int implicitWaitMs = 50, int pollIntervalMs = 10)
@@ -89,6 +102,131 @@ public sealed class LocatorExpectTests
         var app = FakeApp(Handle(rect: default));
 
         await Assert.ThrowsAsync<ExpectFailedError>(() => Expect(app, TestLocator).ToBeVisibleAsync());
+    }
+
+    [Fact]
+    public async Task ToBeVisibleAsync_NonZeroRectButOffscreen_ThrowsExpectFailedError()
+    {
+        var app = FakeApp(Handle(rect: new Rect(0, 0, 10, 10), isOffscreen: true));
+
+        var ex = await Assert.ThrowsAsync<ExpectFailedError>(() => Expect(app, TestLocator).ToBeVisibleAsync());
+
+        Assert.Contains("IsOffscreen=True", ex.Message);
+    }
+
+    [Fact]
+    public async Task ToBeEnabledAsync_Enabled_DoesNotThrow()
+    {
+        var app = FakeApp(Handle(isEnabled: true));
+
+        await Expect(app, TestLocator).ToBeEnabledAsync();
+    }
+
+    [Fact]
+    public async Task ToBeEnabledAsync_EnabledStateUnknown_DoesNotThrow()
+    {
+        var app = FakeApp(Handle(isEnabled: null));
+
+        await Expect(app, TestLocator).ToBeEnabledAsync();
+    }
+
+    [Fact]
+    public async Task ToBeEnabledAsync_ConditionBecomesTrueOnSecondPoll_ResolvesAfterRetry()
+    {
+        var provider = new Mock<IElementProvider>();
+        provider.SetupGet(p => p.ProviderName).Returns("uia3");
+        provider.SetupSequence(p => p.FindElementAsync(TestLocator, Session, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Handle(isEnabled: false))
+            .ReturnsAsync(Handle(isEnabled: true));
+        var options = new AppOptions { ProviderChain = ["uia3"], ImplicitWaitMs = 5_000, PollIntervalMs = 10, Logger = null };
+        var app = App.CreateForTesting(Session, [provider.Object], options);
+
+        await Expect(app, TestLocator).ToBeEnabledAsync();
+
+        provider.Verify(p => p.FindElementAsync(TestLocator, Session, It.IsAny<CancellationToken>()), Times.AtLeast(2));
+    }
+
+    [Fact]
+    public async Task ToBeEnabledAsync_NeverEnabled_ThrowsExpectFailedErrorDescribingActualElement()
+    {
+        var app = FakeApp(Handle(name: "Submit", isEnabled: false));
+
+        var ex = await Assert.ThrowsAsync<ExpectFailedError>(() => Expect(app, TestLocator).ToBeEnabledAsync());
+
+        Assert.Contains("to be enabled", ex.Message);
+        Assert.Contains("IsEnabled=False", ex.Message);
+    }
+
+    [Fact]
+    public async Task ToContainTextAsync_ContainsSubstring_DoesNotThrow()
+    {
+        var app = FakeApp(Handle(name: "Hello from AutoMancer."));
+
+        await Expect(app, TestLocator).ToContainTextAsync("from Auto");
+    }
+
+    [Fact]
+    public async Task ToContainTextAsync_ConditionBecomesTrueOnSecondPoll_ResolvesAfterRetry()
+    {
+        var provider = new Mock<IElementProvider>();
+        provider.SetupGet(p => p.ProviderName).Returns("uia3");
+        provider.SetupSequence(p => p.FindElementAsync(TestLocator, Session, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Handle(name: "Loading..."))
+            .ReturnsAsync(Handle(name: "3 results found"));
+        var options = new AppOptions { ProviderChain = ["uia3"], ImplicitWaitMs = 5_000, PollIntervalMs = 10, Logger = null };
+        var app = App.CreateForTesting(Session, [provider.Object], options);
+
+        await Expect(app, TestLocator).ToContainTextAsync("results");
+
+        provider.Verify(p => p.FindElementAsync(TestLocator, Session, It.IsAny<CancellationToken>()), Times.AtLeast(2));
+    }
+
+    [Fact]
+    public async Task ToContainTextAsync_MissingSubstring_ThrowsExpectFailedErrorDescribingActualElement()
+    {
+        var app = FakeApp(Handle(name: "Goodbye"));
+
+        var ex = await Assert.ThrowsAsync<ExpectFailedError>(() => Expect(app, TestLocator).ToContainTextAsync("Hello"));
+
+        Assert.Contains("to contain text \"Hello\"", ex.Message);
+        Assert.Contains("found Name=\"Goodbye\"", ex.Message);
+    }
+
+    [Fact]
+    public async Task ToHaveCountAsync_MatchingCount_DoesNotThrow()
+    {
+        var (app, _) = FakeAppWithCounts(3);
+
+        await Expect(app, TestLocator).ToHaveCountAsync(3);
+    }
+
+    [Fact]
+    public async Task ToHaveCountAsync_ZeroExpectedAndNoMatches_DoesNotThrow()
+    {
+        var (app, _) = FakeAppWithCounts(0);
+
+        await Expect(app, TestLocator).ToHaveCountAsync(0);
+    }
+
+    [Fact]
+    public async Task ToHaveCountAsync_CollectionStillPopulating_ResolvesAfterRetry()
+    {
+        var (app, provider) = FakeAppWithCounts(0, 2, 5);
+
+        await Expect(app, TestLocator).ToHaveCountAsync(5, timeoutMs: 5_000, pollIntervalMs: 10);
+
+        provider.Verify(p => p.FindElementsAsync(TestLocator, Session, It.IsAny<CancellationToken>()), Times.Exactly(3));
+    }
+
+    [Fact]
+    public async Task ToHaveCountAsync_CountNeverReached_ThrowsExpectFailedErrorReportingLastCount()
+    {
+        var (app, _) = FakeAppWithCounts(1, 2);
+
+        var ex = await Assert.ThrowsAsync<ExpectFailedError>(() => Expect(app, TestLocator).ToHaveCountAsync(3, timeoutMs: 50, pollIntervalMs: 10));
+
+        Assert.Contains("to have count 3", ex.Message);
+        Assert.Contains("found 2", ex.Message);
     }
 
     [Fact]

@@ -258,6 +258,22 @@ public sealed class App : IAsyncDisposable
         return value;
     }
 
+    // Reports whether a click at the element's center would reach it right now, without foregrounding — false if another window or (uia3 only) an in-app overlay covers it, or it has no on-screen bounds.
+    public async Task<bool> IsUnobscuredAsync(Locator locator, CancellationToken ct = default)
+    {
+        var unobscured = false;
+        // Through FindAndRunAsync so a stale element re-resolves per ReresolveOnStale; enabled state is irrelevant to occlusion and isn't checked.
+        await FindAndRunAsync(locator, el => Task.Run(() =>
+        {
+            (int X, int Y) point;
+            // A yes/no query: no on-screen bounds means nothing to hit, not a reason to wait or throw.
+            try { point = ElementInputHelpers.GetCenter(el); }
+            catch (ElementNotInteractableError) { unobscured = false; return; }
+            unobscured = ElementInputHelpers.IsUnobscured(el, point);
+        }, ct), ct);
+        return unobscured;
+    }
+
     // Snapshots the element tree from the first provider in the chain that returns a non-empty result; null if all providers return empty.
     public Task<IReadOnlyList<ElementSnapshot>?> SnapshotAsync(CancellationToken ct = default)
         => _resolver.TrySnapshotAsync(_session, ct);

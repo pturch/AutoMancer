@@ -18,6 +18,8 @@ public static class ClickAction
     // Same as ExecuteAsync, with an explicit logger override — for the test suite to inject/inspect logging without a full resolver.
     internal static async Task ExecuteCoreAsync(ElementHandle element, MouseButton button, KeyModifiers modifiers, IEngineLogger? logger, CancellationToken ct)
     {
+        // Gates the native Invoke too — it would otherwise fire a hidden menu item no user could reach. Off the caller's thread, like every other live UIA call.
+        await Task.Run(() => ElementInputHelpers.EnsureInteractable(element), ct).ConfigureAwait(false);
         if (button == MouseButton.Left && modifiers == KeyModifiers.None && element.Operator is not null)
             if (await element.Operator.TryClickAsync(element, ct).ConfigureAwait(false))
             {
@@ -51,7 +53,7 @@ public static class ClickAction
         inputs.Add(SendInputBuilders.MouseInputAt(normX, normY, downFlag, mouseData));
         inputs.Add(SendInputBuilders.MouseInputAt(normX, normY, upFlag, mouseData));
 
-        for (var i = modifierKeys.Count - 1; i >= 0; i--)
+        for (int i = modifierKeys.Count - 1; i >= 0; i--)
             inputs.Add(SendInputBuilders.VkInput(modifierKeys[i], isKeyUp: true));
 
         NativeMethods.SendInputs(inputs.ToArray(), logger);

@@ -3,6 +3,7 @@ using AutoMancer.Engine;
 using AutoMancer.Engine.Actions;
 using AutoMancer.Engine.Core;
 using AutoMancer.Engine.Errors;
+using static AutoMancer.Testing.Assertions;
 
 namespace AutoMancer.Engine.Tests.Integration;
 
@@ -23,7 +24,7 @@ public sealed class VirtualizedListFindIntegrationTests
     {
         var folder = Path.Combine(Path.GetTempPath(), "amc-virtualized-list-" + Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(folder);
-        for (var i = 0; i < FileCount; i++)
+        for (int i = 0; i < FileCount; i++)
             File.WriteAllText(Path.Combine(folder, $"file-{i:D4}.txt"), $"contents of file-{i:D4}");
         return folder;
     }
@@ -39,7 +40,8 @@ public sealed class VirtualizedListFindIntegrationTests
         // The "File name:" combo and its nested Edit both carry AutomationId "1148", and ByControlType("Edit") separately matches the file list's per-row rename-in-place cells first — either ambiguity misses the real target. ClassName "Edit" (the native Win32 class) is unique to the combo's actual text box.
         await dialog!.TypeAsync(Locator.ByClassName("Edit"), folder);
         await dialog.PressKeyAsync(Key.Enter);
-        await Task.Delay(500);
+        // The folder's first file showing up in the list means the navigation finished.
+        await dialog.FindAsync(Locator.ByName("file-0000"));
 
         return dialog;
     }
@@ -52,11 +54,36 @@ public sealed class VirtualizedListFindIntegrationTests
         try
         {
             var dialog = await OpenFileDialogOnFolderAsync(app, folder);
-            var itemsView = await dialog.FindAsync(Locator.ByClassName("UIItemsView"));
+            var itemsView = Locator.ByClassName("UIItemsView");
 
             var found = await dialog.FindByScrollingAsync(itemsView, Locator.ByName(TargetFileName), maxScrolls: 5);
 
             Assert.Equal(TargetFileName, found.Name);
+            // A row realized at the scroll edge is still IsOffscreen until ResolveFullyIntoViewAsync's ScrollIntoView brings it into the viewport.
+            Assert.False(found.IsOffscreen);
+        }
+        finally
+        {
+            await app.KillAsync();
+            try { Directory.Delete(folder, true); } catch { /* best-effort cleanup */ }
+        }
+    }
+
+    // Same through UIA2-resolved handles: ScrollAction's ScrollIntoView used to be a silent no-op for them, which left the found row IsOffscreen.
+    [Fact]
+    public async Task FindByScrollingAsync_Uia2_FarDownItemInLongList_ScrollsUntilFoundAndIntoView()
+    {
+        var folder = CreateFolderWithManyFiles();
+        var app = await App.LaunchAsync("notepad.exe");
+        try
+        {
+            var dialog = (await OpenFileDialogOnFolderAsync(app, folder)).WithOptions(new AppOptions { ProviderChain = ["uia2"] });
+
+            var found = await dialog.FindByScrollingAsync(Locator.ByClassName("UIItemsView"), Locator.ByName(TargetFileName), maxScrolls: 5);
+
+            Assert.IsType<System.Windows.Automation.AutomationElement>(found.NativeHandle);
+            Assert.Equal(TargetFileName, found.Name);
+            Assert.False(found.IsOffscreen);
         }
         finally
         {
@@ -73,7 +100,7 @@ public sealed class VirtualizedListFindIntegrationTests
         try
         {
             var dialog = await OpenFileDialogOnFolderAsync(app, folder);
-            var itemsView = await dialog.FindAsync(Locator.ByClassName("UIItemsView"));
+            var itemsView = Locator.ByClassName("UIItemsView");
 
             await Assert.ThrowsAsync<ElementNotFoundError>(() =>
                 dialog.FindByScrollingAsync(itemsView, Locator.ByName("this-file-does-not-exist.txt"), maxScrolls: 5));
@@ -94,7 +121,7 @@ public sealed class VirtualizedListFindIntegrationTests
         try
         {
             var dialog = await OpenFileDialogOnFolderAsync(app, folder);
-            var itemsView = await dialog.FindAsync(Locator.ByClassName("UIItemsView"));
+            var itemsView = Locator.ByClassName("UIItemsView");
 
             var found = await dialog.FindByScrollingAsync(itemsView, Locator.ByName(FirstFileName), maxScrolls: 5);
 
@@ -116,7 +143,7 @@ public sealed class VirtualizedListFindIntegrationTests
         try
         {
             var dialog = await OpenFileDialogOnFolderAsync(app, folder);
-            var itemsView = await dialog.FindAsync(Locator.ByClassName("UIItemsView"));
+            var itemsView = Locator.ByClassName("UIItemsView");
 
             await Assert.ThrowsAsync<ElementNotFoundError>(() =>
                 dialog.FindByScrollingAsync(itemsView, Locator.ByName(LastFileName), maxScrolls: 1));
@@ -125,6 +152,48 @@ public sealed class VirtualizedListFindIntegrationTests
         {
             await app.KillAsync();
             try { Directory.Delete(folder, true); } catch { /* best-effort cleanup */ }
+        }
+    }
+
+    // Navigating the dialog to a second folder on the first scroll rebuilds the live list under the search: the old container must go stale, get re-found by locator, and the search must carry on into the new folder's far-down item.
+    [Fact]
+    public async Task FindByScrollingCoreAsync_ListRebuiltByFolderChangeMidSearch_RefindsContainerAndFindsItem()
+    {
+        var folder = CreateFolderWithManyFiles();
+        var otherFolder = Path.Combine(Path.GetTempPath(), "amc-virtualized-list-other-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(otherFolder);
+        for (int i = 0; i < FileCount; i++)
+            File.WriteAllText(Path.Combine(otherFolder, $"other-{i:D4}.txt"), $"contents of other-{i:D4}");
+        var app = await App.LaunchAsync("notepad.exe");
+        try
+        {
+            var dialog = await OpenFileDialogOnFolderAsync(app, folder);
+            var scrolledContainerIds = new List<string>();
+            var navigated = false;
+
+            var found = await dialog.FindByScrollingCoreAsync(Locator.ByClassName("UIItemsView"), Locator.ByName("other-0010"), maxScrolls: 8, async (container, ct) =>
+            {
+                scrolledContainerIds.Add(container.Id);
+                if (!navigated)
+                {
+                    navigated = true;
+                    await dialog.TypeAsync(Locator.ByClassName("Edit"), otherFolder, ct);
+                    await dialog.PressKeyAsync(Key.Enter, ct: ct);
+                    // Wait for the new folder's list, so the scroll below is guaranteed to hit the old, now-stale container.
+                    await dialog.FindAsync(Locator.ByName("other-0000"), ct);
+                }
+                // Still targets the handle from before the navigation, so a rebuilt list surfaces here as a stale container.
+                await ScrollWheelAction.ExecuteAsync(container, 0, -1, ct);
+            }, CancellationToken.None);
+
+            Assert.Equal("other-0010", found.Name);
+            Assert.True(scrolledContainerIds.Distinct().Count() > 1, $"folder change didn't rebuild the list (same container id on every scroll: {scrolledContainerIds[0]}), so the stale path never ran");
+        }
+        finally
+        {
+            await app.KillAsync();
+            try { Directory.Delete(folder, true); } catch { /* best-effort cleanup */ }
+            try { Directory.Delete(otherFolder, true); } catch { /* best-effort cleanup */ }
         }
     }
 
@@ -137,18 +206,18 @@ public sealed class VirtualizedListFindIntegrationTests
         try
         {
             var dialog = await OpenFileDialogOnFolderAsync(app, folder);
-            var itemsView = await dialog.FindAsync(Locator.ByClassName("UIItemsView"));
+            var itemsView = Locator.ByClassName("UIItemsView");
             var found = await dialog.FindByScrollingAsync(itemsView, Locator.ByName(TargetFileName), maxScrolls: 5);
 
             await DoubleClickAction.ExecuteAsync(found);
-            await Task.Delay(500);
 
-            var content = await app.GetValueAsync(Locator.ByControlType("Document"));
-            Assert.Equal("contents of file-0010", content);
+            await Expect(app, Locator.ByControlType("Document")).ToHaveValueAsync("contents of file-0010");
         }
         finally
         {
             await app.KillAsync();
+            // The opened file's tab survives the kill; without this the next test's Notepad restores it (from a deleted folder) and the Open dialog never appears.
+            NotepadCollectionFixture.ClearTabState();
             try { Directory.Delete(folder, true); } catch { /* best-effort cleanup */ }
         }
     }

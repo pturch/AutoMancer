@@ -2,6 +2,7 @@
 using AutoMancer.Engine;
 using AutoMancer.Engine.Actions;
 using AutoMancer.Engine.Providers;
+using static AutoMancer.Testing.Assertions;
 
 namespace AutoMancer.Engine.Tests.Integration;
 
@@ -18,13 +19,11 @@ public sealed class HeldKeyReleaseIntegrationTests
         var app = await App.LaunchPackagedAsync(CalculatorAumid);
 
         await app.KeyDownAsync(Key.W);
-        await Task.Delay(50);
-        Assert.True(IsKeyDown(Key.W), "W should be held down after KeyDownAsync.");
+        await ExpectKeyDownAsync(app, Key.W, true, "W should be held down after KeyDownAsync.");
 
         app.Kill();
-        await Task.Delay(50);
 
-        Assert.False(IsKeyDown(Key.W), "Kill() should have released the held key.");
+        await ExpectKeyDownAsync(app, Key.W, false, "Kill() should have released the held key.");
 
         await app.WaitForExitAsync();
         await app.DisposeAsync();
@@ -36,12 +35,10 @@ public sealed class HeldKeyReleaseIntegrationTests
         var app = await App.LaunchPackagedAsync(CalculatorAumid);
 
         await app.KeyDownAsync(Key.W);
-        await Task.Delay(50);
-        Assert.True(IsKeyDown(Key.W), "W should be held down after KeyDownAsync.");
+        await ExpectKeyDownAsync(app, Key.W, true, "W should be held down after KeyDownAsync.");
 
         await app.KeyUpAsync(Key.W);
-        await Task.Delay(50);
-        Assert.False(IsKeyDown(Key.W), "KeyUpAsync should have released the key.");
+        await ExpectKeyDownAsync(app, Key.W, false, "KeyUpAsync should have released the key.");
 
         app.Kill();
         await app.WaitForExitAsync();
@@ -55,15 +52,13 @@ public sealed class HeldKeyReleaseIntegrationTests
 
         await app.KeyDownAsync(Key.W);
         await app.KeyDownAsync(Key.A);
-        await Task.Delay(50);
-        Assert.True(IsKeyDown(Key.W), "W should be held down after KeyDownAsync.");
-        Assert.True(IsKeyDown(Key.A), "A should be held down after KeyDownAsync.");
+        await ExpectKeyDownAsync(app, Key.W, true, "W should be held down after KeyDownAsync.");
+        await ExpectKeyDownAsync(app, Key.A, true, "A should be held down after KeyDownAsync.");
 
         app.Kill();
-        await Task.Delay(50);
 
-        Assert.False(IsKeyDown(Key.W), "Kill() should have released W.");
-        Assert.False(IsKeyDown(Key.A), "Kill() should have released A.");
+        await ExpectKeyDownAsync(app, Key.W, false, "Kill() should have released W.");
+        await ExpectKeyDownAsync(app, Key.A, false, "Kill() should have released A.");
 
         await app.WaitForExitAsync();
         await app.DisposeAsync();
@@ -76,18 +71,15 @@ public sealed class HeldKeyReleaseIntegrationTests
 
         await app.KeyDownAsync(Key.W);
         await app.KeyDownAsync(Key.A);
-        await Task.Delay(50);
-        Assert.True(IsKeyDown(Key.W), "W should be held down after KeyDownAsync.");
-        Assert.True(IsKeyDown(Key.A), "A should be held down after KeyDownAsync.");
+        await ExpectKeyDownAsync(app, Key.W, true, "W should be held down after KeyDownAsync.");
+        await ExpectKeyDownAsync(app, Key.A, true, "A should be held down after KeyDownAsync.");
 
         await app.KeyUpAsync(Key.W);
-        await Task.Delay(50);
-        Assert.False(IsKeyDown(Key.W), "KeyUpAsync should have released W.");
+        await ExpectKeyDownAsync(app, Key.W, false, "KeyUpAsync should have released W.");
         Assert.True(IsKeyDown(Key.A), "A should still be held down after only W was released.");
 
         await app.KeyUpAsync(Key.A);
-        await Task.Delay(50);
-        Assert.False(IsKeyDown(Key.A), "KeyUpAsync should have released A.");
+        await ExpectKeyDownAsync(app, Key.A, false, "KeyUpAsync should have released A.");
 
         app.Kill();
         await app.WaitForExitAsync();
@@ -95,6 +87,10 @@ public sealed class HeldKeyReleaseIntegrationTests
     }
 
     private const short KeyDownBit = unchecked((short)0x8000); // high bit of GetAsyncKeyState's result means the key is currently down
+
+    // Polls live OS key state until key's held state matches down; the OS updates it asynchronously once it processes the injected input.
+    private static Task<bool> ExpectKeyDownAsync(App app, Key key, bool down, string description)
+        => Expect(app, () => Task.FromResult(IsKeyDown(key))).ToSatisfyAsync(isDown => isDown == down, description);
 
     // Checks live OS key state (not the process's), since held keys survive Kill().
     private static bool IsKeyDown(Key key) => (NativeMethods.GetAsyncKeyState(key.ToVirtualKeyCode()) & KeyDownBit) != 0;

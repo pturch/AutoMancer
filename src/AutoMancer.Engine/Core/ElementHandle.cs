@@ -20,6 +20,9 @@ public sealed class ElementHandle
     public bool? IsEnabled { get; init; }
     public bool? IsOffscreen { get; init; }
 
+    // Id of the process that owns this element, read when it was found; 0 when unknown. Lets stale detection tell UIA's post-exit E_UNEXPECTED from an ordinary failure, since a dead element can't be asked for it.
+    internal int ProcessId { get; init; }
+
     // The provider that resolved this element — retained for re-finding and diagnostics.
     internal IElementProvider? Provider { get; init; }
 
@@ -31,6 +34,9 @@ public sealed class ElementHandle
 
     // How long actions should retry foregrounding this element's window before giving up — stamped by ElementResolver from AppOptions.ForegroundActivationTimeoutMs, so actions can read it without taking a separate parameter.
     internal int ForegroundActivationTimeoutMs { get; set; } = 3_000;
+
+    // Whether this handle was found through app.Force — stamped by ElementResolver, so EnsureInteractable skips its enabled/visible gate (never stale detection, bounds, or keyboard focus).
+    internal bool Force { get; set; }
 
     // Constructed by providers only — callers receive handles exclusively from the resolver.
     internal ElementHandle(string id, string resolvedVia, object nativeHandle)

@@ -3,7 +3,7 @@ using AutoMancer.Engine.Core;
 
 namespace AutoMancer.Engine.Errors;
 
-// Thrown when a resolved element's IsEnabled or IsOffscreen property indicates it can't accept a synthesized click — checked in ElementInputHelpers.GetCenter before falling through to SendInput.
+// Thrown when a resolved element's IsEnabled/IsOffscreen/bounds say it can't accept input — checked in ElementInputHelpers.EnsureInteractable before any native-pattern or synthesized action.
 public sealed class ElementNotInteractableError : Exception
 {
     public ElementHandle Element { get; }

@@ -142,6 +142,16 @@ automancer find <session-id> --by runtime --value "42.333896.3.1"
 
 **A runtime ID only lasts one session.** Unlike automation ID, which is stable across relaunches, a runtime ID is only valid for the lifetime of the app instance that produced it. Use it to confirm you're still looking at the same element after doing something to it — not as a locator you write into a test ahead of time, since you won't have one until you've already found the element once.
 
+### Locators vs. Element Handles:
+
+Apps rebuild their UI all the time. Lists frequently re-render, dialogs close and reopen. Elements found a moment ago can be gone by the time you use them. Retrying logic can get dicey, so who deals with what depends on what you handed AutoMancer:
+
+**A `Locator` is AutoMancer's problem.** Any method that takes one (`ClickAsync`, `GetValueAsync`, `FindAllScopedAsync`, ...) re-finds the element when it needs it. If the element turns out to be gone, AutoMancer runs that locator again until the implicit wait runs out. `AppOptions.ReresolveOnStale` (default `true`) controls this; set it to `false` and you get a `StaleElementError` instead, for you to handle however you'd like.
+
+**An `ElementHandle` is your problem.** A handle (what `FindAsync` returns) points at one specific element. If that element leaves the UI tree, acting on the handle or reading its value throws `StaleElementError`. AutoMancer has no locator to re-run, and following a look-alike replacement could act on the wrong thing. A handle's properties (`Name`, `BoundingRect`, `IsEnabled`, ...) are a snapshot from when it was found: they never throw, but they never update either, and `Expect(handle)` asserts against that same snapshot.
+
+Pass locators wherever you can (especially for scopes), and hold a handle only when you specifically want that one element. To pass a handle where a locator is expected, wrap it in `Locator.ByRuntimeId(handle.Id)`. That locator only ever matches that exact element, so if the element is gone it won't follow a replacement; you'll get `ElementNotFoundError` once the implicit wait runs out.
+
 ### Path Locators:
 
 A path locator addresses an element by its exact position in the tree, using `>` to separate levels: `ControlType`, `ControlType["Name"]`, `ControlType[index]`, or a `*` wildcard for any control type. The first segment has to match the root window itself, and every segment after that only matches the direct children of the previous match. There's no `//`-style "search anywhere below" like an XPath locator has, so every level in between has to be spelled out. Leave off `[index]` and every matching child at that level continues; add it (0-based) to pick one specific child, counted only among siblings that already match that segment's control type.
@@ -219,6 +229,33 @@ await app.HotkeyAsync(new KeyModifiers(Control: true), [Key.S]);          // Ctr
 await app.DragThroughAsync([(100, 100), (150, 140), (200, 180)]);         // click-drag through waypoints
 await app.ScrollWheelAsync(Locator.ByControlType("Document"), deltaX: 0, deltaY: -3);
 ```
+
+### Actionability:
+
+Element actions (`ClickAsync`, `TypeAsync`, `ClearAsync`, `DoubleClickAsync`, `HoverAsync`, `ScrollWheelAsync`, ...) only act on an element a user could use: enabled, and visible — not offscreen, with a real on-screen size. The check reads the element right before acting, and applies to the app's accessibility shortcuts as well as simulated mouse and keyboard input. AutoMancer stays grounded in only performing behaviors that a user could.
+
+If the element isn't usable yet the action finds it again and keeps checking until the implicit wait runs out, then throws `ElementNotInteractableError` saying why (disabled, offscreen, or no on-screen size). `ScrollIntoViewAsync`, `SetFocusAsync`, and `GetValueAsync` don't check, since making an element visible or reading it is their job. `WaitConditions.IsVisible()` and `IsEnabled()` use the same rules, so a wait and the action after it agree on what counts as usable.
+
+#### Forcing an action:
+
+Sometimes acting on an element no user could reach is exactly what you want. Can you verify no text gets entered into a disabled textbox? You might just need a workaround for an app that wrongly reports a visible control as offscreen. `app.Force` runs the same actions without the readiness checks:
+
+```csharp
+await app.Force.ClickAsync(Locator.ByName("New tab"));   // clicks it even while its menu is closed
+```
+
+A stale element still throws `StaleElementError`, and simulated mouse inputs still need an on-screen point to aim at. Through `app.Force` those fail right away instead of waiting. `app.Force` is the same session as `app`, so disposing it never closes the app, and keys held through it are released when `app` is disposed.
+
+#### Checking for something in the way:
+
+Actions don't check whether something is covering the element. `IsUnobscuredAsync` is an opt-in check of whether a click at the element's center would actually reach it:
+
+```csharp
+bool clear = await app.IsUnobscuredAsync(Locator.ByAutomationId("SettingsButton"));
+```
+
+It returns `false` when another window covers that point, when an overlay (like a dimmed backdrop) covers it, or when the element has no on-screen size. 
+Overlays inside the app are only detected for elements found by the `uia3` provider. For `uia2` and `win32` elements it checks other windows only. 
 
 ### Screenshots and Waiting:
 

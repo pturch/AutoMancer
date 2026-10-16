@@ -1,6 +1,8 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
 using System.Runtime.InteropServices;
+using AutoMancer.Engine.Actions;
 using AutoMancer.Engine.Core;
+using AutoMancer.Engine.Errors;
 using Interop.UIAutomationClient;
 
 namespace AutoMancer.Engine.Operators;
@@ -48,18 +50,26 @@ public sealed class Uia3Operator : IElementOperator
         }
     }, ct);
 
-    // Reads the element's value via ValuePattern if supported, falling back to TextPattern's full document text; returns null when neither pattern is available or the element has gone stale.
+    // Reads the element's value via ValuePattern if supported, falling back to TextPattern's full document text; returns null when neither pattern is available, throws StaleElementError when the element has gone stale.
     public Task<string?> TryGetValueAsync(ElementHandle element, CancellationToken ct = default) => Task.Run(() =>
     {
         if (element.NativeHandle is not IUIAutomationElement uiaElement)
             return (string?)null;
         try
         {
+            // A detached element (e.g. from a closed XAML dialog) still answers reads, with blank values that would pass for a real empty value.
+            if (ElementInputHelpers.IsDetached(element))
+                throw ElementInputHelpers.Stale(element, null);
             if (uiaElement.GetCurrentPattern(UIA_PatternIds.UIA_ValuePatternId) is IUIAutomationValuePattern valuePattern)
                 return valuePattern.CurrentValue;
             if (uiaElement.GetCurrentPattern(UIA_PatternIds.UIA_TextPatternId) is IUIAutomationTextPattern textPattern)
                 return textPattern.DocumentRange.GetText(-1); // -1 means no limit, the entire text
             return null;
+        }
+        // A gone element has no fallback to re-detect it from a read, so null here would be indistinguishable from "no value".
+        catch (Exception ex) when (ElementInputHelpers.IsStaleFailure(ex, element))
+        {
+            throw ElementInputHelpers.Stale(element, ex);
         }
         catch (COMException ex)
         {

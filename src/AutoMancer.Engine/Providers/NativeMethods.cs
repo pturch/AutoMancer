@@ -123,6 +123,10 @@ internal static class NativeMethods
         public int Y;
     }
 
+    // Returns the visible, enabled window (often a child) at a physical-screen point, or Zero when there is none — what a click there would hit at the window level.
+    [DllImport("user32.dll")]
+    internal static extern IntPtr WindowFromPoint(POINT point);
+
     // Reads a system display metric (e.g. primary screen width/height in physical pixels).
     [DllImport("user32.dll")]
     internal static extern int GetSystemMetrics(int nIndex);
@@ -294,6 +298,70 @@ internal static class NativeMethods
     // Returns the PID of the process that created windowHandle.
     [DllImport("user32.dll")]
     internal static extern uint GetWindowThreadProcessId(IntPtr windowHandle, out uint lpdwProcessId);
+
+    // Returns the calling thread's id, for AttachThreadInput.
+    [DllImport("kernel32.dll")]
+    private static extern uint GetCurrentThreadId();
+
+    // Joins (attach=true) or leaves one thread's input queue to/from another's, sharing focus and keyboard state while joined.
+    [DllImport("user32.dll")]
+    private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+
+    // Sets keyboard focus to windowHandle; only works for windows attached to the calling thread's input queue.
+    [DllImport("user32.dll", EntryPoint = "SetFocus")]
+    private static extern IntPtr SetFocusNative(IntPtr windowHandle);
+
+    // True when windowHandle is a descendant (child, grandchild, ...) of parentWindowHandle.
+    [DllImport("user32.dll")]
+    private static extern bool IsChild(IntPtr parentWindowHandle, IntPtr windowHandle);
+
+    // Fills info with threadId's GUI state (active, focused, capture windows, ...) — works cross-process without joining its input queue.
+    [DllImport("user32.dll")]
+    private static extern bool GetGUIThreadInfo(uint threadId, ref GUITHREADINFO info);
+
+    // GetGUIThreadInfo's output; cbSize must be set before the call.
+    [StructLayout(LayoutKind.Sequential)]
+    private struct GUITHREADINFO
+    {
+        public int cbSize;
+        public uint flags;
+        public IntPtr hwndActive;
+        public IntPtr hwndFocus;
+        public IntPtr hwndCapture;
+        public IntPtr hwndMenuOwner;
+        public IntPtr hwndMoveSize;
+        public IntPtr hwndCaret;
+        public RECT rcCaret;
+    }
+
+    // Focuses windowHandle in another process by briefly joining its thread's input queue, as SetFocus requires; false if the window no longer exists.
+    internal static bool TrySetFocus(IntPtr windowHandle)
+    {
+        var targetThread = GetWindowThreadProcessId(windowHandle, out _);
+        if (targetThread == 0)
+            return false;
+        var ownThread = GetCurrentThreadId();
+        var attached = targetThread != ownThread && AttachThreadInput(ownThread, targetThread, true);
+        try
+        {
+            SetFocusNative(windowHandle);
+        }
+        finally
+        {
+            if (attached) AttachThreadInput(ownThread, targetThread, false);
+        }
+        return true;
+    }
+
+    // True when windowHandle or one of its child windows holds keyboard focus in its owning thread.
+    internal static bool HasFocusWithin(IntPtr windowHandle)
+    {
+        var targetThread = GetWindowThreadProcessId(windowHandle, out _);
+        var info = new GUITHREADINFO { cbSize = Marshal.SizeOf<GUITHREADINFO>() };
+        if (targetThread == 0 || !GetGUIThreadInfo(targetThread, ref info))
+            return false;
+        return info.hwndFocus == windowHandle || IsChild(windowHandle, info.hwndFocus);
+    }
 
     // Returns the handle of the desktop window — always valid, owned by a system process rather than the calling process.
     [DllImport("user32.dll")]

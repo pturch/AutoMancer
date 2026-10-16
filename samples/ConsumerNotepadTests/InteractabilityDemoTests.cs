@@ -32,7 +32,51 @@ public sealed class InteractabilityDemoTests(NotepadFixture fixture) : AutoMance
         finally
         {
             await App.SetWindowStateAsync(WindowState.Normal);
-            await Task.Delay(200);
+            // A minimized window's elements read offscreen, so this waits out the restore before the next test acts.
+            await App.WaitForAsync(Locator.ByControlType("Document"), WaitConditions.IsVisible());
         }
+    }
+
+    // Every action re-checks enabled/visible live, so a handle held after its menu closed is rejected rather than invoking a command no user could reach; App.Force is the per-call opt-out.
+    [Fact]
+    public async Task HeldMenuItem_AfterMenuCloses_RejectedByDefault_InvokedThroughForce()
+    {
+        var tabs = Locator.ByControlType("TabItem");
+        var tabsBefore = (await App.FindAllAsync(tabs)).Count;
+        // Both handles are found while the menu is open, since no locator can reach the item once it's closed.
+        await App.ClickAsync(Locator.ByName("File"));
+        var held = await App.FindAsync(Locator.ByName("New tab"));
+        var forced = await App.Force.FindAsync(Locator.ByName("New tab"));
+        await App.PressKeyAsync(Key.Escape);
+        // A closed menu's items drop out of search, so waiting for one to go waits for the menu to close.
+        await App.WaitUntilGoneAsync(Locator.ByName("New tab"));
+
+        try
+        {
+            await Assert.ThrowsAsync<ElementNotInteractableError>(() => ClickAction.ExecuteAsync(held));
+
+            await ClickAction.ExecuteAsync(forced);
+            await Expect(tabs).ToHaveCountAsync(tabsBefore + 1);
+        }
+        finally
+        {
+            // Close the empty tab the forced click opened; an empty tab closes without a save prompt.
+            if ((await App.FindAllAsync(tabs)).Count > tabsBefore)
+                await App.PressKeyAsync(Key.W, new KeyModifiers(Control: true));
+        }
+    }
+
+    // TypeAsync lands in its target even when keyboard focus is elsewhere: when it has to fall back to keystrokes, it focuses the target first and waits until focus lands.
+    [Fact]
+    public async Task TypeAsync_FocusElsewhere_LandsInTargetElement()
+    {
+        var document = Locator.ByControlType("Document");
+        await App.ClearAsync(document);
+        await App.SetFocusAsync(Locator.ByName("File"));
+
+        await App.TypeAsync(document, "focus demo");
+
+        await Expect(document).ToHaveValueAsync("focus demo");
+        await App.ClearAsync(document);
     }
 }

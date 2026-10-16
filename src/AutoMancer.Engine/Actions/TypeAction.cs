@@ -15,6 +15,7 @@ public static class TypeAction
     // Same as ExecuteAsync, with an explicit logger override — for App and the test suite to inject/inspect logging directly.
     internal static async Task ExecuteCoreAsync(ElementHandle element, string text, IEngineLogger? logger, CancellationToken ct)
     {
+        await Task.Run(() => ElementInputHelpers.EnsureInteractable(element), ct).ConfigureAwait(false);
         // ValuePattern.SetValue always replaces the whole value — it has no concept of caret position or an active selection.
         if (element.Operator is not null)
             if (await element.Operator.TrySetValueAsync(element, text, ct).ConfigureAwait(false))
@@ -26,7 +27,7 @@ public static class TypeAction
         await Task.Run(() =>
         {
             ElementInputHelpers.EnsureForeground(element);
-            ElementInputHelpers.EnsureInteractable(element);
+            ElementInputHelpers.EnsureKeyboardFocus(element);
             SendUnicodeText(text, logger);
         }, ct).ConfigureAwait(false);
         logger?.Info("Typed via synthesized input", new { elementId = element.Id, textLength = text.Length });

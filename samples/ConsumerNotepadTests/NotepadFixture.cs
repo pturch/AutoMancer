@@ -15,6 +15,4 @@ public sealed class NotepadFixture : AppFixture
                  .FindAsync(Locator.ByControlType("Document"));
         return app;
     }
-
-    protected override Task OnKilledAsync() => Task.Delay(800);
 }

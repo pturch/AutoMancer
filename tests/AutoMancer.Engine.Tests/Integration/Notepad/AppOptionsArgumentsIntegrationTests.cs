@@ -1,7 +1,7 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
-using System.Diagnostics;
 using AutoMancer.Engine;
 using AutoMancer.Engine.Core;
+using static AutoMancer.Testing.Assertions;
 
 namespace AutoMancer.Engine.Tests.Integration;
 
@@ -23,11 +23,14 @@ public sealed class AppOptionsArgumentsIntegrationTests
                 windowMatch: new WindowMatchOptions { RequireNewWindow = true });
             try
             {
-                Assert.Contains(Path.GetFileName(filePath), Process.GetProcessById(app.ProcessId).MainWindowTitle);
+                // The title first reads plain "Notepad" and only picks up the file's name once it loads (~400ms later), so poll rather than read once.
+                await Expect(app, Locator.ByControlType("TitleBar")).ToContainTextAsync(Path.GetFileName(filePath));
             }
             finally
             {
                 await app.KillAsync();
+                // The file's tab survives the kill; without this the next Notepad launch (here or in samples/ConsumerNotepadTests) restores it after the file is deleted below and opens a modal "Cannot find the file" dialog.
+                NotepadCollectionFixture.ClearTabState();
             }
         }
         finally

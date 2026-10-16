@@ -4,6 +4,7 @@ using AutoMancer.Engine.Actions;
 using AutoMancer.Engine.Core;
 using AutoMancer.Engine.Errors;
 using Interop.UIAutomationClient;
+using static AutoMancer.Testing.Assertions;
 
 namespace AutoMancer.Engine.Tests.Integration;
 
@@ -28,10 +29,12 @@ public sealed class NotepadWorkflowTests(NotepadFixture fixture) : IClassFixture
         var editor = await _app.FindAsync(Locator.ByControlType("Document"));
         Assert.Contains("Hello from AutoMancer", GetEditorText(editor));
 
+        // Wait for the flyout to open and close by its items' visibility, rather than guessing at its animation length.
+        var newTab = Locator.ByName("New tab");
         await _app.ClickAsync(Locator.ByName("File"));
-        await Task.Delay(300); // flyout animation — longer than ActionDelayMs
+        await _app.WaitForAsync(newTab, WaitConditions.IsVisible());
         NotepadFixture.SendEscape();
-        await Task.Delay(200);
+        await _app.WaitUntilGoneAsync(newTab);
 
         // Re-attach to the same process by PID — the editor RuntimeId must be stable across sessions.
         var reattached = await App.AttachByPidAsync(_app.ProcessId);
@@ -203,7 +206,8 @@ public sealed class NotepadWorkflowTests(NotepadFixture fixture) : IClassFixture
         finally
         {
             await _app.SetWindowStateAsync(WindowState.Normal);
-            await Task.Delay(200);
+            // A minimized window's elements read offscreen, so this waits out the restore before the next test acts.
+            await _app.WaitForAsync(Locator.ByControlType("Document"), WaitConditions.IsVisible());
         }
     }
 

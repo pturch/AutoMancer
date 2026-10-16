@@ -42,6 +42,8 @@ public sealed class ScopedFindIntegrationTests
         var app = await App.LaunchAsync("notepad.exe");
         try
         {
+            // FindAllScopedAsync is a single pass — LaunchAsync returns once the window exists, which can be before its XAML MenuBar is fully populated, so wait for the last item before enumerating.
+            await app.FindScopedAsync(Locator.ByName("View"), Locator.ByAutomationId("MenuBar"));
             var menuItems = await app.FindAllScopedAsync(Locator.ByControlType("MenuItem"), Locator.ByAutomationId("MenuBar"));
 
             Assert.Equal(["File", "Edit", "View"], menuItems.Select(m => m.Name).ToList());

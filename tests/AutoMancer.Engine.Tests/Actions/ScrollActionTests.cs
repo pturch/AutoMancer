@@ -27,7 +27,8 @@ public sealed class ScrollActionTests
 
         await ScrollAction.ExecuteAsync(element);
 
-        Assert.Empty(writer.ToString());
+        Assert.Contains("ScrollItemPattern not supported, nothing scrolled", writer.ToString());
+        Assert.DoesNotContain("Scrolled into view", writer.ToString());
     }
 
     [Fact]

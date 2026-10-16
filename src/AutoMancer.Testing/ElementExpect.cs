@@ -18,11 +18,11 @@ public sealed class ElementExpect
             throw new ExpectFailedError($"Expected name \"{expected}\" but was \"{_element.Name}\"");
     }
 
-    // Asserts the element has a non-zero bounding rectangle.
+    // Asserts the element is visible by the same rule actions wait on (WaitConditions.IsVisible).
     public void ToBeVisible()
     {
-        if (_element.BoundingRect.Width <= 0 || _element.BoundingRect.Height <= 0)
-            throw new ExpectFailedError($"Expected element to be visible but its bounding rect was {_element.BoundingRect}");
+        if (!WaitConditions.IsVisible()(_element))
+            throw new ExpectFailedError($"Expected element to be visible but its bounding rect was {_element.BoundingRect}, IsOffscreen={_element.IsOffscreen?.ToString() ?? "unknown"}");
     }
 
     // Asserts the element's Name contains expected as a substring.

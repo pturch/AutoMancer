@@ -12,9 +12,12 @@ public sealed class SetFocusActionTests
     [Fact]
     public async Task ExecuteAsync_NonUiaHandle_NoOp()
     {
-        var element = new ElementHandle("1", "win32", new object());
+        var writer = new StringWriter();
+        var element = new ElementHandle("1", "test", new object()) { Logger = new EngineLogger(writer) };
 
         await SetFocusAction.ExecuteAsync(element);
+
+        Assert.Contains("Nothing to focus, focus unchanged", writer.ToString());
     }
 
     [Fact]

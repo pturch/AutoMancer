@@ -1,6 +1,7 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
 using System.Runtime.InteropServices;
 using AutoMancer.Engine.Core;
+using AutoMancer.Engine.Errors;
 using AutoMancer.Engine.Operators;
 using Interop.UIAutomationClient;
 using Moq;
@@ -138,11 +139,25 @@ public sealed class Uia3OperatorTests
         Assert.Null(result);
     }
 
+    // A read has no SendInput fallback to re-detect staleness (unlike TryClick/TrySetValue's false), so a gone element must raise rather than read back as null — indistinguishable from "no value".
     [Fact]
-    public async Task TryGetValueAsync_ElementGoneStale_ReturnsNullInsteadOfThrowing()
+    public async Task TryGetValueAsync_ElementGoneStale_ThrowsStaleElementError()
     {
         var element = new Mock<IUIAutomationElement>();
         element.Setup(e => e.GetCurrentPattern(It.IsAny<int>())).Throws(StaleElement());
+        var handle = Handle(element.Object);
+
+        var ex = await Assert.ThrowsAsync<StaleElementError>(() => new Uia3Operator().TryGetValueAsync(handle));
+
+        Assert.Same(handle, ex.Element);
+    }
+
+    // Control: any other COM failure on the read still degrades to null.
+    [Fact]
+    public async Task TryGetValueAsync_NonStaleComException_ReturnsNull()
+    {
+        var element = new Mock<IUIAutomationElement>();
+        element.Setup(e => e.GetCurrentPattern(It.IsAny<int>())).Throws(new COMException("Operation timed out.", unchecked((int)0x80131505)));
 
         var result = await new Uia3Operator().TryGetValueAsync(Handle(element.Object));
 

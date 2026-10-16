@@ -17,8 +17,8 @@ public sealed class LocatorStrategiesDemoTests(NotepadFixture fixture) : AutoMan
     {
         await App.ClickAsync(Document);
         await App.ClearAsync(Document);
-        await Task.Delay(300);
 
+        // No settle delay needed: FindAsync retries the path until the long document's extra Pane has gone and Pane[2] lines up again.
         var handle = await App.FindAsync(Locator.ByPath("Window > Pane[2] > Pane > MenuBar > MenuItem[\"File\"]"));
 
         Assert.Equal("File", handle.Name);

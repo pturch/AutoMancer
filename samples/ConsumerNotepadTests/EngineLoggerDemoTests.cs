@@ -78,7 +78,7 @@ public sealed class EngineLoggerDemoTests(NotepadFixture fixture, ITestOutputHel
         await loggedApp.ClearAsync(document);
 
         output.WriteLine($"--- {logger.Entries.Count} entries captured by the consumer's own logger ---");
-        for (var i = 0; i < logger.Entries.Count; i++)
+        for (int i = 0; i < logger.Entries.Count; i++)
         {
             var (message, data) = logger.Entries[i];
             output.WriteLine($"[{i}] {message}{(data is null ? "" : " " + JsonSerializer.Serialize(data))}");

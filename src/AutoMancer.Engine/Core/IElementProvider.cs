@@ -23,10 +23,10 @@ public interface IElementProvider
     // Returns all elements matching the locator anywhere in the session — empty list if none found.
     Task<IReadOnlyList<ElementHandle>> FindElementsAsync(Locator locator, AppSession session, CancellationToken ct = default);
 
-    // Returns the first element matching the locator within scope's subtree, or null if not found — including when scope's NativeHandle came from a different provider and can't be honored.
+    // Returns the first element matching the locator within scope's subtree, or null if not found — including when scope's NativeHandle came from a different provider and can't be honored; throws StaleElementError if scope itself is gone, which isn't a not-found.
     Task<ElementHandle?> FindScopedElementAsync(Locator locator, AppSession session, ElementHandle scope, CancellationToken ct = default);
 
-    // Returns all elements matching the locator within scope's subtree — empty list if none found or scope came from a different provider.
+    // Returns all elements matching the locator within scope's subtree — empty list if none found or scope came from a different provider; throws StaleElementError if scope itself is gone, which isn't a not-found.
     Task<IReadOnlyList<ElementHandle>> FindScopedElementsAsync(Locator locator, AppSession session, ElementHandle scope, CancellationToken ct = default);
 
     // Returns a read-only snapshot of the element tree rooted at the session's window.

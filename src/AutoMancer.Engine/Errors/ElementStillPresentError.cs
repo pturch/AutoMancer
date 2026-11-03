@@ -9,9 +9,9 @@ public sealed class ElementStillPresentError : Exception
     public Locator Locator { get; }
     public int ElapsedMs { get; }
 
-    // Thrown by ElementResolver after the implicit wait expires with the element still resolvable by at least one provider.
-    public ElementStillPresentError(Locator locator, int elapsedMs)
-        : base($"Element still present: {locator.Strategy}={locator.Value} after {elapsedMs}ms")
+    // Thrown by ElementResolver after the implicit wait expires with the element still resolvable by at least one provider; hint, if given, is appended to explain a likely cause.
+    public ElementStillPresentError(Locator locator, int elapsedMs, string? hint = null)
+        : base($"Element still present: {locator.Strategy}={locator.Value} after {elapsedMs}ms{(hint is null ? "" : $". {hint}")}")
     {
         Locator = locator;
         ElapsedMs = elapsedMs;

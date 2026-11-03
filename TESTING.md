@@ -65,6 +65,8 @@ That's the whole pattern. Everything past this point is the same three pieces, a
 
 Asserting against a locator retries. It keeps polling until the condition holds or the implicit wait runs out, so it survives ordinary UI timing, like an element that isn't focused, enabled, or populated yet. Use this almost everywhere.
 
+A popup from `OpenPopupAsync` and a window view from `WaitForWindowAsync` are `App`s too, so `Assertions.Expect(popup, locator)` retries the same way, searching only inside that popup or window.
+
 Asserting against an element you already resolved yourself doesn't retry. It checks once: no polling, no timeout, it either matches right now or it doesn't. Reach for it when you deliberately don't want a retry, or when you're checking a snapshot you took for some other reason anyway.
 
 ## Assertions reference

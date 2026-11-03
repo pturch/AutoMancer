@@ -1,6 +1,7 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using AutoMancer.Engine.Actions;
 using AutoMancer.Engine.Diagnostics;
 using AutoMancer.Engine.Dpi;
 using AutoMancer.Engine.Errors;
@@ -26,6 +27,25 @@ public sealed class AppSession : IAsyncDisposable
         SessionId = sessionId;
         RootWindowHandle = rootWindowHandle;
         _process = process;
+    }
+
+    // A popup view's root (App.OpenPopupAsync): when set, providers search from this element instead of RootWindowHandle, which stays the app's window for activation and window management.
+    internal ElementHandle? RootElement { get; private init; }
+
+    // What RootElement is called in its "has closed" error, e.g. "context menu".
+    internal string? RootLabel { get; private init; }
+
+    // The same session rooted at a different top-level window, for App.WaitForWindowAsync's window view: every provider searches from RootWindowHandle, so this scopes them all to that window (dropping any RootElement); shares this session's process and must never be disposed itself.
+    internal AppSession WithRootWindow(IntPtr rootWindowHandle) => new(SessionId, _process, rootWindowHandle);
+
+    // The same session rooted at a popup's surface, for Popup: every provider searches from surface instead; shares this session's process and must never be disposed itself.
+    internal AppSession WithRootElement(ElementHandle surface, string label) => new(SessionId, _process, RootWindowHandle) { RootElement = surface, RootLabel = label };
+
+    // Throws RootElement's "has closed" StaleElementError once it stops showing; providers call it before searching from it, since a pre-loaded in-window popup (WinUI3) stays in the tree, offscreen, after closing, and its items would otherwise still be found.
+    internal void ThrowIfRootClosed()
+    {
+        if (RootElement is { } root && !ElementInputHelpers.IsShowing(root))
+            throw new StaleElementError(root, $"The {RootLabel} has closed; open it again from its target.");
     }
 
     // Starts the target executable and waits until its main window is visible
@@ -106,7 +126,7 @@ public sealed class AppSession : IAsyncDisposable
     }
 
     // Single predicate behind every window-locating method: rejects pid if it's in excludedPids (LaunchAsync's RequireNewWindow baseline — null everywhere else), then accepts if criteria is null or every non-null constraint in criteria holds.
-    private static bool WindowSatisfiesCriteria(IntPtr windowHandle, int pid, WindowMatchOptions? criteria, IReadOnlySet<int>? excludedPids = null)
+    internal static bool WindowSatisfiesCriteria(IntPtr windowHandle, int pid, WindowMatchOptions? criteria, IReadOnlySet<int>? excludedPids = null)
     {
         if (excludedPids?.Contains(pid) == true) return false; // This pid is excluded
 
@@ -198,54 +218,6 @@ public sealed class AppSession : IAsyncDisposable
     private static AppSession FromProcess(Process process) =>
         new(Guid.NewGuid().ToString("N"), process, process.MainWindowHandle);
 
-    // Polls all top-level windows for one owned by ownerPid whose title contains titleContains; returns null on timeout.
-    public static Task<AppSession?> FindDialogAsync(int ownerPid, string titleContains, int timeoutMs = 3_000, IEngineLogger? logger = null, CancellationToken ct = default) =>
-        FindDialogAsync(new WindowMatchOptions { ExpectedPid = ownerPid, TitleContains = titleContains }, timeoutMs, logger, ct);
-
-    // Polls all top-level windows for one matching windowMatch (must set ExpectedPid and TitleContains — a dialog is always looked up by owner + title); use this overload for extra disambiguation (e.g. ClassName). Returns null on timeout.
-    public static async Task<AppSession?> FindDialogAsync(
-        WindowMatchOptions windowMatch,
-        int timeoutMs = 3_000,
-        IEngineLogger? logger = null,
-        CancellationToken ct = default)
-    {
-        ArgumentNullException.ThrowIfNull(windowMatch);
-        if (windowMatch.ExpectedPid is null)
-            throw new ArgumentException("windowMatch.ExpectedPid is required.", nameof(windowMatch));
-        if (windowMatch.TitleContains is null)
-            throw new ArgumentException("windowMatch.TitleContains is required.", nameof(windowMatch));
-
-        var stopwatch = Stopwatch.StartNew();
-        var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
-        while (DateTime.UtcNow < deadline)
-        {
-            var windowHandle = FindWindow(windowMatch);
-            if (windowHandle != IntPtr.Zero)
-            {
-                logger?.Info("Dialog found", new { windowMatch.ExpectedPid, windowMatch.TitleContains, elapsedMs = stopwatch.ElapsedMilliseconds });
-                return new AppSession(Guid.NewGuid().ToString("N"), Process.GetProcessById(windowMatch.ExpectedPid.Value), windowHandle);
-            }
-            await Task.Delay(200, ct).ConfigureAwait(false);
-        }
-        return null;
-    }
-
-    // Enumerates visible top-level windows to find the first one matching criteria.
-    private static IntPtr FindWindow(WindowMatchOptions criteria)
-    {
-        IntPtr found = IntPtr.Zero;
-        NativeMethods.EnumWindows((windowHandle, _) =>
-        {
-            NativeMethods.GetWindowThreadProcessId(windowHandle, out var pid);
-            if (NativeMethods.IsWindowVisible(windowHandle) && WindowSatisfiesCriteria(windowHandle, (int)pid, criteria))
-            {
-                found = windowHandle;
-                return false;
-            }
-            return true;
-        }, IntPtr.Zero);
-        return found;
-    }
 
     // Activates a UWP/MSIX packaged app by AUMID and waits until its host process shows a window matching windowMatch (if given).
     public static async Task<AppSession> LaunchPackagedAsync(

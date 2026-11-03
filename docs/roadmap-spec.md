@@ -46,7 +46,7 @@ This project ships in three distinct phases. **Phase 1** is a self-contained C# 
                         │  Core surface done. Deepen coverage.
                         ▼
 ╔══════════════════════════════════════════════════════════╗
-║  PHASE 2 — Extended Coverage (Stages 2.1–2.8)             ║
+║  PHASE 2 — Extended Coverage (Stages 2.1–2.8)            ║
 ║                                                          ║
 ║  Stage 2.1: Locator Power Tools ────► spatial, ByProperty║
 ║       │                        scoped find, virtualized  ║
@@ -54,7 +54,8 @@ This project ships in three distinct phases. **Phase 1** is a self-contained C# 
 ║   Stage 2.2: Wait & Resilience ──────► canned conditions,║
 ║       │                                 stale re-resolve ║
 ║       │                                                  ║
-║   Stage 2.3: Context Menu Fallback ──► native HMENU click║
+║   Stage 2.3: Menus, Popups, Windows ─► native HMENU,     ║
+║       │                        popups, window views      ║
 ║       │                                                  ║
 ║   Stage 2.4: Resource Diagnostics ───► GDI/USER handle   ║
 ║       │                                 + memory watch   ║
@@ -325,18 +326,36 @@ Batch numbers below match the task numbers 1:1 in `extended-coverage-spec.md` (e
 
 ---
 
-### Stage 2.3 — Context Menu Fallback Provider
-> **Unlocks:** Right-click context menus on apps that don't expose them through UIA at all.
-> **Done when:** `app.ClickContextMenuItemAsync(target, itemName)` finds and clicks a menu item via the native `HMENU`, on an app whose popup menu UIA can't see.
+### Stage 2.3 — Context Menus, Popups and Windows
+> **Unlocks:** Right-click context menus on apps that don't expose them through UIA at all, and more generally, reaching UI outside the session's one root window without making every search span every window. Every provider searches from `session.RootWindowHandle` only, so an unowned dialog, a second main window, or a popup (context menu, dropdown list, flyout, tooltip) is unreachable by an ordinary find. `App.FindDialogAsync`, the only workaround, builds a separate `App` for the same process. That splits options and held-input tracking, and disposing it kills the whole app.
+> **Design:**
+> - **Searches stay scoped to one window**, so there are no cross-window false matches from shared names or `AutomationId`s.
+> - **Real windows are reached by explicitly scoping to them:** `app.WaitForWindowAsync(match)` returns a *window view*, the same `App` with a different root.
+> - **Popups are reached through the interaction that opened them:** a general popup handle, of which `ContextMenu` is the first case.
+> - **A find never falls back to popups automatically.** That would bring back "which 'Undo'?" ambiguity.
+>
+> **Done when:**
+> - `app.ClickContextMenuItemAsync(target, itemName)` finds and clicks a menu item via the native `HMENU`, on an app whose popup menu UIA can't see.
+> - `app.WaitForWindowAsync(match)` returns a view that finds and acts inside a dialog or secondary window, and disposing it leaves the app running.
+> - An element held from another window passes the per-action window checks.
+> - A popup opened by right-click, left-click, Shift+F10 or hover can be found, acted on and closed through one popup handle. `ContextMenu` is built on it with its public API unchanged.
 
 | Batch | Work |
 |---|---|
 | 2.3.1 | `ContextMenuAction` — right-clicks the target, then locates the resulting popup window (class `#32768`) via `EnumWindows`/`GetClassName`; tries the existing UIA `Menu`/`MenuItem` path first and only falls back to native when UIA comes back empty, matching the existing provider-chain philosophy |
 | 2.3.2 | Native menu item enumeration and invocation — `GetMenu`/`GetSubMenu`/`GetMenuItemInfo` to read item text and state, `GetMenuItemRect` plus a synthetic click (or `TrackPopupMenuEx` command dispatch) to invoke the matched item |
-| 2.3.3 | `App.ClickContextMenuItemAsync(Locator target, string itemName)` |
-| 2.3.4 | Integration test against an app with a legacy/native context menu, verifying the UIA path is tried first and the native fallback only engages when UIA finds nothing |
+| 2.3.3 | `App.OpenContextMenuAsync(Locator target, ContextMenuTrigger trigger = RightClick)` → `ContextMenu` (`GetItemsAsync`, `ClickItemAsync`, `CloseAsync`), so a test can open and inspect a menu before acting, which matters for popup-window menus a session-rooted `FindAsync` can't reach. `App.ClickContextMenuItemAsync(Locator target, string itemName, ContextMenuTrigger trigger = RightClick)` is the one-call shortcut built on it. Menus open by right-click, Shift+F10 or left-click, and are always detected through UIA3, scoped to the target's own window and processes |
+| 2.3.4 | Integration tests against new WinForms (native `#32768` menu, `ContextMenuStrip`, secondary window) and WPF test apps, plus Notepad and Calculator. Covers every menu kind, every trigger, both the UIA3 path and the native `HMENU` path (driven directly, since no app's `#32768` menu was invisible to UIA3), and every error case |
+| 2.3.5 | Fix the `FindDialogAsync` dispose bug: a dialog `App` wraps the same process as the main one, and `DisposeAsync` kills it. A dialog `App` must not own the process. Unit test that disposing one leaves the process alone |
+| 2.3.6 | Window views. `App.WaitForWindowAsync(WindowMatchOptions match, CancellationToken ct = default)` waits (through the resolver's polling) for a matching visible top-level window of the app's processes, and returns an `App` view rooted at it. It shares the session's process, options, logger, held-input trackers and `Force` handling. Disposing it is a no-op. Every provider already reads `session.RootWindowHandle`, so the view needs no provider changes |
+| 2.3.7 | Fix the checks that assume the root window. `EnsureWindowNotMinimized` checks the target element's own top-level window. `Win32Provider`'s scope check records each window handle's process when found, and treats a later change of owner as stale, instead of requiring the session's process |
+| 2.3.8 | Dialogs: check whether window views cover them without extra wrapping. Try a classic common dialog (Notepad's Save As, `#32770`, owned top-level), a message box, and an in-window XAML `ContentDialog` (no new window at all). Covers modality, the disabled owner, and foregrounding. Outcome: views covered every dialog tried, so `FindDialogAsync` was removed outright (no `[Obsolete]` shims this early) and its callers moved to `WaitForWindowAsync` |
+| 2.3.9 | The general popup pattern. The snapshot → trigger → find-what's-new detection from 2.3.1 becomes a `PopupAction` whose only recognizer is an optional `Locator expect`: the popup is the new surface that is, or contains, a match (a menu is `expect: MenuItem`; anything else the app exposes can be named directly; omitted, any new popup surface). A UIA-invisible native `#32768` is reached by asking `Win32Provider` for `expect` when UIA3 finds nothing, a provider fallback rather than a menu special case. A public `Popup` handle (`App.OpenPopupAsync(Locator target, PopupTrigger trigger, Locator? expect)`) is a view of the `App` whose session is rooted at the popup's surface (`AppSession.WithRootElement`, alongside window views' `WithRootWindow`), so every `App` find, wait, action and `Expect` works inside it; it adds `CloseAsync` and `WaitUntilClosedAsync`. Triggers generalize to `PopupTrigger` (right-click, left-click, Shift+F10, hover, Alt+Down) |
+| 2.3.10 | Rebuild `ContextMenu` on `Popup`: `expect: MenuItem`, item listing, and the native `#32768` path. Its public API is unchanged. Regression: the Notepad `ContextMenuDemoTests` sample plus the live checks from 2.3.1–2.3.4 (native, WinForms, WPF, native path driven directly). 2.3.4's tests target this final shape |
+| 2.3.11 | More popup kinds through the generic handle: a `ComboBox` dropdown list (Alt+Down or a click), a tooltip (hover), a flyout from a "⋯" button. Integration tests on the 2.3.4 test apps |
+| 2.3.12 | Integration tests and samples for window views: a Notepad dialog driven through a view, a held element from a dialog clicked from the main `App`, a view's dispose leaving the app running, a secondary window. Plus `samples/ConsumerNotepadTests` demos for views and popups |
 
-**After 2.3.4:** Context menus join the list of things AutoMancer can drive even when an app's accessibility tree doesn't cooperate.
+**After 2.3.12:** Context menus join the list of things AutoMancer can drive even when an app's accessibility tree doesn't cooperate. Dialogs, secondary windows and popups are reached the same way everywhere: scope to a window explicitly, or open a popup through what triggers it. No separate `App` objects, and no engine-wide multi-root search.
 
 ---
 

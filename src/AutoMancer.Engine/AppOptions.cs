@@ -6,7 +6,7 @@ namespace AutoMancer.Engine;
 // Configures the App façade: which providers to use, how long to wait for elements, and how long to pause after each action.
 public sealed class AppOptions
 {
-    // Command-line arguments passed to the launched process by LaunchAsync/LaunchPackagedAsync; null launches with none. Has no effect on AttachByPidAsync/AttachByTitleAsync/FindDialogAsync — nothing to launch.
+    // Command-line arguments passed to the launched process by LaunchAsync/LaunchPackagedAsync; null launches with none. Has no effect on AttachByPidAsync/AttachByTitleAsync or a WaitForWindowAsync view — nothing to launch.
     public string? Arguments { get; init; }
 
     // When true, KillAsync/Kill/DisposeAsync terminate the entire process tree rather than just the tracked process — needed for apps (Electron, some Java apps) that spawn helper processes otherwise left running. Default false preserves the single-process kill every existing caller already gets.

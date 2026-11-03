@@ -69,9 +69,8 @@ public abstract class PaintArtTestBase : IAsyncLifetime
     {
         await _app.ClickAsync(Locator.ByName("Save"));
 
-        // FindDialogAsync enumerates top-level windows by PID + title, which works even though modal dialogs don't change Process.MainWindowTitle.
-        var dialog = await App.FindDialogAsync(_app.ProcessId, "Save", timeoutMs: 4_000);
-        if (dialog is null) throw new InvalidOperationException("Save As dialog did not appear within 4 s.");
+        // A window view rooted at the Save As dialog (its own top-level window): finds and keystrokes go there, and the view shares _app's process instead of wrapping it in a second App.
+        var dialog = await _app.WaitForWindowAsync(new WindowMatchOptions { TitleContains = "Save" });
 
         // Navigate to the target directory via the address bar (Alt+D) then type just the filename — a full path in the filename ComboBox triggers validation errors.
         var dir      = Path.GetDirectoryName(savePath)!;
@@ -94,10 +93,13 @@ public abstract class PaintArtTestBase : IAsyncLifetime
         await Expect(dialog, fileNameBox).ToHaveValueAsync(fileName);
         await dialog.PressKeyAsync(Key.Enter);           // Enter — submit the dialog
 
-        // On subsequent runs the file already exists; dismiss the Replace confirmation if it appears.
-        var confirm = await App.FindDialogAsync(_app.ProcessId, "Replace", timeoutMs: 1_500);
-        if (confirm is not null)
+        // On subsequent runs the file already exists; dismiss the Replace confirmation if it appears, giving it only a short wait since it usually won't.
+        try
+        {
+            var confirm = await _app.WithOptions(new AppOptions { ImplicitWaitMs = 1_500 }).WaitForWindowAsync(new WindowMatchOptions { TitleContains = "Replace" });
             await confirm.ClickAsync(Locator.ByName("Replace"));
+        }
+        catch (ElementNotFoundError) { }
 
         // Paint writes the file after the dialog closes; a PNG that decodes is one it has finished writing.
         await Expect(_app, () => Task.FromResult(TryDecodePng(savePath) is not null)).ToSatisfyAsync(done => done, $"to show '{savePath}' fully written", timeoutMs: 10_000);

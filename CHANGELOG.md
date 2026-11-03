@@ -4,6 +4,25 @@ All notable changes to AutoMancer are documented here, described by what you'll 
 
 ## Unreleased
 
+### Stage 2.3 — Context Menus, Popups and Windows
+
+#### Added
+
+- **Right-click menus** — open an element's context menu by right-click, Shift+F10 or a click on a "⋯" button, see what it offers and which items are enabled, then click one; or open and click in one call. A failed click closes the menu, so it can't swallow your next input.
+- **Native Windows menus** — classic Win32 menus are read straight from Windows when the accessibility tree can't see their items, with names matching what the accessibility tree reports, so one item name works either way.
+- **Work inside any popup** — open a dropdown, tooltip, flyout or menu through the click, right-click, key or hover that opens it, and get back something that searches and acts only inside that popup. You say what the popup is or contains, so the right one is picked. Every action, wait and assertion works there as it does on the app, and the popup can be closed, checked for being open, or waited on to close by itself. Once it closes, using it again says so instead of acting on the app behind it. See [Popups, Context Menus and Windows](README.md#popups-context-menus-and-windows).
+- **Work inside a dialog or second window** — wait for a window of the app by its title, then search and act inside it alone. Closing your handle on it never closes the app.
+- **Popups drawn inside the app's own window** are found too, not just ones with a window of their own: VS Code's menus and hovers, and Paint's in-window dialogs.
+
+#### Changed
+
+- **Simulated clicks wait for the element to stop moving** — a click, hover, double-click or drag now checks that the element isn't still sliding into place (like a dropdown that's opening), so it can't miss and land beside it. Forced actions skip this.
+- **Removed: the old way to find a dialog** — it returned a separate app object for the dialog, which killed the app when disposed. Wait for the dialog's window instead (see above).
+
+#### Fixed
+
+- Disposing an app object made from another one, for different options or a dialog, killed the app and closed the session the original was still using.
+
 ### Stage 2.2 — Wait and Resilience Primitives
 
 #### Added

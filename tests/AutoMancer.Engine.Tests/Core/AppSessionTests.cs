@@ -40,25 +40,6 @@ public sealed class AppSessionTests
         await Assert.ThrowsAsync<ArgumentNullException>(() => AppSession.AttachByTitleAsync((WindowMatchOptions)null!));
     }
 
-    [Fact]
-    public async Task FindDialogAsync_MissingExpectedPid_ThrowsArgumentException()
-    {
-        await Assert.ThrowsAsync<ArgumentException>(() =>
-            AppSession.FindDialogAsync(new WindowMatchOptions { TitleContains = "Save" }));
-    }
-
-    [Fact]
-    public async Task FindDialogAsync_MissingTitleContains_ThrowsArgumentException()
-    {
-        await Assert.ThrowsAsync<ArgumentException>(() =>
-            AppSession.FindDialogAsync(new WindowMatchOptions { ExpectedPid = Process.GetCurrentProcess().Id }));
-    }
-
-    [Fact]
-    public async Task FindDialogAsync_NullWindowMatch_ThrowsArgumentNullException()
-    {
-        await Assert.ThrowsAsync<ArgumentNullException>(() => AppSession.FindDialogAsync((WindowMatchOptions)null!));
-    }
 
     [Fact]
     public async Task LaunchAsync_NonExistentExecutable_ThrowsAppLaunchError()

@@ -92,9 +92,12 @@ public sealed class Uia3Provider : IElementProvider
 
     // ---- IElementProvider implementation (public) + supporting private helpers ----
 
-    // Resolves the root element for the session's window; null if the handle is invalid or the window has been destroyed — never throws (ElementFromHandle itself can throw COMException for a destroyed HWND).
+    // Resolves the session's root: its RootElement (null if another provider wrapped it — never the window instead, which would search outside the popup), else its window's element; null if that handle is invalid or destroyed (ElementFromHandle can throw COMException for one). Throws StaleElementError only for a closed RootElement.
     private static IUIAutomationElement? TryGetRoot(AppSession session)
     {
+        session.ThrowIfRootClosed();
+        if (session.RootElement is { } root)
+            return root.NativeHandle as IUIAutomationElement;
         try { return Automation.ElementFromHandle(session.RootWindowHandle); }
         catch (COMException) { return null; }
     }
@@ -399,6 +402,22 @@ public sealed class Uia3Provider : IElementProvider
     {
         try { return value.Split('.').Select(int.Parse).ToArray(); }
         catch { return null; }
+    }
+
+    // Returns element's control-view parent (skipping non-control layout elements, so a MenuItem's parent is its Menu); null at the top, for an element from a different provider, or when the read fails.
+    public Task<ElementHandle?> FindParentAsync(ElementHandle element, AppSession session, CancellationToken ct = default) => Task.Run(() =>
+    {
+        if (element.NativeHandle is not IUIAutomationElement uia)
+            return (ElementHandle?)null;
+        try { return Automation.ControlViewWalker.GetParentElement(uia) is { } parent ? Wrap(parent) : null; }
+        catch (COMException) { return null; }
+    }, ct);
+
+    // Wraps a top-level window outside the session's tree (a popup window, a #32768 menu, the target's own top-level window) as a uia3 handle usable as a search scope; null if UIA can't resolve it.
+    internal ElementHandle? TryWrapWindow(IntPtr windowHandle)
+    {
+        try { return Wrap(Automation.ElementFromHandle(windowHandle)); }
+        catch (COMException) { return null; }
     }
 
     // ---- Private helpers ----

@@ -163,7 +163,40 @@ public sealed class ElementInputHelpersTests
 
         Assert.Equal(125, x);
         Assert.Equal(210, y);
-        Assert.Single(native.Invocations);
+        // Two live reads one frame apart: the second confirms the element isn't still moving.
+        Assert.Equal(2, native.Invocations.Count);
+    }
+
+    // An element whose bounds change between GetCenter's two reads is still animating into place, so input aimed at it could miss.
+    [Fact]
+    public void GetCenter_BoundsChangeBetweenReads_ThrowsStillMoving()
+    {
+        var ex = Assert.Throws<ElementNotInteractableError>(() => ElementInputHelpers.GetCenter(MovingElement(force: false)));
+
+        Assert.Contains("still moving", ex.Message);
+    }
+
+    // app.Force skips the stable check, as it skips the rest of actionability, and aims at the first read.
+    [Fact]
+    public void GetCenter_BoundsChangeBetweenReads_ForcedAimsAtFirstRead()
+    {
+        var (x, y) = ElementInputHelpers.GetCenter(MovingElement(force: true));
+
+        Assert.Equal((125, 210), (x, y));
+    }
+
+    // A live uia3 element whose bounds read at one position, then 10px lower on every later read: a dropdown sliding open.
+    private static ElementHandle MovingElement(bool force)
+    {
+        var live = new Mock<IUIAutomationElement>();
+        live.SetupGet(e => e.CachedIsEnabled).Returns(1);
+        live.SetupGet(e => e.CachedIsOffscreen).Returns(0);
+        live.SetupSequence(e => e.CachedBoundingRectangle)
+            .Returns(new tagRECT { left = 100, top = 200, right = 150, bottom = 220 })
+            .Returns(new tagRECT { left = 100, top = 210, right = 150, bottom = 230 });
+        var native = new Mock<IUIAutomationElement>();
+        native.Setup(e => e.BuildUpdatedCache(It.IsAny<IUIAutomationCacheRequest>())).Returns(live.Object);
+        return new ElementHandle("1", "uia3", native.Object) { Name = "Banana", IsEnabled = true, IsOffscreen = false, BoundingRect = new Rect(0, 0, 10, 10), Force = force };
     }
 
     // GetCenter validates its own read rather than relying on EnsureInteractable having run, so it never aims at (0,0) or a stale position.

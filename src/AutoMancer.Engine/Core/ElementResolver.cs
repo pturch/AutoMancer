@@ -5,7 +5,7 @@ using AutoMancer.Engine.Errors;
 
 namespace AutoMancer.Engine.Core;
 
-// Orchestrates the provider fallback chain: retries every provider in ElementProviderOptions.ProviderChain order until a match is found or the implicit wait expires.
+// Owns the engine's implicit-wait loops: polling the provider chain, lookups outside it, and retrying an action on a stale or not-yet-interactable element.
 public sealed class ElementResolver
 {
     private readonly IReadOnlyList<IElementProvider> _providers;
@@ -38,6 +38,64 @@ public sealed class ElementResolver
         handle.Logger = _logger;
         handle.ForegroundActivationTimeoutMs = _foregroundActivationTimeoutMs;
         handle.Force = Force;
+    }
+
+    // Polls find, a lookup the provider chain can't make (a just-opened popup, the elements inside one, a window for a window view), every PollIntervalMs until it returns a match or ImplicitWaitMs elapses; throws ElementNotFoundError attributed to source, with no closest-match hint since the session tree isn't where it looked.
+    internal async Task<ElementHandle> PollOutsideChainAsync(Locator locator, string source, Func<CancellationToken, Task<ElementHandle?>> find, CancellationToken ct)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        while (true)
+        {
+            if (await find(ct).ConfigureAwait(false) is { } found)
+            {
+                ApplySettingsTo(found);
+                _logger?.Info("Element resolved", new { provider = source, locator.Strategy, locator.Value, elapsedMs = stopwatch.ElapsedMilliseconds });
+                return found;
+            }
+            if (stopwatch.ElapsedMilliseconds >= _options.ImplicitWaitMs)
+                throw new ElementNotFoundError(locator, [source], (int)stopwatch.ElapsedMilliseconds);
+            await Task.Delay(_options.PollIntervalMs, ct).ConfigureAwait(false);
+        }
+    }
+
+    // WaitUntilGoneAsync's counterpart for a lookup outside the provider chain (a closing popup): polls isPresent until it reports false or ImplicitWaitMs elapses; throws ElementStillPresentError on timeout.
+    internal async Task PollUntilGoneOutsideChainAsync(Locator locator, Func<CancellationToken, Task<bool>> isPresent, CancellationToken ct)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        while (await isPresent(ct).ConfigureAwait(false))
+        {
+            if (stopwatch.ElapsedMilliseconds >= _options.ImplicitWaitMs)
+                throw new ElementStillPresentError(locator, (int)stopwatch.ElapsedMilliseconds);
+            await Task.Delay(_options.PollIntervalMs, ct).ConfigureAwait(false);
+        }
+    }
+
+    // Runs action on what find returns; on StaleElementError (under ReresolveOnStale) or ElementNotInteractableError (unless Force) re-runs find and retries within ImplicitWaitMs — a recreated element gets a new RuntimeId, so re-finding is the only reliable way back to it; locator only labels the logs.
+    internal async Task FindAndRunAsync(Locator locator, Func<CancellationToken, Task<ElementHandle>> find, Func<ElementHandle, Task> action, CancellationToken ct)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        while (true)
+        {
+            var element = await find(ct).ConfigureAwait(false);
+            try
+            {
+                // Actions must raise StaleElementError before dispatching any input, since a retry here re-runs the whole action — staleness detected after a partial SendInput would duplicate it.
+                await action(element).ConfigureAwait(false);
+                return;
+            }
+            // ReresolveOnStale=false lets the error propagate instead, for callers driving their own recovery.
+            catch (StaleElementError) when (_options.ReresolveOnStale && stopwatch.ElapsedMilliseconds < _options.ImplicitWaitMs)
+            {
+                _logger?.Warn("Element went stale mid-action, re-resolving via locator", new { locator.Strategy, locator.Value, staleId = element.Id, elapsedMs = stopwatch.ElapsedMilliseconds });
+                await Task.Delay(_options.PollIntervalMs, ct).ConfigureAwait(false);
+            }
+            // Re-finds too, rather than re-checking the same handle, so an element replaced while becoming actionable is followed. Force never waits — what still throws for it (empty bounds, no keyboard focus) fails immediately.
+            catch (ElementNotInteractableError ex) when (!Force && stopwatch.ElapsedMilliseconds < _options.ImplicitWaitMs)
+            {
+                _logger?.Info("Element not yet interactable, waiting", new { locator.Strategy, locator.Value, elementId = element.Id, reason = ex.Message, elapsedMs = stopwatch.ElapsedMilliseconds });
+                await Task.Delay(_options.PollIntervalMs, ct).ConfigureAwait(false);
+            }
+        }
     }
 
     // ---- Finding a single element (public FindAsync/FindScopedAsync surface) ----
@@ -132,7 +190,7 @@ public sealed class ElementResolver
         // scope (the container we're searching WITHIN) is Spatial — a different, fully-supported case: only how the container is identified, not what we're searching for. No provider can redo this per poll, so resolve it up front and hold it, re-resolving only if it goes stale.
         if (scope.Strategy == LocatorStrategy.Spatial)
         {
-            return await RetryOnStaleScopeAsync(scope, async () =>
+            return await RetryOnStaleScopeAsync(scope, session, async () =>
             {
                 var scopeHandle = await FindAsync(scope, session, ct).ConfigureAwait(false);
                 return await FindScopedAsync(locator, session, scopeHandle, ct).ConfigureAwait(false);
@@ -183,7 +241,11 @@ public sealed class ElementResolver
             var stillPresent = false;
             foreach (var provider in _providers)
             {
-                if (await provider.FindElementAsync(locator, session, ct).ConfigureAwait(false) is not null)
+                ElementHandle? found;
+                try { found = await provider.FindElementAsync(locator, session, ct).ConfigureAwait(false); }
+                // A closed popup view's elements are gone with it, which is what this waits for.
+                catch (StaleElementError ex) when (session.RootElement is { } root && ex.Element == root) { found = null; }
+                if (found is not null)
                 {
                     stillPresent = true;
                     break;
@@ -273,7 +335,7 @@ public sealed class ElementResolver
         // If the scope is identified via a Spatial locator, no provider can refresh it on its own — the whole Spatial resolution reruns instead.
         if (scope.Strategy == LocatorStrategy.Spatial)
         {
-            return await RetryOnStaleScopeAsync(scope, async () =>
+            return await RetryOnStaleScopeAsync(scope, session, async () =>
             {
                 var scopeHandle = await FindAsync(scope, session, ct).ConfigureAwait(false);
                 return await FindAllScopedAsync(locator, session, scopeHandle, ct).ConfigureAwait(false);
@@ -281,11 +343,11 @@ public sealed class ElementResolver
         }
 
         // But for the others, we can refresh the scope element and provider before searching.
-        return await RetryOnStaleScopeAsync(scope, () => FindAllViaAsync(locator, provider => FindAllViaFreshScopeAsync(provider, locator, scope, session, ct), ct)).ConfigureAwait(false);
+        return await RetryOnStaleScopeAsync(scope, session, () => FindAllViaAsync(locator, provider => FindAllViaFreshScopeAsync(provider, locator, scope, session, ct), ct)).ConfigureAwait(false);
     }
 
     // Reruns attempt immediately on StaleElementError, up to ImplicitWaitMs, so a Locator scope that PollAsync can't refresh (FindAll, Spatial) is re-resolved rather than reported as empty.
-    private async Task<T> RetryOnStaleScopeAsync<T>(Locator scope, Func<Task<T>> attempt)
+    private async Task<T> RetryOnStaleScopeAsync<T>(Locator scope, AppSession session, Func<Task<T>> attempt)
     {
         var stopwatch = Stopwatch.StartNew();
         while (true)
@@ -294,8 +356,8 @@ public sealed class ElementResolver
             {
                 return await attempt().ConfigureAwait(false);
             }
-            // ReresolveOnStale=false lets the error propagate instead, for callers driving their own recovery.
-            catch (StaleElementError ex) when (_options.ReresolveOnStale && stopwatch.ElapsedMilliseconds < _options.ImplicitWaitMs)
+            // ReresolveOnStale=false lets the error propagate instead, for callers driving their own recovery; a closed popup view's root isn't coming back, so it isn't retried either.
+            catch (StaleElementError ex) when (_options.ReresolveOnStale && ex.Element != session.RootElement && stopwatch.ElapsedMilliseconds < _options.ImplicitWaitMs)
             {
                 _logger?.Warn("Scope went stale mid-search, re-resolving via locator", new { scope.Strategy, scope.Value, staleId = ex.Element.Id, elapsedMs = stopwatch.ElapsedMilliseconds });
             }

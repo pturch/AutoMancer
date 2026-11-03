@@ -34,11 +34,10 @@ public sealed class VirtualizedListFindIntegrationTests
         await app.FindAsync(Locator.ByControlType("Document"));
         await app.HotkeyAsync(new KeyModifiers(Control: true), [Key.O]);
 
-        var dialog = await App.FindDialogAsync(app.ProcessId, "Open");
-        Assert.NotNull(dialog);
+        var dialog = await app.WaitForWindowAsync(new WindowMatchOptions { TitleContains = "Open" });
 
         // The "File name:" combo and its nested Edit both carry AutomationId "1148", and ByControlType("Edit") separately matches the file list's per-row rename-in-place cells first — either ambiguity misses the real target. ClassName "Edit" (the native Win32 class) is unique to the combo's actual text box.
-        await dialog!.TypeAsync(Locator.ByClassName("Edit"), folder);
+        await dialog.TypeAsync(Locator.ByClassName("Edit"), folder);
         await dialog.PressKeyAsync(Key.Enter);
         // The folder's first file showing up in the list means the navigation finished.
         await dialog.FindAsync(Locator.ByName("file-0000"));

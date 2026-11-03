@@ -230,9 +230,41 @@ await app.DragThroughAsync([(100, 100), (150, 140), (200, 180)]);         // cli
 await app.ScrollWheelAsync(Locator.ByControlType("Document"), deltaX: 0, deltaY: -3);
 ```
 
+### Popups, Context Menus and Windows:
+
+An `App` only searches inside the window it's rooted at, so a menu or dialog that opens in a window of its own won't turn up in a plain `FindAsync`. Instead, you can scope to it:
+
+**For a popup (a menu, dropdown, tooltip or flyout),** `OpenPopupAsync` triggers it on a target and waits for it to appear. The trigger is a left-click by default, but it could be a right-click, Shift+F10, Alt+Down or hover. `expect` describes what the popup contains, so the correct one is found. You get back a `Popup`, which works like an `App` that only searches inside the popup: every action, wait and `Expect` behaves as usual.
+
+**For a dialog or second window,** `WaitForWindowAsync` waits for a matching window of the same app and returns an `App` rooted at it, called a window view. Disposing a view never closes the app.
+
+```csharp
+// Context menus: the one-call shortcut, or open, inspect and act.
+await app.ClickContextMenuItemAsync(Locator.ByControlType("Document"), "Undo");
+var menu = await app.OpenContextMenuAsync(Locator.ByControlType("Document"));
+var items = await menu.FindAllAsync(Locator.ByControlType("MenuItem"));
+await menu.CloseAsync();
+
+// Any other popup: a dropdown, tooltip or flyout, named by what it contains.
+var dropdown = await app.OpenPopupAsync(Locator.ByAutomationId("Units1"), PopupTrigger.AltDown, expect: Locator.ByControlType("ListItem"));
+await dropdown.ClickAsync(Locator.ByName("Inches"));
+
+// A dialog: wait for its window, then work inside it.
+await app.HotkeyAsync(new KeyModifiers(Control: true), [Key.O]);
+var dialog = await app.WaitForWindowAsync(new WindowMatchOptions { TitleContains = "Open" });
+await dialog.TypeAsync(Locator.ByClassName("Edit"), "notes.txt");
+await dialog.ClickAsync(Locator.ByName("Cancel"));
+```
+
+Once a popup closes it stays closed. Searching it throws `StaleElementError`, so open it again from its target. `CloseAsync` presses Escape, and does nothing if the popup is already gone. Tooltips ignore Escape, so move the pointer away and call `WaitUntilClosedAsync` instead.
+
+A submenu is just a popup opened from inside another one, with `menu.OpenPopupAsync(...)`. Escape closes one level at a time, so close nested popups innermost first: `submenu.CloseAsync()`, then `menu.CloseAsync()`.
+
+Classic Win32 menus that UI Automation can't read are still reachable through the `win32` provider. Real apps get some of this wrong, and [WINDOWS_TESTING.md](WINDOWS_TESTING.md) lists what we found and the workaround for each.
+
 ### Actionability:
 
-Element actions (`ClickAsync`, `TypeAsync`, `ClearAsync`, `DoubleClickAsync`, `HoverAsync`, `ScrollWheelAsync`, ...) only act on an element a user could use: enabled, and visible — not offscreen, with a real on-screen size. The check reads the element right before acting, and applies to the app's accessibility shortcuts as well as simulated mouse and keyboard input. AutoMancer stays grounded in only performing behaviors that a user could.
+Element actions (`ClickAsync`, `TypeAsync`, `ClearAsync`, `DoubleClickAsync`, `HoverAsync`, `ScrollWheelAsync`, ...) only act on an element a user could use: enabled, and visible — not offscreen, with a real on-screen size. Simulated mouse input also waits for the element to stop moving, so a click can't miss something still sliding into place, like an opening dropdown. The check reads the element right before acting, and applies to the app's accessibility shortcuts as well as simulated mouse and keyboard input. AutoMancer stays grounded in only performing behaviors that a user could.
 
 If the element isn't usable yet the action finds it again and keeps checking until the implicit wait runs out, then throws `ElementNotInteractableError` saying why (disabled, offscreen, or no on-screen size). `ScrollIntoViewAsync`, `SetFocusAsync`, and `GetValueAsync` don't check, since making an element visible or reading it is their job. `WaitConditions.IsVisible()` and `IsEnabled()` use the same rules, so a wait and the action after it agree on what counts as usable.
 
@@ -244,7 +276,7 @@ Sometimes acting on an element no user could reach is exactly what you want. Can
 await app.Force.ClickAsync(Locator.ByName("New tab"));   // clicks it even while its menu is closed
 ```
 
-A stale element still throws `StaleElementError`, and simulated mouse inputs still need an on-screen point to aim at. Through `app.Force` those fail right away instead of waiting. `app.Force` is the same session as `app`, so disposing it never closes the app, and keys held through it are released when `app` is disposed.
+It also skips waiting for the element to stop moving. A stale element still throws `StaleElementError`, and simulated mouse inputs still need an on-screen point to aim at. Through `app.Force` those fail right away instead of waiting. `app.Force` is the same session as `app`, so disposing it never closes the app, and keys held through it are released when `app` is disposed.
 
 #### Checking for something in the way:
 

@@ -633,4 +633,53 @@ public sealed class ElementResolverTests
 
         Assert.Equal(targets, results);
     }
+
+    // A lookup outside the provider chain (a context menu's items) is polled until it matches, without consulting any provider.
+    [Fact]
+    public async Task PollOutsideChainAsync_MatchOnLaterPoll_ReturnsIt()
+    {
+        var resolver = new ElementResolver([], new ElementProviderOptions { ImplicitWaitMs = 2_000, PollIntervalMs = 10 });
+        var expected = Handle("menu-item");
+        var calls = 0;
+
+        var result = await resolver.PollOutsideChainAsync(TestLocator, "uia3 context menu", _ => Task.FromResult(++calls < 3 ? null : expected), CancellationToken.None);
+
+        Assert.Same(expected, result);
+        Assert.Equal(3, calls);
+    }
+
+    // On timeout it raises the standard ElementNotFoundError, naming the lookup's source and carrying no closest-match hint (it never searched the session tree).
+    [Fact]
+    public async Task PollOutsideChainAsync_NeverMatches_ThrowsElementNotFoundNamingSource()
+    {
+        var resolver = new ElementResolver([], new ElementProviderOptions { ImplicitWaitMs = 50, PollIntervalMs = 10 });
+
+        var ex = await Assert.ThrowsAsync<ElementNotFoundError>(() =>
+            resolver.PollOutsideChainAsync(TestLocator, "win32 context menu", _ => Task.FromResult<ElementHandle?>(null), CancellationToken.None));
+
+        Assert.Equal(["win32 context menu"], ex.AttemptedProviders);
+        Assert.Null(ex.ClosestMatch);
+    }
+
+    // A closing context menu is polled until it reports gone.
+    [Fact]
+    public async Task PollUntilGoneOutsideChainAsync_GoneOnLaterPoll_Returns()
+    {
+        var resolver = new ElementResolver([], new ElementProviderOptions { ImplicitWaitMs = 2_000, PollIntervalMs = 10 });
+        var calls = 0;
+
+        await resolver.PollUntilGoneOutsideChainAsync(Locator.ByControlType("Menu"), _ => Task.FromResult(++calls < 3), CancellationToken.None);
+
+        Assert.Equal(3, calls);
+    }
+
+    // One that never closes raises the standard ElementStillPresentError from the resolver.
+    [Fact]
+    public async Task PollUntilGoneOutsideChainAsync_NeverGone_ThrowsElementStillPresent()
+    {
+        var resolver = new ElementResolver([], new ElementProviderOptions { ImplicitWaitMs = 50, PollIntervalMs = 10 });
+
+        await Assert.ThrowsAsync<ElementStillPresentError>(() =>
+            resolver.PollUntilGoneOutsideChainAsync(Locator.ByControlType("Menu"), _ => Task.FromResult(true), CancellationToken.None));
+    }
 }

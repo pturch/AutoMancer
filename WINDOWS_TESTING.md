@@ -22,10 +22,12 @@ Get this wrong and you get `ElementNotFoundError` with no other clue — it look
 
 ## Native dialogs
 
-`App.FindDialogAsync(ownerPid, titleContains)` finds a dialog by a substring of its title — it exists because a dialog is a separate top-level window with its own `HWND`, not part of the parent window's tree, and `Process.MainWindowTitle` doesn't update for it. Two things to know:
+`app.WaitForWindowAsync(new WindowMatchOptions { TitleContains = "Save" })` waits for a dialog (any visible top-level window of the app) by a substring of its title, and returns a *window view*: the same `App`, rooted at that window. Finds, waits, snapshots and keystrokes through the view stay inside the dialog. It shares the app's process, options and held-input tracking, and disposing it never kills the app. Things to know:
 
-- The title substring must match the dialog that actually opens for the action you triggered — some apps expose more than one dialog for what looks like the same action (e.g. a native file picker vs. the app's own custom "Open" dialog). Match on the substring that's common to every dialog you're willing to accept, and narrow it only if you need to distinguish between them.
-- `FindDialogAsync` can return `null` even when the dialog did open, if the triggering keystroke landed before the target window had taken OS focus. Wrap the keystroke in a short retry loop rather than a single long wait — it's cheaper and more robust.
+- **Match the dialog that actually opens.** The title substring must match the dialog your action opened. Some apps expose more than one dialog for what looks like the same action (e.g. a native file picker vs. the app's own custom "Open" dialog). Match on the substring common to every dialog you'll accept, and narrow it only if you need to tell them apart.
+- **When the dialog's title contains the main window's**, set `RequireNewWindow = true`: it excludes the window the `App` is already rooted at.
+- **It waits up to `ImplicitWaitMs` and throws `ElementNotFoundError` (`tried: window`) on timeout.** For a dialog that only *sometimes* appears, wait on a shorter-timeout `app.WithOptions(...)` and catch it.
+- **Owned dialogs are often findable from the main `App` too**, since UIA nests a window under its owner. A view is still the way to keep finds scoped to the dialog, so they can't match the same name in the main window.
 
 ## Single-instance apps vs. everything else
 
@@ -48,6 +50,26 @@ Any live property or pattern read against a third-party app's UIA element can th
 When an app's controls are anonymous, fragile, or the GUI path is simply flaky (see above), a documented global hotkey is often the more robust way in — it doesn't depend on locating any element at all. Keep the GUI-driven equivalents around too for comparison, not because they're the better default.
 
 That said, a "global" shortcut isn't automatically safe just because it doesn't need a locator — its meaning can depend on which panel currently has focus, in an app with more than one focusable region each claiming the same chord for a different command (a code editor binding `Ctrl+N` to "new file" globally, but to "new chat" while an AI/chat panel has focus, say). If an app has multiple such regions, click a known element in the one you actually want before sending the shortcut, rather than assuming a hotkey is inherently unambiguous.
+
+## Two quick clicks on the same spot are a double-click
+
+Windows decides what's a double-click, not AutoMancer: two clicks of the same button, within the double-click time (500 ms by default) and a few pixels of each other, reach the app as a double-click, even when they come from two separate `ClickAsync`/`RightClickAsync`/`OpenContextMenuAsync` calls. The engine doesn't guard against this. It bites when a test reopens a context menu right after closing it, or when one test ends with a click on an element the next test clicks first: the second right-click arrives as `WM_RBUTTONDBLCLK`, and a classic control like an edit box opens no menu for it, so detection times out. Click something elsewhere in between (any element will do; the context-menu tests click their status label), rather than sleeping out the double-click time.
+
+## A click can "succeed" without doing anything
+
+`ClickAsync` uses UIA's Invoke pattern whenever an element offers it, and falls back to a real mouse click only when it doesn't. Some controls offer Invoke and report success but do nothing: the items in a WinForms ComboBox's open dropdown list are one (the value doesn't change and the list stays open). There's no error to catch, so assert on the result of every click that matters. When Invoke is the problem, drive the control the way a keyboard user would. For that dropdown, type the item's first letter, then press Enter.
+
+## VS Code's title-bar menus misreport their items as offscreen
+
+In VS Code's title-bar menus (File, Edit, …), Chromium reports every item after the first as `IsOffscreen=true`, though they're plainly on screen. Hovering or arrowing through the menu doesn't change it, and the editor's context menu and the quick pick report their items correctly. The actionability gate trusts the flag, so clicking or hovering those items throws `ElementNotInteractableError`: go through `app.Force` (or the popup's `Force`), which exists for misreports like this. Popup detection skips offscreen elements too, so a submenu opened from one of these menus (File → Open Recent) can't be found as a popup at all.
+
+## VS Code ignores a menu's first moments
+
+A click sent to an item in a VS Code menu right after the menu opens can be dropped: the menu closes and nothing runs. That happens about one time in three, whether the click goes through UIA Invoke or a real mouse click, and nothing in UI Automation changes once the popup starts accepting clicks. The VS Code sample waits 300 ms before clicking inside a freshly opened menu, one of the few fixed delays in the repo's tests.
+
+## A control can report an endless list of items
+
+Paint's "Edit colors" dialog has a "Custom colors" grid that reports hundreds of thousands of "Empty" items to UI Automation (a walk counted over 308,000 in 150s without reaching the end). Each answers instantly; there are just too many. Any search that has to get past the grid can't finish: it fails with UIA's own timeout (`0x80131505`) after about 22s, and Paint stops answering window messages while it serves the items. That includes a `FindAsync` for the dialog's Cancel button, which comes after the grid in tree order, and popup detection, which searches the whole window. A search that stops before the grid ("Add color", the color spectrum) is instant, and a person using the dialog never notices anything. So if finds against one dialog suddenly take seconds each and return nothing, look for a list or grid in it that UI Automation enumerates in full. Then work around it: aim for elements before it in tree order, and use the keyboard (Escape, Enter) instead of finding buttons after it. `PaintEditColorsDemoTests` in the Notepad sample does exactly that.
 
 ## Electron/Chromium apps expose their UI Automation tree lazily
 

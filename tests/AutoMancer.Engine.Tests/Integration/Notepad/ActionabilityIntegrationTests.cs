@@ -83,12 +83,11 @@ public sealed class ActionabilityIntegrationTests(NotepadFixture fixture) : ICla
     public async Task Win32Type_FocusOnAnotherControl_LandsInTargetEdit()
     {
         await _app.HotkeyAsync(new KeyModifiers(Control: true), [Key.O]);
-        var dialog = await App.FindDialogAsync(_app.ProcessId, "Open");
-        Assert.NotNull(dialog);
+        var dialog = await _app.WaitForWindowAsync(new WindowMatchOptions { TitleContains = "Open" });
 
         try
         {
-            var win32 = dialog!.WithOptions(new AppOptions { ProviderChain = ["win32"] });
+            var win32 = dialog.WithOptions(new AppOptions { ProviderChain = ["win32"] });
             var edit = await win32.FindAsync(Locator.ByClassName("Edit"));
             await win32.SetFocusAsync(Locator.ByName("Cancel"));
             Assert.False(NativeMethods.HasFocusWithin((IntPtr)edit.NativeHandle));
@@ -101,8 +100,8 @@ public sealed class ActionabilityIntegrationTests(NotepadFixture fixture) : ICla
         }
         finally
         {
-            // Never dispose the dialog's App — it would kill Notepad; WM_CLOSE cancels the dialog instead.
-            await dialog!.CloseWindowAsync();
+            // WM_CLOSE cancels the dialog.
+            await dialog.CloseWindowAsync();
             await Expect(_app, () => Task.FromResult(NativeMethods.IsWindowVisible(dialog.RootWindowHandle))).ToSatisfyAsync(visible => !visible, "the Open dialog to close");
         }
     }

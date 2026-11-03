@@ -21,10 +21,9 @@ public sealed class PropertyLocatorIntegrationTests
             await app.FindAsync(Locator.ByControlType("Document"));
             await app.HotkeyAsync(new KeyModifiers(Control: true), [Key.O]);
 
-            var dialog = await App.FindDialogAsync(app.ProcessId, "Open");
-            Assert.NotNull(dialog);
+            var dialog = await app.WaitForWindowAsync(new WindowMatchOptions { TitleContains = "Open" });
 
-            var helpButton = await dialog!.FindAsync(Locator.ByProperty(UiaProperty.HelpText, "Get help."));
+            var helpButton = await dialog.FindAsync(Locator.ByProperty(UiaProperty.HelpText, "Get help."));
 
             Assert.Equal("HelpButton", helpButton.AutomationId);
         }

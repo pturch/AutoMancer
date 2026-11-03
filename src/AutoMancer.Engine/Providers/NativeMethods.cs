@@ -2,6 +2,7 @@
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
+using AutoMancer.Engine.Core;
 using AutoMancer.Engine.Diagnostics;
 using AutoMancer.Engine.Errors;
 
@@ -55,6 +56,16 @@ internal static class NativeMethods
 
     // GetAncestor's GA_ROOT flag: walk parent windows only (not owners) and return the top-level result.
     private const uint GaRoot = 2;
+
+    // GetAncestor's GA_PARENT flag: the immediate parent window (not the owner); the desktop window for a top-level window.
+    private const uint GaParent = 1;
+
+    // Returns windowHandle's immediate parent window, or IntPtr.Zero for a top-level window (whose GA_PARENT is the desktop) or an invalid handle.
+    internal static IntPtr GetParentWindow(IntPtr windowHandle)
+    {
+        var parent = GetAncestor(windowHandle, GaParent);
+        return parent == GetDesktopWindow() ? IntPtr.Zero : parent;
+    }
 
     // Resolves windowHandle to its top-level ancestor (itself, if GetAncestor can't resolve one) — exposed publicly via App.GetTopLevelWindow.
     internal static IntPtr GetTopLevelWindow(IntPtr windowHandle)
@@ -294,6 +305,81 @@ internal static class NativeMethods
     // Enumerates all top-level windows on the desktop, invoking lpEnumFunc for each.
     [DllImport("user32.dll")]
     internal static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+    // Window class of every popup menu USER itself draws (TrackPopupMenu, system menus, menu-bar dropdowns) — the only kind with an HMENU behind it.
+    private const string PopupMenuClassName = "#32768";
+
+    // True when windowHandle is a USER-drawn popup menu; toolkit menus (WinForms, WPF, Qt, Chromium, ...) use their own classes and have no HMENU.
+    internal static bool IsPopupMenuWindow(IntPtr windowHandle) => GetWindowClassName(windowHandle) == PopupMenuClassName;
+
+    // Returns every visible top-level window owned by any of processIds, topmost first.
+    internal static List<IntPtr> GetVisibleTopLevelWindows(IReadOnlySet<int> processIds)
+    {
+        var found = new List<IntPtr>();
+        EnumWindows((windowHandle, _) =>
+        {
+            GetWindowThreadProcessId(windowHandle, out var pid);
+            if (processIds.Contains((int)pid) && IsWindowVisible(windowHandle))
+                found.Add(windowHandle);
+            return true;
+        }, IntPtr.Zero);
+        return found;
+    }
+
+    // Sends msg to windowHandle and waits up to timeoutMs for the reply; returns false (result zero) if it times out or the target is hung, rather than blocking forever like SendMessage.
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr SendMessageTimeout(IntPtr windowHandle, uint msg, IntPtr wParam, IntPtr lParam, uint fuFlags, uint uTimeout, out IntPtr lpdwResult);
+
+    // SendMessageTimeout flag: give up immediately if the receiving thread is hung instead of waiting out the timeout.
+    private const uint SmtoAbortIfHung = 0x0002;
+
+    // Asks a #32768 popup window for the HMENU it's displaying.
+    private const uint MnGetHmenu = 0x01E1;
+
+    // Returns the HMENU a #32768 popup window is displaying, or IntPtr.Zero if the window is gone, hung, or not showing a menu.
+    internal static IntPtr GetPopupMenuHandle(IntPtr popupWindow) =>
+        SendMessageTimeout(popupWindow, MnGetHmenu, IntPtr.Zero, IntPtr.Zero, SmtoAbortIfHung, 1_000, out var menu) != IntPtr.Zero ? menu : IntPtr.Zero;
+
+    // Returns how many items menu has, or -1 if menu is not a valid HMENU.
+    [DllImport("user32.dll")]
+    internal static extern int GetMenuItemCount(IntPtr menu);
+
+    // Returns the item's state flags (MF_GRAYED, MF_DISABLED, ...) in the low byte, or 0xFFFFFFFF if the item doesn't exist.
+    [DllImport("user32.dll")]
+    private static extern uint GetMenuState(IntPtr menu, uint uId, uint uFlags);
+
+    // Copies the item's text into lpString and returns its length; with a null lpString, returns the length only. Zero for a separator or an item with no text.
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetMenuString(IntPtr menu, uint uIDItem, StringBuilder? lpString, int cchMax, uint flags);
+
+    // Reads the screen rectangle of the item at position uItem; for a popup menu, windowHandle is the #32768 window showing it.
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool GetMenuItemRect(IntPtr windowHandle, IntPtr menu, uint uItem, out RECT lprcItem);
+
+    // Menu API flag: the item argument is a zero-based position, not a command ID.
+    private const uint MfByPosition = 0x0400;
+
+    // GetMenuState bits that mean the item can't be chosen (grayed and disabled are distinct bits that both block it).
+    private const uint MfGrayedOrDisabled = 0x0003;
+
+    // One item of a native menu: raw text (accelerator markers and tab-separated shortcut included; null for a separator or textless item), enabled state, and screen bounds.
+    internal readonly record struct NativeMenuItemInfo(string? RawText, bool IsEnabled, Rect Bounds);
+
+    // The one native read of a menu item, shared by Win32Provider (building handles) and ElementInputHelpers.ReadState (re-reading one live): the item at position in menu, shown by popupWindow; null once the menu or position is no longer valid.
+    internal static NativeMenuItemInfo? ReadMenuItem(IntPtr popupWindow, IntPtr menu, int position)
+    {
+        var state = GetMenuState(menu, (uint)position, MfByPosition);
+        if (state == uint.MaxValue || !GetMenuItemRect(popupWindow, menu, (uint)position, out var rect))
+            return null;
+
+        // Ask for the length first so the buffer fits the text exactly (+1 for the terminator).
+        var length = GetMenuString(menu, (uint)position, null, 0, MfByPosition);
+        var text = new StringBuilder(length + 1);
+        GetMenuString(menu, (uint)position, text, text.Capacity, MfByPosition);
+
+        var bounds = new Rect(rect.Left, rect.Top, rect.Right - rect.Left, rect.Bottom - rect.Top);
+        return new NativeMenuItemInfo(length > 0 ? text.ToString() : null, (state & MfGrayedOrDisabled) == 0, bounds);
+    }
 
     // Returns the PID of the process that created windowHandle.
     [DllImport("user32.dll")]

@@ -1,6 +1,5 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
 using System.ComponentModel;
-using System.Diagnostics;
 using System.Runtime.InteropServices;
 using AutoMancer.Engine.Actions;
 using AutoMancer.Engine.Core;
@@ -12,17 +11,23 @@ using Interop.UIAutomationClient;
 namespace AutoMancer.Engine;
 
 // High-level automation façade: holds a session and provider chain, exposes action-first methods that read like manual test steps.
-public sealed class App : IAsyncDisposable
+public class App : IAsyncDisposable
 {
     private readonly AppSession _session;
     private readonly IReadOnlyList<IElementProvider> _providers;
     private readonly AppOptions _options;
-    private readonly ElementResolver _resolver;
+    private protected readonly ElementResolver _resolver;
     private readonly int _actionDelayMs;
     private readonly int _foregroundActivationTimeoutMs;
     private readonly bool _killEntireProcessTree;
     private readonly bool _reresolveOnStale;
     private readonly bool _force;
+
+    // False for an App sharing a process another App launched or attached to (WithOptions): disposing it must leave that process, and the session, to their owner.
+    private readonly bool _ownsProcess;
+
+    // True for a view (app.Force, WaitForWindowAsync's window view, a Popup) that shares its parent's held-input tracking: disposing it must not release input the parent still holds.
+    private readonly bool _isView;
     private App? _forceView;
     private readonly HeldKeyTracker _heldKeys;
     private readonly HeldMouseButtonTracker _heldMouseButtons;
@@ -53,15 +58,17 @@ public sealed class App : IAsyncDisposable
 
     // ---- Construction (public static factories) ----
 
-    // Private — callers use the static factory methods; forcedFrom builds the parent's app.Force view, which doesn't own the session and shares the parent's held-input tracking.
-    private App(AppSession session, IEnumerable<IElementProvider> providers, AppOptions options, App? forcedFrom = null)
+    // Private — callers use the static factory methods; viewOf builds a view (app.Force, a window view, a popup) that shares the parent's held-input tracking and owns nothing; ownsProcess is false for Apps sharing another App's process.
+    private App(AppSession session, IEnumerable<IElementProvider> providers, AppOptions options, App? viewOf = null, bool force = false, bool ownsProcess = true)
     {
         _session = session;
         _providers = [.. providers];
         _options = options;
-        _force = forcedFrom is not null;
-        _heldKeys = forcedFrom?._heldKeys ?? new();
-        _heldMouseButtons = forcedFrom?._heldMouseButtons ?? new();
+        _force = force;
+        _isView = viewOf is not null;
+        _ownsProcess = ownsProcess && viewOf is null;
+        _heldKeys = viewOf?._heldKeys ?? new();
+        _heldMouseButtons = viewOf?._heldMouseButtons ?? new();
         _actionDelayMs = options.ActionDelayMs;
         _foregroundActivationTimeoutMs = options.ForegroundActivationTimeoutMs;
         _killEntireProcessTree = options.KillEntireProcessTree;
@@ -71,11 +78,13 @@ public sealed class App : IAsyncDisposable
         _combinedLogger = options.CombinedLogger;
         ImplicitWaitMs = options.ImplicitWaitMs;
         PollIntervalMs = options.PollIntervalMs;
+        // A popup view searches through its root's own provider alone: the chain's others can't search from its handle, and a #32768's Win32Provider may not be in the chain at all. _providers stays the full chain, for a window view opened from it.
+        var root = session.RootElement;
         _resolver = new ElementResolver(
-            _providers,
+            root is null ? _providers : [root.Provider!],
             new ElementProviderOptions
             {
-                ProviderChain = [.. options.ProviderChain],
+                ProviderChain = root is null ? [.. options.ProviderChain] : [root.Provider!.ProviderName],
                 ImplicitWaitMs = options.ImplicitWaitMs,
                 PollIntervalMs = options.PollIntervalMs,
                 ReresolveOnStale = options.ReresolveOnStale,
@@ -84,6 +93,10 @@ public sealed class App : IAsyncDisposable
             foregroundActivationTimeoutMs: options.ForegroundActivationTimeoutMs)
         { Force = _force };
     }
+
+    // Popup's base: a view of opener (its options and Force) whose session is rooted at surface, as a window view's is rooted at its window; label names it in errors.
+    private protected App(App opener, ElementHandle surface, string label)
+        : this(opener._session.WithRootElement(surface, label), opener._providers, opener._options, viewOf: opener, force: opener._force) { }
 
     // Starts the target executable and waits until its main window is visible; windowMatch disambiguates which window counts as "launched" when the executable might have multiple candidate windows.
     public static async Task<App> LaunchAsync(string executablePath, AppOptions? options = null, WindowMatchOptions? windowMatch = null, CancellationToken ct = default)
@@ -99,18 +112,6 @@ public sealed class App : IAsyncDisposable
         options ??= AppOptions.Default;
         var session = await AppSession.AttachByPidAsync(pid, windowMatch, options.Logger, ct);
         return new App(session, BuildProviders(options.ProviderChain), options);
-    }
-
-    // Polls for a dialog owned by ownerPid whose title contains titleContains; use for modal dialogs, which don't change Process.MainWindowTitle.
-    public static Task<App?> FindDialogAsync(int ownerPid, string titleContains, AppOptions? options = null, int timeoutMs = 3_000, CancellationToken ct = default) =>
-        FindDialogAsync(new WindowMatchOptions { ExpectedPid = ownerPid, TitleContains = titleContains }, options, timeoutMs, ct);
-
-    // Polls for a dialog matching windowMatch (must set ExpectedPid + TitleContains); use this overload for extra disambiguation (e.g. ClassName) beyond owner + title.
-    public static async Task<App?> FindDialogAsync(WindowMatchOptions windowMatch, AppOptions? options = null, int timeoutMs = 3_000, CancellationToken ct = default)
-    {
-        options ??= AppOptions.Default;
-        var session = await AppSession.FindDialogAsync(windowMatch, timeoutMs, options.Logger, ct);
-        return session is null ? null : new App(session, BuildProviders(options.ProviderChain), options);
     }
 
     // Activates a UWP/MSIX packaged app by its Application User Model ID (AUMID) and waits for a window matching windowMatch (if given).
@@ -133,18 +134,45 @@ public sealed class App : IAsyncDisposable
         return new App(session, BuildProviders(options.ProviderChain), options);
     }
 
-    // Returns a new App bound to the same session but with different options — useful for warmup or provider-specific operations without creating a new process.
-    public App WithOptions(AppOptions options) => new(_session, BuildProviders(options.ProviderChain), options);
+    // Returns a new App bound to the same session but with different options — useful for warmup or provider-specific operations without creating a new process; disposing it leaves the process and session to this App.
+    public App WithOptions(AppOptions options) => new(_session, BuildProviders(options.ProviderChain), options, ownsProcess: false);
 
-    // A cached view of this App whose element actions skip the enabled/visible check and its wait, e.g. to click a hidden menu item on purpose.
+    // A cached view of this App whose element actions skip the enabled/visible check, the stable (not-moving) check, and their wait, e.g. to click a hidden menu item on purpose.
     // Still enforced: stale detection, non-empty bounds for synthesized pointer input, and keyboard focus for synthesized typing.
-    public App Force => _force ? this : LazyInitializer.EnsureInitialized(ref _forceView, () => new App(_session, _providers, _options, forcedFrom: this));
+    public App Force => _force ? this : LazyInitializer.EnsureInitialized(ref _forceView, () => new App(_session, _providers, _options, viewOf: this, force: true));
+
+    // Waits up to ImplicitWaitMs for a visible top-level window of the app matching match (ExpectedPid defaults to this app's process; RequireNewWindow excludes this App's own root window, e.g. for a dialog whose title contains the main window's), and returns a view of this App rooted at it: finds, waits and snapshots inside the view see only that window. The view shares this App's process, options and held-input tracking; disposing it does nothing. ElementNotFoundError on timeout.
+    public async Task<App> WaitForWindowAsync(WindowMatchOptions match, CancellationToken ct = default)
+    {
+        var pid = match.ExpectedPid ?? ProcessId;
+        var described = match.TitleContains is not null ? Locator.ByName(match.TitleContains) : Locator.ByClassName(match.ClassName ?? "");
+
+        // Wrapped by Win32Provider so the resolver's polling (and its ElementNotFoundError on timeout) applies to windows too.
+        var window = await _resolver.PollOutsideChainAsync(described, "window", _ =>
+        {
+            foreach (var candidate in NativeMethods.GetVisibleTopLevelWindows(new HashSet<int> { pid }))
+            {
+                // RequireNewWindow skips only this App's own window, not every window open before the call: the natural flow is click, then wait, so the window is usually already open by now.
+                if (match.RequireNewWindow && candidate == RootWindowHandle)
+                    continue;
+                if (AppSession.WindowSatisfiesCriteria(candidate, pid, match))
+                    return Task.FromResult<ElementHandle?>(Win32.WrapWindowHandle(candidate));
+            }
+            return Task.FromResult<ElementHandle?>(null);
+        }, ct);
+        var root = (IntPtr)window.NativeHandle;
+        _logger?.Info("Window view created", new { match.TitleContains, match.ClassName, window = root.ToInt64() });
+        return new App(_session.WithRootWindow(root), _providers, _options, viewOf: this, force: _force);
+    }
+
+    // Wraps candidate windows for WaitForWindowAsync's polling, and is PopupAction's fallback for a new window UIA3 can't see expect in (it reads a #32768's HMENU items).
+    internal static readonly Win32Provider Win32 = new();
 
     // ---- Internal: test support only — not part of the public surface ----
 
     // Bypasses real provider construction to build an App around fake providers, for unit tests exercising App/Expect() retry and diagnostics logic without a live window.
-    internal static App CreateForTesting(AppSession session, IEnumerable<IElementProvider> providers, AppOptions? options = null) =>
-        new(session, providers, options ?? AppOptions.Default);
+    internal static App CreateForTesting(AppSession session, IEnumerable<IElementProvider> providers, AppOptions? options = null, bool ownsProcess = true) =>
+        new(session, providers, options ?? AppOptions.Default, ownsProcess: ownsProcess);
 
     // Exposes the held-key tracker so tests can prove app.Force shares the parent's without sending real input.
     internal HeldKeyTracker HeldKeysForTesting => _heldKeys;
@@ -266,7 +294,7 @@ public sealed class App : IAsyncDisposable
         await FindAndRunAsync(locator, el => Task.Run(() =>
         {
             (int X, int Y) point;
-            // A yes/no query: no on-screen bounds means nothing to hit, not a reason to wait or throw.
+            // A yes/no query: no on-screen bounds, or an element still moving, means nothing reliably hit, not a reason to wait or throw.
             try { point = ElementInputHelpers.GetCenter(el); }
             catch (ElementNotInteractableError) { unobscured = false; return; }
             unobscured = ElementInputHelpers.IsUnobscured(el, point);
@@ -460,6 +488,66 @@ public sealed class App : IAsyncDisposable
         await SettleAsync(ct);
     }
 
+    // ---- Popups and context menus (public) ----
+
+    // Opens a popup from target via trigger (a left-click by default) and waits up to ImplicitWaitMs for the new surface that is, or contains, an element matching expect (omitted: any new popup surface); finds and actions on the returned Popup stay inside it. ElementNotFoundError if none appears.
+    public Task<Popup> OpenPopupAsync(Locator target, PopupTrigger trigger = PopupTrigger.LeftClick, Locator? expect = null, CancellationToken ct = default)
+        => OpenPopupCoreAsync(target, trigger, expect, "popup", ct);
+
+    // OpenPopupAsync with expect: MenuItem and a right-click by default, labelled "context menu" in errors; a UIA-invisible native #32768 is found through Win32Provider.
+    public Task<Popup> OpenContextMenuAsync(Locator target, PopupTrigger trigger = PopupTrigger.RightClick, CancellationToken ct = default)
+        => OpenPopupCoreAsync(target, trigger, Locator.ByControlType("MenuItem"), "context menu", ct);
+
+    // Opens target's context menu via trigger and clicks the item named itemName (UIA3's Name, e.g. "Bravo && Co" for a literal &); a failed click closes the menu again so it can't swallow the next input.
+    public async Task ClickContextMenuItemAsync(Locator target, string itemName, PopupTrigger trigger = PopupTrigger.RightClick, CancellationToken ct = default)
+    {
+        var menu = await OpenContextMenuAsync(target, trigger, ct);
+        try
+        {
+            // Exact name over the MenuItem list rather than a ByName search: a WPF MenuItem's child Text carries the same name, and Win32Provider's Name match is a substring.
+            await menu.ClickFirstWhereAsync(Locator.ByControlType("MenuItem"), item => item.Name == itemName, Locator.ByName(itemName), ct);
+        }
+        catch
+        {
+            // Best effort: a menu that won't close mustn't replace the error that actually explains the failure.
+            try { await menu.CloseAsync(CancellationToken.None); }
+            catch (ElementStillPresentError) { }
+            throw;
+        }
+    }
+
+    // Finds target, fires trigger on it, and waits through the resolver for a new surface that is or contains expect; label names it in errors and logs.
+    private async Task<Popup> OpenPopupCoreAsync(Locator target, PopupTrigger trigger, Locator? expect, string label, CancellationToken ct)
+    {
+        EnsureWindowNotMinimized();
+        PopupBaseline? baseline = null;
+        await FindAndRunAsync(target, async el => baseline = await PopupAction.OpenAsync(el, _session, trigger, expect, ct), ct);
+        var surface = await _resolver.PollOutsideChainAsync(expect ?? Locator.ByControlType("Window"), $"{label} detection", token => PopupAction.TryDetectAsync(baseline!, token), ct);
+        _logger?.Info("Opened popup", new { target.Strategy, target.Value, trigger, expect = expect?.Value, label, via = surface.ResolvedVia });
+        return new Popup(this, surface, label);
+    }
+
+    // Clicks the first match of search inside this popup view that passes filter, retrying as ClickAsync does, then waits ActionDelayMs; a miss raises ElementNotFoundError reported as reportAs. WaitForAsync can't do this: it tests condition against the first match only.
+    private async Task ClickFirstWhereAsync(Locator search, Func<ElementHandle, bool> filter, Locator reportAs, CancellationToken ct)
+    {
+        EnsureWindowNotMinimized();
+        var source = $"{_session.RootElement!.ResolvedVia} {_session.RootLabel}";
+
+        // One pass over search's matches, keeping the first that passes filter; null until one does.
+        async Task<ElementHandle?> FirstMatchAsync(CancellationToken token)
+        {
+            var matches = await FindAllAsync(search, token);
+            return matches.FirstOrDefault(filter);
+        }
+
+        // Polled because some popups fill in after opening (Notepad's AI items).
+        await _resolver.FindAndRunAsync(reportAs,
+            token => _resolver.PollOutsideChainAsync(reportAs, source, FirstMatchAsync, token),
+            el => ClickAction.ExecuteAsync(el, ct: ct), ct);
+        _logger?.Info("Clicked", new { reportAs.Strategy, reportAs.Value, popup = _session.RootLabel });
+        await SettleAsync(ct);
+    }
+
     // ---- Window management (public) ----
 
     // Returns the window's current bounding rectangle in physical screen coordinates.
@@ -468,22 +556,22 @@ public sealed class App : IAsyncDisposable
 
     // Moves the window's top-left corner to (x, y) in physical screen coordinates; size is unchanged.
     public Task MoveWindowAsync(int x, int y, CancellationToken ct = default)
-        => WindowAction.MoveCoreAsync(_session.RootWindowHandle, x, y, _logger, ct);
+        => WindowAction.MoveCoreAsync(WindowToManage(nameof(MoveWindowAsync)), x, y, _logger, ct);
 
     // Resizes the window to (width × height) in physical pixels; position is unchanged.
     public Task ResizeWindowAsync(int width, int height, CancellationToken ct = default)
-        => WindowAction.ResizeCoreAsync(_session.RootWindowHandle, width, height, _logger, ct);
+        => WindowAction.ResizeCoreAsync(WindowToManage(nameof(ResizeWindowAsync)), width, height, _logger, ct);
 
     // Changes the window's visual state (Normal, Maximized, Minimized).
     public Task SetWindowStateAsync(WindowState state, CancellationToken ct = default)
-        => WindowAction.SetVisualStateCoreAsync(_session.RootWindowHandle, state, _logger, ct);
+        => WindowAction.SetVisualStateCoreAsync(WindowToManage(nameof(SetWindowStateAsync)), state, _logger, ct);
 
     // Reports whether the window is currently minimized — lets a caller check and recover (e.g. via SetWindowStateAsync) before an action would otherwise throw WindowMinimizedError.
     public bool IsWindowMinimized() => NativeMethods.IsIconic(_session.RootWindowHandle);
 
     // Closes the root window; tries WindowPattern.Close() first, falls back to posting WM_CLOSE.
     public Task CloseWindowAsync(CancellationToken ct = default)
-        => WindowAction.CloseCoreAsync(_session.RootWindowHandle, _logger, ct);
+        => WindowAction.CloseCoreAsync(WindowToManage(nameof(CloseWindowAsync)), _logger, ct);
 
     // ---- Lifecycle (public) ----
 
@@ -506,11 +594,12 @@ public sealed class App : IAsyncDisposable
     public Task WaitForExitAsync(int timeoutMs = 5_000, CancellationToken ct = default)
         => _session.WaitForExitAsync(timeoutMs, ct);
 
-    // Kills the app (if still running), writes the Windows Event Log / combined-timeline artifacts if configured, and releases the underlying process handle; a no-op for app.Force, which doesn't own the session.
+    // Kills the app (if still running), writes the Windows Event Log / combined-timeline artifacts if configured, and releases the underlying process handle; a no-op for a view (app.Force, a window view), and only releases held input for an App that doesn't own its process (WithOptions).
     public ValueTask DisposeAsync()
     {
-        if (_force) return ValueTask.CompletedTask;
+        if (_isView) return ValueTask.CompletedTask;
         ReleaseHeldInputBestEffort();
+        if (!_ownsProcess) return ValueTask.CompletedTask;
         KillAppBestEffort();
         TryWriteWindowsEventLogArtifact();
         return _session.DisposeAsync();
@@ -556,7 +645,8 @@ public sealed class App : IAsyncDisposable
     private void EnsureWindowReady()
     {
         EnsureWindowNotMinimized();
-        if (_foregroundActivationTimeoutMs > 0)
+        // Never for a popup view: activating the root window would dismiss the popup, which holds input anyway.
+        if (_foregroundActivationTimeoutMs > 0 && _session.RootElement is null)
             NativeMethods.EnsureForegroundOrThrow(_session.RootWindowHandle, _foregroundActivationTimeoutMs);
     }
 
@@ -568,33 +658,17 @@ public sealed class App : IAsyncDisposable
             throw new WindowMinimizedError(_session.RootWindowHandle);
     }
 
-    // Finds locator and runs action on it; on a StaleElementError with AppOptions.ReresolveOnStale on, re-runs locator and retries — a recreated element gets a new RuntimeId, so the locator is the only reliable way back to it. ElementNotInteractableError is retried the same way (Playwright's wait-until-actionable), except through app.Force.
-    private async Task FindAndRunAsync(Locator locator, Func<ElementHandle, Task> action, CancellationToken ct)
+    // The window a window-management method acts on; throws on a popup view, whose RootWindowHandle is the app's window, so the call would act on the app (and likely dismiss the popup) rather than on the popup.
+    private IntPtr WindowToManage(string method)
     {
-        var stopwatch = Stopwatch.StartNew();
-        while (true)
-        {
-            var element = await _resolver.FindAsync(locator, _session, ct);
-            try
-            {
-                // Actions must raise StaleElementError before dispatching any input, since a retry here re-runs the whole action — staleness detected after a partial SendInput would duplicate it.
-                await action(element);
-                return;
-            }
-            // Same ImplicitWaitMs/PollIntervalMs budget FindAsync/WaitForAsync use; ReresolveOnStale=false lets the error propagate instead, for callers driving their own recovery.
-            catch (StaleElementError) when (_reresolveOnStale && stopwatch.ElapsedMilliseconds < ImplicitWaitMs)
-            {
-                _logger?.Warn("Element went stale mid-action, re-resolving via locator", new { locator.Strategy, locator.Value, staleId = element.Id, elapsedMs = stopwatch.ElapsedMilliseconds });
-                await Task.Delay(PollIntervalMs, ct);
-            }
-            // Re-finds too, rather than re-checking the same handle, so an element replaced while becoming actionable is followed. app.Force never waits — what still throws for it (empty bounds, no keyboard focus) fails immediately.
-            catch (ElementNotInteractableError ex) when (!_force && stopwatch.ElapsedMilliseconds < ImplicitWaitMs)
-            {
-                _logger?.Info("Element not yet interactable, waiting", new { locator.Strategy, locator.Value, elementId = element.Id, reason = ex.Message, elapsedMs = stopwatch.ElapsedMilliseconds });
-                await Task.Delay(PollIntervalMs, ct);
-            }
-        }
+        if (_session.RootElement is not null)
+            throw new InvalidOperationException($"{method} acts on the app's window, not the {_session.RootLabel}; call it on the App instead, or use CloseAsync to dismiss the {_session.RootLabel}.");
+        return _session.RootWindowHandle;
     }
+
+    // Finds locator and runs action on it, re-finding and retrying a stale or not-yet-interactable element via the resolver's FindAndRunAsync (Playwright's wait-until-actionable).
+    private Task FindAndRunAsync(Locator locator, Func<ElementHandle, Task> action, CancellationToken ct)
+        => _resolver.FindAndRunAsync(locator, token => _resolver.FindAsync(locator, _session, token), action, ct);
 
     // Last step for every element-targeting action: pauses ActionDelayMs so the UI can settle; no-op when it's 0.
     private Task SettleAsync(CancellationToken ct)

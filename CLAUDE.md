@@ -56,7 +56,7 @@ Inline comments only when the *why* is non-obvious — never narrate what the co
 
 **`ElementHandle` must stay opaque.** `Id`, `NativeHandle`, and read-only metadata (`Name`, `AutomationId`, `ClassName`, `ControlType`, `BoundingRect`, `IsEnabled`, `IsOffscreen`, `ResolvedVia`) are public; `Provider`, `Operator`, and `Logger` stay `internal`. The Phase 2 daemon stores handles by `Id` between stateless HTTP requests — leaking the provider/operator internals breaks that contract.
 
-**Providers never throw on not-found.** Return `null` / empty. Only `ElementResolver` throws `ElementNotFoundError`.
+**Providers never throw on not-found.** Return `null` / empty. Only `ElementResolver` throws `ElementNotFoundError` (and the other wait-timeout errors, `ElementStillPresentError` and `ElementConditionTimeoutError`). That includes waits it runs for lookups outside the provider chain, like popup detection and window views (`PollOutsideChainAsync`). Loops elsewhere hand their final wait to the resolver rather than throwing themselves, as `FindByScrollingAsync` does.
 
 **`TypeAction` must use `KEYEVENTF_UNICODE`** with `wScan` set to the character codepoint. Never use VK codes for printable characters — this is what fixes WinAppDriver's QWERTY-only keyboard layout bug.
 

@@ -74,11 +74,30 @@ internal static class ElementInputHelpers
         if (IsDetached(scope)) throw Stale(scope, searchFailure, "Scope element");
     }
 
-    // An element's IsEnabled/IsOffscreen/bounds as read live at action time.
-    private readonly record struct ElementState(bool? IsEnabled, bool? IsOffscreen, Rect Bounds);
+    // Whether element is on screen right now, as a bool rather than a throw: the gate's live Visible rule (without its enabled check), plus attached and IsInVisibleWindow; false if it's gone.
+    internal static bool IsShowing(ElementHandle element)
+    {
+        try
+        {
+            var state = ReadState(element);
+            return WaitConditions.Visible(state.IsOffscreen, state.Bounds) && !IsDetached(element) && IsInVisibleWindow(element);
+        }
+        catch (StaleElementError) { return false; }
+    }
 
-    // Reads the element's state live — one batched UIA call (a cache request), or user32 reads for a Win32 hwnd; throws StaleElementError if it's gone. Handles with nothing live to read, and a read that fails without the element being gone, get the find-time values.
-    private static ElementState ReadState(ElementHandle element)
+    // True unless element's top-level window is hidden; a hidden window's elements can still report attached and on screen (a closed WinForms ContextMenuStrip only hides its dropdown). Throws StaleElementError if element is gone.
+    internal static bool IsInVisibleWindow(ElementHandle element)
+    {
+        var window = GetContainingWindow(element);
+        // The top-level window, not the nearest: WinUI3 hosts content under a zero-size InputSiteWindowClass child that is never visible.
+        return window == IntPtr.Zero || NativeMethods.IsWindowVisible(NativeMethods.GetTopLevelWindow(window));
+    }
+
+    // An element's IsEnabled/IsOffscreen/bounds as read live at action time.
+    internal readonly record struct ElementState(bool? IsEnabled, bool? IsOffscreen, Rect Bounds);
+
+    // Reads the element's state live — one batched UIA call (a cache request), or user32 reads for a Win32 hwnd; throws StaleElementError if it's gone. Handles with nothing live to read, and a read that fails without the element being gone, get the find-time values. The shared building block for EnsureInteractable, GetCenter and IsShowing.
+    internal static ElementState ReadState(ElementHandle element)
     {
         // Stale always throws here — AppOptions.ReresolveOnStale only controls whether App retries it, not whether it's raised.
         try
@@ -107,6 +126,11 @@ internal static class ElementInputHelpers
                     // Plain user32 calls with no cross-process marshaling, so no batching is needed; a closed window's failed rect reads as not visible, as Win32Provider reports it.
                     var (rect, rectOk) = Win32Provider.GetRect(windowHandle);
                     return new(NativeMethods.IsWindowEnabled(windowHandle), !rectOk || !NativeMethods.IsWindowVisible(windowHandle), rect);
+                case NativeMenuItem menuItem:
+                    // Read from the popup's HMENU; a closed popup's HWND may be reused for the next menu, so the HMENU must still match too.
+                    if (NativeMethods.GetPopupMenuHandle(menuItem.PopupWindow) != menuItem.Menu || NativeMethods.ReadMenuItem(menuItem.PopupWindow, menuItem.Menu, menuItem.Position) is not { } info)
+                        throw Stale(element, null);
+                    return new(info.IsEnabled, false, info.Bounds);
             }
         }
         catch (Exception ex) when (IsStaleFailure(ex, element))
@@ -268,15 +292,27 @@ internal static class ElementInputHelpers
             throw Stale(element, null);
     }
 
-    // The point synthesized pointer input should hit: the center of the element's live bounds (already physical pixels; see DpiAwareness). Independent of EnsureInteractable — it validates its own read, throwing ElementNotInteractableError when there's no on-screen area to aim at.
+    // The point synthesized pointer input should hit: the center of the element's live bounds (already physical pixels; see DpiAwareness). Independent of EnsureInteractable — it validates its own read, throwing ElementNotInteractableError when there's no on-screen area to aim at, or (unless forced) when the element is still moving.
     internal static (int X, int Y) GetCenter(ElementHandle element)
     {
         var bounds = ReadState(element).Bounds;
         if (!(bounds.Width > 0 && bounds.Height > 0))
             throw new ElementNotInteractableError(element, $"Element \"{element.Name}\" (AutomationId={element.AutomationId}) has empty on-screen bounds, so there is no point to aim synthesized input at.");
+
+        // Playwright's "stable" check: input aimed at an element still animating into place (a WPF dropdown sliding open) can miss it, so its bounds must read the same one frame apart; App's actionability wait retries until they do.
+        if (!element.Force)
+        {
+            Thread.Sleep(StableFrameMs);
+            if (ReadState(element).Bounds != bounds)
+                throw new ElementNotInteractableError(element, $"Element \"{element.Name}\" (AutomationId={element.AutomationId}) is still moving (its bounds changed between two reads one frame apart), so synthesized input could miss it.");
+        }
+
         var (x, y) = bounds.Center;
         return ((int)x, (int)y);
     }
+
+    // How far apart GetCenter's two bounds reads are: one frame at 60 Hz.
+    private const int StableFrameMs = 16;
 
     // True when pointer input at point (from GetCenter) would reach element right now: the top-level window under point is element's own (every provider), and for a uia3 element UIA's hit-test there doesn't land on something else. Throws StaleElementError if element is gone.
     internal static bool IsUnobscured(ElementHandle element, (int X, int Y) point)
@@ -306,8 +342,20 @@ internal static class ElementInputHelpers
         }
     }
 
+    // The processes that can show element's UI: its own (as its provider reported it) and its containing window's, which differ for a packaged app whose frame a host process owns. Throws StaleElementError if element is gone.
+    internal static HashSet<int> GetOwningProcessIds(ElementHandle element)
+    {
+        var processIds = new HashSet<int>();
+        if (element.ProcessId != 0)
+            processIds.Add(element.ProcessId);
+        var containing = GetContainingWindow(element);
+        if (containing != IntPtr.Zero && NativeMethods.GetWindowThreadProcessId(containing, out var windowProcessId) != 0)
+            processIds.Add((int)windowProcessId);
+        return processIds;
+    }
+
     // The native window element lives in — its own hwnd, or for a windowless UIA element (XAML, Electron) the nearest raw-view ancestor's; Zero when unknown. Throws StaleElementError if element is gone.
-    private static IntPtr GetContainingWindow(ElementHandle element)
+    internal static IntPtr GetContainingWindow(ElementHandle element)
     {
         try
         {

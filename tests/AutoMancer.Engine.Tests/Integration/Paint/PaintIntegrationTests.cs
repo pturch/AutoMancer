@@ -91,15 +91,14 @@ public sealed class PaintIntegrationTests(PaintFixture fixture) : IClassFixture<
     public async Task ClickPencilTool_Succeeds()
         => await App.ClickAsync(Locator.ByAutomationId("PencilTool"));
 
-    // Save opens a Save As dialog on its own top-level window; dismissed via Escape sent to that dialog (via FindDialogAsync) since it would otherwise block later window-management tests.
+    // Save opens a Save As dialog on its own top-level window; dismissed via Escape sent to that dialog (through a window view) since it would otherwise block later window-management tests.
     [Fact]
     public async Task ClickSaveButton_Succeeds()
     {
         await App.ClickAsync(Locator.ByName("Save"));
 
-        var dialog = await AutoMancer.Engine.App.FindDialogAsync(App.ProcessId, "Save", timeoutMs: 2_000);
-        if (dialog is not null)
-            await dialog.PressKeyAsync(Key.Escape);
+        var dialog = await App.WaitForWindowAsync(new WindowMatchOptions { TitleContains = "Save" });
+        await dialog.PressKeyAsync(Key.Escape);
     }
 
     // ── Advanced locators ────────────────────────────────────────────────────────

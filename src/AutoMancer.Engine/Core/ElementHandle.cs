@@ -35,7 +35,7 @@ public sealed class ElementHandle
     // How long actions should retry foregrounding this element's window before giving up — stamped by ElementResolver from AppOptions.ForegroundActivationTimeoutMs, so actions can read it without taking a separate parameter.
     internal int ForegroundActivationTimeoutMs { get; set; } = 3_000;
 
-    // Whether this handle was found through app.Force — stamped by ElementResolver, so EnsureInteractable skips its enabled/visible gate (never stale detection, bounds, or keyboard focus).
+    // Whether this handle was found through app.Force — stamped by ElementResolver, so EnsureInteractable skips its enabled/visible gate and GetCenter its stable check (never stale detection, bounds, or keyboard focus).
     internal bool Force { get; set; }
 
     // Constructed by providers only — callers receive handles exclusively from the resolver.

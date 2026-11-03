@@ -29,6 +29,9 @@ public interface IElementProvider
     // Returns all elements matching the locator within scope's subtree — empty list if none found or scope came from a different provider; throws StaleElementError if scope itself is gone, which isn't a not-found.
     Task<IReadOnlyList<ElementHandle>> FindScopedElementsAsync(Locator locator, AppSession session, ElementHandle scope, CancellationToken ct = default);
 
+    // Returns element's parent as this provider sees it, or null at the top of its tree or when element came from a different provider — never throws on not-found.
+    Task<ElementHandle?> FindParentAsync(ElementHandle element, AppSession session, CancellationToken ct = default);
+
     // Returns a read-only snapshot of the element tree rooted at the session's window.
     Task<IReadOnlyList<ElementSnapshot>> SnapshotTreeAsync(AppSession session, CancellationToken ct = default);
 }

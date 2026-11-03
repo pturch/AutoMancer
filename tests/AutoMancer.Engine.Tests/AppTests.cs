@@ -65,4 +65,45 @@ public sealed class AppTests
 
         Assert.True(id > 0);
     }
+
+    // A windowless process that stays alive for 30s, so a test can tell whether disposing an App killed it.
+    private static Process RunningProcess() =>
+        Process.Start(new ProcessStartInfo("cmd.exe", "/c ping -n 30 127.0.0.1 > nul") { UseShellExecute = false, CreateNoWindow = true })!;
+
+    // An App that doesn't own its process (e.g. one sharing another App's session) must leave that process running when disposed.
+    [Fact]
+    public async Task DisposeAsync_AppNotOwningItsProcess_LeavesProcessRunning()
+    {
+        using var process = RunningProcess();
+        try
+        {
+            var dialog = App.CreateForTesting(AppSession.CreateForTesting(process, IntPtr.Zero), [], new AppOptions { Logger = null }, ownsProcess: false);
+
+            await dialog.DisposeAsync();
+
+            Assert.False(process.HasExited);
+        }
+        finally { process.Kill(); }
+    }
+
+    // A WithOptions view shares its parent's session: disposing the view leaves the process to the parent, whose own dispose still kills it.
+    [Fact]
+    public async Task DisposeAsync_WithOptionsView_LeavesProcessToItsOwner()
+    {
+        var process = RunningProcess();
+        // A second handle on the same process, since the owner's dispose disposes the session's Process object.
+        using var watcher = Process.GetProcessById(process.Id);
+        try
+        {
+            var owner = App.CreateForTesting(AppSession.CreateForTesting(process, IntPtr.Zero), [], new AppOptions { Logger = null });
+            var view = owner.WithOptions(new AppOptions { Logger = null, ProviderChain = ["win32"] });
+
+            await view.DisposeAsync();
+            Assert.False(watcher.HasExited);
+
+            await owner.DisposeAsync();
+            Assert.True(watcher.WaitForExit(5_000));
+        }
+        finally { if (!watcher.HasExited) watcher.Kill(); }
+    }
 }

@@ -83,9 +83,8 @@ public sealed class HelloWorldScriptDemoTests
     {
         await app.PressKeyAsync(Key.S, new KeyModifiers(Control: true));
 
-        // The dialog's App wraps the same VS Code process, not a separate one — never Kill/Dispose it.
-        var dialog = await App.FindDialogAsync(app.ProcessId, "Save")
-            ?? throw new InvalidOperationException("The Save As dialog did not appear.");
+        // A window view rooted at the Save As dialog: same VS Code process, and disposing a view never kills it.
+        var dialog = await app.WaitForWindowAsync(new WindowMatchOptions { TitleContains = "Save" });
         await dialog.TypeDirectAsync(fullPath);
         await dialog.PressKeyAsync(Key.Enter);
 

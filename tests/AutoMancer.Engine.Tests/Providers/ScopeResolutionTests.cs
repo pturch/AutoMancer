@@ -71,4 +71,26 @@ public sealed class ScopeResolutionTests
 
         Assert.Same(foreignWindowScope, ex.Element);
     }
+
+    // A window found in another process (e.g. a window view rooted at a helper process's window) records that owner, so it's accepted even though it isn't the session's process.
+    [Fact]
+    public async Task Win32Provider_ScopeHwndStillOwnedByRecordedProcess_IsAcceptedAcrossProcesses()
+    {
+        var desktop = NativeMethods.GetDesktopWindow();
+        NativeMethods.GetWindowThreadProcessId(desktop, out var owner);
+        var helperWindowScope = new ElementHandle("hwnd:helper", "win32", desktop) { ProcessId = (int)owner };
+
+        Assert.Null(await new Win32Provider().FindScopedElementAsync(Locator.ByClassName("No.Such.Class.AutoMancer"), Session, helperWindowScope));
+    }
+
+    // A recorded owner that no longer matches means the HWND was recycled for someone else's window — stale, whatever the session's process is.
+    [Fact]
+    public async Task Win32Provider_ScopeHwndNoLongerOwnedByRecordedProcess_ThrowsStaleElementError()
+    {
+        var recycledScope = new ElementHandle("hwnd:recycled", "win32", NativeMethods.GetDesktopWindow()) { ProcessId = Environment.ProcessId };
+
+        var ex = await Assert.ThrowsAsync<StaleElementError>(() => new Win32Provider().FindScopedElementAsync(AnyLocator, Session, recycledScope));
+
+        Assert.Same(recycledScope, ex.Element);
+    }
 }

@@ -66,9 +66,12 @@ public sealed class Uia2Provider : IElementProvider
 
     // ---- IElementProvider implementation (public) + supporting private helpers ----
 
-    // Resolves the root element for the session's window; null if the handle is invalid or the window has been destroyed — never throws (FromHandle itself can throw ElementNotAvailableException for a destroyed HWND).
+    // Resolves the session's root: its RootElement (null if another provider wrapped it — never the window instead, which would search outside the popup), else its window's element; null if that handle is invalid or destroyed (FromHandle can throw ElementNotAvailableException for one). Throws StaleElementError only for a closed RootElement.
     private static AutomationElement? TryGetRoot(AppSession session)
     {
+        session.ThrowIfRootClosed();
+        if (session.RootElement is { } root)
+            return root.NativeHandle as AutomationElement;
         try { return AutomationElement.FromHandle(session.RootWindowHandle); }
         catch (Exception ex) when (ex is InvalidOperationException or ElementNotAvailableException or COMException) { return null; }
     }
@@ -157,6 +160,15 @@ public sealed class Uia2Provider : IElementProvider
     // Finds every descendant of scope's subtree matching the locator; empty if none match or scope came from a different provider, StaleElementError if scope is gone.
     public Task<IReadOnlyList<ElementHandle>> FindScopedElementsAsync(Locator locator, AppSession session, ElementHandle scope, CancellationToken ct = default) =>
         FindAllAsync(scope, locator, session, ct);
+
+    // Returns element's control-view parent, the UIA2 equivalent of Uia3Provider's; null at the top, for an element from a different provider, or when the read fails.
+    public Task<ElementHandle?> FindParentAsync(ElementHandle element, AppSession session, CancellationToken ct = default) => Task.Run(() =>
+    {
+        if (element.NativeHandle is not AutomationElement uia2)
+            return (ElementHandle?)null;
+        try { return TreeWalker.ControlViewWalker.GetParent(uia2) is { } parent ? Wrap(parent) : null; }
+        catch (Exception ex) when (ex is ElementNotAvailableException or COMException or InvalidOperationException) { return null; }
+    }, ct);
 
     // Snapshots the element tree rooted at the session's window using TreeWalker.ControlViewWalker.
     public Task<IReadOnlyList<ElementSnapshot>> SnapshotTreeAsync(AppSession session, CancellationToken ct = default)

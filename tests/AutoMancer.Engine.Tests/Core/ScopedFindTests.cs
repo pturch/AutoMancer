@@ -1,6 +1,8 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
 using System.Diagnostics;
+using AutoMancer.Engine.Actions;
 using AutoMancer.Engine.Core;
+using AutoMancer.Engine.Errors;
 
 namespace AutoMancer.Engine.Tests.Core;
 
@@ -58,17 +60,27 @@ public sealed class ScopedFindTests
             return scope is null ? matches : matches.Where(e => IsDescendantOf(e.Id, scope.Id));
         }
 
-        public Task<ElementHandle?> FindElementAsync(Locator locator, AppSession session, CancellationToken ct = default) =>
-            Task.FromResult(Matching(locator, null).FirstOrDefault());
+        // Searches from the session's root as the real providers do: a popup view's RootElement once it's checked still showing, else the whole tree.
+        public Task<ElementHandle?> FindElementAsync(Locator locator, AppSession session, CancellationToken ct = default)
+        {
+            session.ThrowIfRootClosed();
+            return Task.FromResult(Matching(locator, session.RootElement).FirstOrDefault());
+        }
 
-        public Task<IReadOnlyList<ElementHandle>> FindElementsAsync(Locator locator, AppSession session, CancellationToken ct = default) =>
-            Task.FromResult((IReadOnlyList<ElementHandle>)Matching(locator, null).ToList());
+        public Task<IReadOnlyList<ElementHandle>> FindElementsAsync(Locator locator, AppSession session, CancellationToken ct = default)
+        {
+            session.ThrowIfRootClosed();
+            return Task.FromResult((IReadOnlyList<ElementHandle>)Matching(locator, session.RootElement).ToList());
+        }
 
         public Task<ElementHandle?> FindScopedElementAsync(Locator locator, AppSession session, ElementHandle scope, CancellationToken ct = default) =>
             Task.FromResult(Matching(locator, scope).FirstOrDefault());
 
         public Task<IReadOnlyList<ElementHandle>> FindScopedElementsAsync(Locator locator, AppSession session, ElementHandle scope, CancellationToken ct = default) =>
             Task.FromResult((IReadOnlyList<ElementHandle>)Matching(locator, scope).ToList());
+
+        public Task<ElementHandle?> FindParentAsync(ElementHandle element, AppSession session, CancellationToken ct = default) =>
+            Task.FromResult<ElementHandle?>(null);
 
         public Task<IReadOnlyList<ElementSnapshot>> SnapshotTreeAsync(AppSession session, CancellationToken ct = default) =>
             Task.FromResult((IReadOnlyList<ElementSnapshot>)Array.Empty<ElementSnapshot>());
@@ -156,5 +168,98 @@ public sealed class ScopedFindTests
         // The Locator-scope overload re-resolves "Dialog" fresh as part of this call, so it finds the new dialog's Cancel button instead of failing.
         var viaFreshScope = await resolver.FindScopedAsync(Locator.ByName("Cancel"), Session, Locator.ByName("Dialog"));
         Assert.Equal("cancel-v2", viaFreshScope.Id);
+    }
+
+    // ---- Popup: an App view whose session is rooted at the popup's surface ----
+
+    // A main-window "Cancel" listed first and a popup surface holding a second one, so a search that leaked out of the popup would return the wrong one; showing false leaves the surface offscreen, like a closed pre-loaded WinUI3 popup.
+    private static (FakeTreeProvider Provider, ElementHandle Surface, ElementHandle Outside, ElementHandle Inside) BuildPopupScenario(bool showing = true)
+    {
+        var provider = new FakeTreeProvider();
+        var outside = new ElementHandle("cancel-main", "fake", new object()) { Name = "Cancel" };
+        var surface = new ElementHandle("menu", "fake", new object()) { Name = "Menu", ControlType = "Menu", Provider = provider, BoundingRect = new Rect(0, 0, 100, 100), IsOffscreen = !showing };
+        var inside = new ElementHandle("cancel-menu", "fake", new object()) { Name = "Cancel" };
+        provider.Add(outside, null);
+        provider.Add(surface, null);
+        provider.Add(inside, "menu");
+        return (provider, surface, outside, inside);
+    }
+
+    // Opens surface as a popup of an App over provider, the way App.OpenPopupCoreAsync does once detection has found it.
+    private static Popup OpenPopup(FakeTreeProvider provider, ElementHandle surface, string[]? providerChain = null, int implicitWaitMs = 0) =>
+        new(App.CreateForTesting(Session, [provider], new AppOptions { ProviderChain = providerChain ?? ["fake"], ImplicitWaitMs = implicitWaitMs }), surface, "context menu");
+
+    [Fact]
+    public async Task Popup_FindFindAllAndWaitFor_OnlySearchInsideThePopup_WhileTheAppStillSearchesTheSession()
+    {
+        var (provider, surface, outside, inside) = BuildPopupScenario();
+        var app = App.CreateForTesting(Session, [provider], new AppOptions { ProviderChain = ["fake"], ImplicitWaitMs = 0 });
+        var popup = new Popup(app, surface, "context menu");
+
+        Assert.Same(outside, await app.FindAsync(Locator.ByName("Cancel")));
+        Assert.Same(inside, await popup.FindAsync(Locator.ByName("Cancel")));
+        Assert.Same(inside, Assert.Single(await popup.FindAllAsync(Locator.ByName("Cancel"))));
+        Assert.Same(inside, await popup.WaitForAsync(Locator.ByName("Cancel"), _ => true));
+    }
+
+    // app.Force reuses its App's session, so a popup's Force view keeps the popup root without being told to.
+    [Fact]
+    public async Task Popup_ForceView_KeepsThePopupRoot()
+    {
+        var (provider, surface, _, inside) = BuildPopupScenario();
+
+        Assert.Same(inside, await OpenPopup(provider, surface).Force.FindAsync(Locator.ByName("Cancel")));
+    }
+
+    [Fact]
+    public async Task Popup_NoLongerShowing_FindThrowsStaleNamingThePopup()
+    {
+        var (provider, surface, _, _) = BuildPopupScenario(showing: false);
+
+        var ex = await Assert.ThrowsAsync<StaleElementError>(() => OpenPopup(provider, surface, implicitWaitMs: 5_000).FindAsync(Locator.ByName("Cancel")));
+
+        Assert.Same(surface, ex.Element);
+        Assert.Contains("context menu has closed", ex.Message);
+    }
+
+    // A closed popup's elements are gone with it, which is exactly what WaitUntilGoneAsync waits for.
+    [Fact]
+    public async Task Popup_NoLongerShowing_WaitUntilGoneSucceeds()
+    {
+        var (provider, surface, _, _) = BuildPopupScenario(showing: false);
+
+        await OpenPopup(provider, surface).WaitUntilGoneAsync(Locator.ByName("Cancel"));
+    }
+
+    // A popup's RootWindowHandle is the app's window, so window management through it would act on the app; it throws pointing at CloseAsync instead.
+    [Fact]
+    public async Task Popup_WindowManagement_ThrowsPointingAtCloseAsync()
+    {
+        var (provider, surface, _, _) = BuildPopupScenario();
+        var popup = OpenPopup(provider, surface);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => popup.CloseWindowAsync());
+        Assert.Contains("CloseAsync", ex.Message);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => popup.MoveWindowAsync(0, 0));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => popup.ResizeWindowAsync(100, 100));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => popup.SetWindowStateAsync(WindowState.Normal));
+    }
+
+    // A window view opened from a popup roots at that window, not inside the popup.
+    [Fact]
+    public void WithRootWindow_DropsAPopupRoot()
+    {
+        var (_, surface, _, _) = BuildPopupScenario();
+
+        Assert.Null(Session.WithRootElement(surface, "context menu").WithRootWindow((IntPtr)43).RootElement);
+    }
+
+    // A native #32768 surface comes from Win32Provider, which the configured chain may leave out; the popup searches through its surface's provider regardless.
+    [Fact]
+    public async Task Popup_SurfaceProviderOutsideTheChain_StillSearchesThroughIt()
+    {
+        var (provider, surface, _, inside) = BuildPopupScenario();
+
+        Assert.Same(inside, await OpenPopup(provider, surface, providerChain: ["uia3"]).FindAsync(Locator.ByName("Cancel")));
     }
 }

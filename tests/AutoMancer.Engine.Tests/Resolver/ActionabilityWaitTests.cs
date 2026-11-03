@@ -45,6 +45,9 @@ public sealed class ActionabilityWaitTests
         public Task<IReadOnlyList<ElementHandle>> FindScopedElementsAsync(Locator locator, AppSession session, ElementHandle scope, CancellationToken ct = default) =>
             Task.FromResult((IReadOnlyList<ElementHandle>)Array.Empty<ElementHandle>());
 
+        public Task<ElementHandle?> FindParentAsync(ElementHandle element, AppSession session, CancellationToken ct = default) =>
+            Task.FromResult<ElementHandle?>(null);
+
         public Task<IReadOnlyList<ElementSnapshot>> SnapshotTreeAsync(AppSession session, CancellationToken ct = default) =>
             Task.FromResult((IReadOnlyList<ElementSnapshot>)Array.Empty<ElementSnapshot>());
     }

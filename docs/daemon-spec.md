@@ -381,14 +381,14 @@ dotnet test tests/AutoMancer.Daemon.Tests/ --filter "Category=Integration" -v
 
 ### Task 3.2.8: Expose the Visual Provider over HTTP
 
-**What:** Wires the engine's OCR/template-matching fallback (`VisualProvider`, roadmap-spec.md Stage 2.6) into `FindEndpoints`' resolver builder, so a session can opt into it via an `automancer:resolverChain` capability the same way `AppOptions.ProviderChain` works in C#. Routes **both** `automancer:text` (OCR, Stage 2.6.2) and `automancer:image` (template match against a base64 PNG, Stage 2.6.3) — the two are separate `LocatorStrategy` cases with different request shapes (`value` is the text to find vs. a base64 template image), don't treat them as one. **Depends on Phase 2 Stage 2.6 having shipped the engine-side `VisualProvider` — skip or defer this task entirely if Phase 2 hasn't reached that stage yet; there is nothing for the daemon to wire up before then.**
+**What:** Wires the engine's OCR/template-matching fallback (`VisualProvider`, roadmap-spec.md Future Work Ideas, "Visual Provider") into `FindEndpoints`' resolver builder, so a session can opt into it via an `automancer:resolverChain` capability the same way `AppOptions.ProviderChain` works in C#. Routes **both** `automancer:text` (OCR, Visual Provider OCR path) and `automancer:image` (template match against a base64 PNG, Visual Provider template path) — the two are separate `LocatorStrategy` cases with different request shapes (`value` is the text to find vs. a base64 template image), don't treat them as one. **Depends on the engine-side `VisualProvider`, which is unscheduled Future Work (not part of Phase 2) — skip or defer this task entirely until it has been built; there is nothing for the daemon to wire up before then.**
 
 **Creates:**
-- `src/AutoMancer.Daemon/Endpoints/FindEndpoints.cs` — extend `BuildResolver` to accept `automancer:resolverChain` from session capabilities and include `"visual"` when requested; extend `ParseRequest` to route `automancer:text` → `Locator.ByOcrText` and `automancer:image` → `Locator.ByTemplateImage` (naming per whatever Stage 2.6.2/2.6.3 actually land as)
+- `src/AutoMancer.Daemon/Endpoints/FindEndpoints.cs` — extend `BuildResolver` to accept `automancer:resolverChain` from session capabilities and include `"visual"` when requested; extend `ParseRequest` to route `automancer:text` → `Locator.ByOcrText` and `automancer:image` → `Locator.ByTemplateImage` (naming per whatever the Visual Provider's OCR/template tasks land as)
 - `src/AutoMancer.Daemon/Endpoints/SessionEndpoints.cs` — extend `ParseCapabilities` to read `automancer:resolverChain`
 
 
-- [ ] **Implement and smoke test (once Stage 2.6 has shipped)**
+- [ ] **Implement and smoke test (once the Visual Provider has been built)**
 
 ```bash
 dotnet build src/AutoMancer.Daemon/AutoMancer.Daemon.csproj

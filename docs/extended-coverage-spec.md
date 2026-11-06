@@ -4,13 +4,13 @@
 >
 > **Version control stays manual.** Whoever picks up a task commits deliberately — nothing in this workflow auto-commits or auto-pushes. Bash blocks in this document are implementation reference — execute the build/test lines only, never the git lines.
 
-**Phase:** 2 of 3 — this plan deepens the Phase 1 engine surface (richer locators, wait/resilience primitives, native fallbacks, a visual provider, and UIA pattern coverage). No Phase 1 source files are removed or have their existing signatures changed; every task here is additive. **Completing this phase is the v1 milestone** — a hardened, complete C# engine, CLI, and test adapter, shippable on its own. Phase 3 (daemon + SDKs) is deliberately deferred, long-running future work picked up later, not the next phase in the queue. See [roadmap-spec.md](./roadmap-spec.md) for how this fits into the overall three-phase plan. **Task numbers here are the same numbers as roadmap-spec.md's batches** — Task `2.1.7` below is batch `2.1.7` there, not a separately-tracked ID. Each stage's tasks restart at `.1`, independent of every other stage's count, so a stage never needs renumbering because a different stage gained or lost a task.
+**Phase:** 2 of 3 — this plan deepens the Phase 1 engine surface (richer locators, wait/resilience primitives, native fallbacks, idle-wait and visual-regression, and UIA pattern coverage). No Phase 1 source files are removed or have their existing signatures changed; every task here is additive. **Completing this phase is the v1 milestone** — a hardened, complete C# engine, CLI, and test adapter, shippable on its own. Phase 3 (daemon + SDKs) is deliberately deferred, long-running future work picked up later, not the next phase in the queue. See [roadmap-spec.md](./roadmap-spec.md) for how this fits into the overall three-phase plan. **Task numbers here are the same numbers as roadmap-spec.md's batches** — Task `2.1.7` below is batch `2.1.7` there, not a separately-tracked ID. Each stage's tasks restart at `.1`, independent of every other stage's count, so a stage never needs renumbering because a different stage gained or lost a task.
 
-**Goal:** Take the Phase 1 engine — UIA3/UIA2/Win32 providers, `ElementResolver`, the full interaction/wait surface, and the `AutoMancer.Testing` adapter — and extend it with the coverage a real automation suite eventually needs but a proof of concept doesn't: locators for unlabeled/custom-property/scoped/virtualized-list elements, a canned wait vocabulary, stale-element resilience, native context menus, a resource-leak diagnostic, an accessibility audit, a visual (OCR/template) fallback provider plus the general-purpose idle-wait/visual-regression capabilities that reuse its screenshot plumbing, DPI/OS hardening, and the UIA pattern actions (`Toggle`/`ExpandCollapse`/`Selection`/`Grid`/`RangeValue`/clipboard) Phase 1 never reached — which Phase 3's daemon and SDKs also happen to assume exist, whenever that phase is picked up.
+**Goal:** Take the Phase 1 engine — UIA3/UIA2/Win32 providers, `ElementResolver`, the full interaction/wait surface, and the `AutoMancer.Testing` adapter — and extend it with the coverage a real automation suite eventually needs but a proof of concept doesn't: locators for unlabeled/custom-property/scoped/virtualized-list elements, a canned wait vocabulary, stale-element resilience, native context menus, a resource-leak diagnostic, an accessibility audit, the general-purpose idle-wait and visual-regression capabilities, DPI/OS hardening, and the UIA pattern actions (`Toggle`/`ExpandCollapse`/`Selection`/`Grid`/`RangeValue`/clipboard) Phase 1 never reached — which Phase 3's daemon and SDKs also happen to assume exist, whenever that phase is picked up.
 
 **Architecture:** Every task in this plan touches only `AutoMancer.Engine` (and, for Stage 2.2's `Expect()` extension, `AutoMancer.Testing`) — no `AutoMancer.Daemon` project exists yet, so nothing here is reachable over HTTP. `ElementHandle` stays opaque throughout (only `Id`/`NativeHandle` public) — Phase 3's daemon element registry depends on that contract holding. Where a new capability wraps a UIA pattern the engine doesn't already touch (`TogglePattern`, `GridPattern`, `RangeValuePattern`, …), it follows the existing `IElementOperator`-optional, no-op-when-unsupported shape `ScrollAction`/`SetFocusAction` already established in Phase 1, rather than inventing a new dispatch convention. "Unsupported" means the element lacks the pattern, or Win32 has no equivalent — never "not a UIA3 handle": every UIA action covers both UIA3 and UIA2 handles, and Win32 hwnds too where user32 has a real counterpart (`ScrollAction`/`SetFocusAction` originally returned early for anything not UIA3, so a UIA2-resolved handle silently didn't scroll or focus; fixed alongside Task 2.2.5, with `SetFocusAction` also covering Win32 hwnds via `AttachThreadInput` + `SetFocus`. Scrolling into view stays a Win32 no-op: user32 has no general "scroll this child window into view", and list rows — what you'd scroll to — aren't windows the Win32 provider can find).
 
-**Prior art:** `WaitConditions` (Stage 2.2) mirrors Selenium's `ExpectedConditions` — a starter vocabulary instead of every caller hand-rolling predicates. The Visual Provider batches of Stage 2.6 are the fallback tier neither Selenium, Playwright, nor WinAppDriver offer for apps with no accessibility tree at all; that same stage's `WaitForIdleAsync`/visual-regression batches are general-purpose and apply to any app, not just no-UIA ones.
+**Prior art:** `WaitConditions` (Stage 2.2) mirrors Selenium's `ExpectedConditions` — a starter vocabulary instead of every caller hand-rolling predicates. Stage 2.6's `WaitForIdleAsync`/visual-regression batches are general-purpose and apply to any app; the OCR/template-matching Visual Provider is unscheduled Future Work.
 
 **Tech Stack:** C# latest / .NET 10 Windows (`net10.0-windows10.0.22621.0`), `Interop.UIAutomationClient` (UIA3 COM — already referenced; this phase adds `IUIAutomationRegistrar` for custom-property GUID resolution and `TogglePattern`/`ExpandCollapsePattern`/`SelectionItemPattern`/`SelectionPattern`/`GridPattern`/`TablePattern`/`RangeValuePattern` usage), `Windows.Media.Ocr.OcrEngine` (on-device OCR via the existing `windows10.x` TFM suffix — no extra package, per CLAUDE.md), `OpenCvSharp4.Windows` (new — template matching), `System.Windows.Clipboard` (already available via `UseWPF`, no new dependency — see Task 2.8.1), raw Win32 P/Invoke additions to `NativeMethods.cs` (`GetGuiResources`, `GetMenu`/`GetSubMenu`/`GetMenuItemInfo`/`TrackPopupMenuEx`).
 
@@ -37,8 +37,7 @@ src/AutoMancer.Engine/
 ├── Providers/
 │   ├── Uia3Provider.cs, Uia2Provider.cs, Win32Provider.cs
 │   │                                 implement the scoped find methods, using scope as the search root
-│   ├── NativeMethods.cs              GetGuiResources, GetMenu family (context menu fallback)
-│   └── VisualProvider.cs             IElementProvider via OCR + template matching
+│   └── NativeMethods.cs              GetGuiResources, GetMenu family (context menu fallback)
 ├── Actions/
 │   ├── PopupAction.cs                opens a popup from its trigger and detects it (context menus, dropdowns, tooltips, flyouts; native HMENU through Win32Provider)
 │   ├── ClipboardAction.cs            GetTextAsync/SetTextAsync, not element-scoped
@@ -48,7 +47,7 @@ src/AutoMancer.Engine/
 │   ├── GridAction.cs                 GridPattern/TablePattern row/column/cell access
 │   └── RangeValueAction.cs           RangeValuePattern get/set
 ├── Diagnostics/
-│   ├── ResourceWatch.cs              GDI/USER handle + working-set sampler
+│   ├── ResourceMonitor.cs, ResourceSample.cs, ResourceSummary.cs   static capture/measure for an app or the engine host; GDI/USER/handle/thread/memory reading and before/after deltas
 │   └── AccessibilityAuditor.cs       unnamed-interactive-element tree walker
 ├── App.cs                            façade methods for every task below
 └── AppOptions.cs / Core/ElementProviderOptions.cs   ReresolveOnStale, debug-screenshot flag
@@ -62,7 +61,6 @@ src/AutoMancer.Cli/Commands/
 examples/
 ├── notepad/
 ├── winforms-calculator/
-├── legacy-no-uia/                    Visual Provider showcase
 └── xunit-test-adapter/
 
 tests/AutoMancer.Engine.Tests/
@@ -807,16 +805,16 @@ Passed: the 35 tests above, twice in a row, and the full engine integration suit
 
 ## Stage 2.4 — Resource Diagnostics
 
-### Task 2.4.1: `ResourceWatch`
+### Task 2.4.1: Resource measurement
 
-**What:** Samples `GetGuiResources` (`GR_GDIOBJECTS`/`GR_USEROBJECTS`) and `Process.WorkingSet64` on a timer. `App.WatchResourcesAsync(TimeSpan interval)` returns an `IAsyncDisposable` sampler plus the snapshot history — disposing stops the timer; the history is readable at any point via a property on the returned handle.
+**What:** `ResourceMonitor.MeasureAsync(App app, Func<Task> work)` reads the app's GDI/USER objects (`GetGuiResources`), kernel handle count, thread count, working set and private bytes before and after `work`, and returns a `ResourceSummary` with after-minus-before deltas and a readable table `ToString()`. `Capture(app)` takes a single reading and `ResourceSample.DiffTo` compares any two, for checkpoints. Internal `CaptureHost()`/`MeasureHostAsync(work)` measure the process running AutoMancer (not the machine) with no `App` involved, garbage-collecting at each reading so unfinalized wrappers do not read as leaks; they are internal because checking the engine itself is the maintainers' question, not a tester's, and the README and sample only cover the app-side API. It lives outside `App` because it needs only `App.ProcessId`. (An earlier timer-based `ResourceWatch` sampler and an `App`-method version with a `ResourceTarget` flag were built and removed: a sample history added a background thread, a lock and polling waits that the leak use case never read.)
 
 **Creates:**
 - `src/AutoMancer.Engine/Providers/NativeMethods.cs` — add `GetGuiResources` P/Invoke, `GR_GDIOBJECTS`/`GR_USEROBJECTS` constants
-- `src/AutoMancer.Engine/Diagnostics/ResourceWatch.cs` — `IAsyncDisposable` sampler; `IReadOnlyList<(DateTime Timestamp, int GdiObjects, int UserObjects, long WorkingSetBytes)> Samples`
-- `src/AutoMancer.Engine/App.cs` — `WatchResourcesAsync(TimeSpan interval, CancellationToken ct = default)` → `ResourceWatch`
+- `src/AutoMancer.Engine/Diagnostics/ResourceMonitor.cs`, `ResourceSample.cs`, `ResourceSummary.cs`
+- `src/AutoMancer.Engine/App.cs` — no change; `ResourceMonitor` uses the public `App.ProcessId`
 
-- [ ] **Implement and build**
+- [x] **Implement and build**
 
 ```bash
 dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
@@ -826,20 +824,22 @@ dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
 
 ---
 
-### Task 2.4.2: Integration test for `ResourceWatch`
+### Task 2.4.2: Tests for resource measurement
 
 **What:** Wraps a resource watch around a live app across several launch/kill cycles — reusing the existing Notepad/Paint test fixtures rather than a dedicated new one — and asserts the sample series is non-empty and plausible (handle counts and working-set bytes both present and within a sane range, not necessarily flat).
 
 **Creates:**
-- `tests/AutoMancer.Engine.Tests/Integration/ResourceWatchIntegrationTests.cs`
+- `tests/AutoMancer.Engine.Tests/Diagnostics/ResourceSummaryTests.cs`, `tests/AutoMancer.Engine.Tests/Integration/ResourceMeasureIntegrationTests.cs`
 
-- [ ] **Run integration tests**
+- [x] **Run integration tests**
 
 ```bash
-dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration&FullyQualifiedName~ResourceWatch"
+dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration&FullyQualifiedName~ResourceMeasure"
 ```
 
-**Done when:** `app.WatchResourcesAsync()` returns a sampled series of GDI/USER handle counts and working-set memory across a run. Stage 2.4 complete.
+**Done when:** `ResourceMonitor.MeasureAsync(app, work)` returns before/after GDI, USER, handle, thread and memory readings with deltas. Stage 2.4 complete.
+
+As built: the integration tests measure Notepad around typing, and measure the engine host (`ResourceMonitor.MeasureHostAsync`) across launch/kill cycles after one warm-up cycle. 20 `FindAsync` calls grow no handles, but 10 launch/kill cycles grew the host by roughly 30-50 kernel handles even after a GC, so `MeasureHostAsync_LaunchKillCycles_DoNotLeakHandles` currently fails against its bound of 20: an open finding in launch/kill, not yet traced to an owner.
 
 ---
 
@@ -900,89 +900,13 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration&FullyQ
 
 ---
 
-## Stage 2.6 — Visual Provider, Idle Wait, and Visual Regression
+## Stage 2.6 — Idle Wait and Visual Regression
 
-> **Two different capabilities share this stage because they're expected to share screenshot/pixel-diff plumbing, not because they solve the same problem.** Tasks 23–26 are the actual Visual Provider — a locator fallback for apps with no accessibility tree at all. Tasks 27–28 (`WaitForIdleAsync`, visual regression) are general-purpose and useful against any app, UIA-accessible or not; they're grouped here on the assumption they can reuse the capture/compare code Tasks 23–26 build, though that's only confirmed once 2.6.3 actually lands. See roadmap-spec.md's Stage 2.6 for the full split.
-
-### Task 2.6.1: `VisualProvider` skeleton
-
-**What:** Implements `IElementProvider` (find-only, matching every other provider's contract). Screenshots the target window via the existing `ScreenshotAction`'s GDI+ `BitBlt` path — no separate capture code — then hands the bitmap to whichever strategy branch (OCR or template) the incoming `Locator.Strategy` selects. Returns `null` on not-found, same as every other provider; never throws.
-
-**Creates:**
-- `src/AutoMancer.Engine/Providers/VisualProvider.cs` — `FindElementAsync`/`FindElementsAsync`/`SnapshotTreeAsync` (snapshot returns an empty tree — there's no accessibility tree to walk, only ad hoc find-by-text/find-by-image); `ProviderName => "visual"`
-
-- [ ] **Implement and build**
-
-```bash
-dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
-```
-
-**Done when:** Engine builds with 0 errors; `VisualProvider` compiles against `IElementProvider` with no strategy branches wired yet (Tasks 24–25 add them).
+> **Two general-purpose capabilities, useful against any app, UIA-accessible or not:** `WaitForIdleAsync` and visual regression. The Visual Provider (OCR and template-matching locator fallback) used to share this stage and now lives in "Future Work: Visual Provider" at the end of this document. See roadmap-spec.md's Stage 2.6.
 
 ---
 
-### Task 2.6.2: OCR path — `automancer:text` strategy
-
-**What:** `Windows.Media.Ocr.OcrEngine` (on-device, no external service, no extra package — available via the `windows10.x` TFM suffix per CLAUDE.md). Adds `automancer:text` as a locator value the `VisualProvider` recognizes: runs OCR against the captured bitmap, matches recognized word/line bounding boxes against the locator's text (exact or substring — substring by default, matching how `ToHaveText` already works elsewhere), and returns a synthetic `ElementHandle` whose `BoundingRect` is the matched text's screen rect and whose `NativeHandle` is the OCR result (opaque, per the `ElementHandle` contract).
-
-**Creates:**
-- `src/AutoMancer.Engine/Core/LocatorStrategy.cs` — add `AutoMancerText` (or reuse `Property`'s envelope pattern — pick whichever keeps `VisualProvider`'s dispatch simplest)
-- `src/AutoMancer.Engine/Core/Locator.cs` — add `Locator ByText(string text)` (the `app.find(text: ...)` surface referenced in the roadmap is the SDK-layer shorthand for this in Phase 3; the engine-level entry point is this factory)
-- `src/AutoMancer.Engine/Providers/VisualProvider.cs` — OCR branch using `OcrEngine.TryCreateFromUserProfileLanguages()` → `RecognizeAsync`
-
-- [ ] **Implement and build**
-
-```bash
-dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
-```
-
-**Done when:** Engine builds with 0 errors. Live behavior verified in Task 2.6.4.
-
----
-
-### Task 2.6.3: Template matching — `automancer:image` strategy
-
-**What:** `OpenCvSharp4.Windows` — a new NuGet dependency, added to `AutoMancer.Engine.csproj`. `Locator.ByImage(byte[] templatePng)` (or a base64-string overload, matching Phase 3's `automancer:image` wire format) runs `Cv2.MatchTemplate` against the captured window bitmap and the decoded template, thresholded for a confident match, returning a synthetic `ElementHandle` at the matched region.
-
-**⚠️ Verify `OpenCvSharp4.Windows` actually has a build compatible with `net10.0-windows10.0.22621.0` before starting this task.** It's a native-wrapping package (bundles OpenCV's native binaries), and those tend to lag behind bleeding-edge target framework versions. If no compatible version is published yet, options are: target `net8.0-windows`/`net9.0-windows` for just this one dependency via multi-targeting (adds real build complexity), pin an older OpenCvSharp4 release and confirm it still loads under .NET 10, or swap to a different template-matching approach (a hand-rolled normalized cross-correlation over `System.Drawing`/`System.Numerics` is slower but dependency-free) if neither is acceptable. Don't assume this "just works" — confirm it first.
-
-**Creates:**
-- `src/AutoMancer.Engine/AutoMancer.Engine.csproj` — add `OpenCvSharp4.Windows` package reference
-- `src/AutoMancer.Engine/Core/Locator.cs` — add `ByImage(byte[] templatePng)` factory
-- `src/AutoMancer.Engine/Providers/VisualProvider.cs` — template-match branch
-
-- [ ] **Implement and build**
-
-```bash
-dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
-```
-
-**Done when:** Engine builds with 0 errors, `OpenCvSharp4.Windows` restores cleanly on `net10.0-windows10.0.22621.0`.
-
----
-
-### Task 2.6.4: Wire `visual` into the default provider chain
-
-**What:** Adds `"visual"` to the default `ElementProviderOptions.ProviderChain`, as the last fallback after `win32` — an integration test against a no-UIA test app (e.g. one written in raw GDI/Direct2D with no accessibility support) proves `app.find(text: "Submit Order")` resolves through the full chain when no other provider can see the element.
-
-**⚠️ Two existing unit tests assert the exact 3-element default chain and will fail once `"visual"` is added — update them as part of this task, not as an incidental side effect discovered later.** `tests/AutoMancer.Engine.Tests/AppOptionsTests.cs` and `tests/AutoMancer.Engine.Tests/Core/ElementProviderOptionsTests.cs` both currently assert `Assert.Equal(["uia3", "uia2", "win32"], options.ProviderChain)` against `AppOptions.Default`/`ElementProviderOptions.Default`. Both need their expected array updated to `["uia3", "uia2", "win32", "visual"]`.
-
-**Creates:**
-- `src/AutoMancer.Engine/Core/ElementProviderOptions.cs` — default chain becomes `["uia3", "uia2", "win32", "visual"]`
-- `tests/AutoMancer.Engine.Tests/AppOptionsTests.cs`, `tests/AutoMancer.Engine.Tests/Core/ElementProviderOptionsTests.cs` — update the expected default-chain array in both (see warning above)
-- `tests/AutoMancer.Engine.Tests/Integration/VisualProviderIntegrationTests.cs` — OCR-text find and template-image find, both against a no-UIA test app
-
-- [ ] **Run integration tests**
-
-```bash
-dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration&FullyQualifiedName~VisualProvider"
-```
-
-**Done when:** `app.find(text: "Submit Order")` finds a button by its visible text in an app with no UIA elements.
-
----
-
-### Task 2.6.5: `App.WaitForIdleAsync()`
+### Task 2.6.1: `App.WaitForIdleAsync()`
 
 **What:** Diffs consecutive `ScreenshotAsync()` captures at a short interval until two frames match within a pixel-difference threshold, or a timeout is hit. Replaces the ad-hoc `Task.Delay(300) // flyout animation` waits already scattered through the Phase 1 integration test suite with a real settledness check — likely able to reuse the pixel-compare plumbing Task 2.6.3 builds for template matching rather than needing a separate diff implementation, assuming that plumbing ends up general enough once 2.6.3 actually lands.
 
@@ -999,9 +923,9 @@ dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
 
 ---
 
-### Task 2.6.6: Visual regression snapshot assertion
+### Task 2.6.2: Visual regression snapshot assertion
 
-**What:** Captures the current window/element region and pixel-diffs it against a stored baseline PNG, failing past a configurable difference threshold. Likely reuses the screenshot/pixel-compare plumbing built for template matching in Task 2.6.3, if that plumbing turns out general enough for a full-image diff rather than just a template match.
+**What:** Captures the current window/element region and pixel-diffs it against a stored baseline PNG, failing past a configurable difference threshold. Likely shares its pixel-compare code with Task 2.6.1.
 
 **`DpiHelper.PhysicalToLogical` is not directly reusable here — check its actual signature before assuming otherwise.** `ScreenshotAsync()` captures physical pixels, and the same logical window is a different physical *pixel size* at 100% vs. 150% DPI, so a naive pixel-diff spuriously fails whenever the baseline and the live capture were recorded at different scale factors. But `DpiHelper.PhysicalToLogical(double physicalX, double physicalY, int dpi, Rect windowRect)` converts a single *coordinate pair*, not a bitmap — there's nothing to "call it on" an image. What's actually needed is a bitmap **resize** using the DPI scale ratio (`dpi / 96.0` — the same ratio `DpiHelper` already computes internally as `BaseDpi`-relative `scale`, just not exposed as a standalone factor): resize whichever of the baseline/live capture was taken at the non-reference DPI down (or up) to match the other's pixel dimensions before diffing. Add a small `DpiHelper.GetScale(int dpi) => dpi / 96.0` (or inline the ratio directly in `VisualRegression`) rather than trying to route this through `PhysicalToLogical`.
 
@@ -1017,7 +941,7 @@ dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
 dotnet test tests/AutoMancer.Engine.Tests/ --filter "VisualRegressionTests"
 ```
 
-**Done when:** A visual regression assertion fails when a window's rendered output drifts from a stored baseline. Stage 2.6 complete — the full UIA3 → UIA2 → Win32 → Visual fallback chain is done, plus animation-settle waits and pixel-level regression assertions. This stage is entirely engine-side; exposing `VisualProvider` over HTTP is Phase 3's job (daemon-spec.md Task 3.2.8).
+**Done when:** A visual regression assertion fails when a window's rendered output drifts from a stored baseline. Stage 2.6 complete — animation-settle waits and pixel-level regression assertions. This stage is entirely engine-side.
 
 ---
 
@@ -1077,21 +1001,20 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration"
 
 ### Task 2.7.4: Example projects
 
-**What:** Four runnable example projects demonstrating the engine's public surface for new C# consumers — `examples/notepad/` (the README's Calculator-style walkthrough, expanded), `examples/winforms-calculator/` (a classic Win32/WinForms app, exercising the UIA2 fallback path), `examples/legacy-no-uia/` (a Visual Provider showcase — the same no-UIA test app Task 2.6.4 already needs), `examples/xunit-test-adapter/` (a minimal `AutoMancer.Testing.XUnit` walkthrough, complementing `samples/ConsumerNotepadTests`).
+**What:** Three runnable example projects demonstrating the engine's public surface for new C# consumers — `examples/notepad/` (the README's Calculator-style walkthrough, expanded), `examples/winforms-calculator/` (a classic Win32/WinForms app, exercising the UIA2 fallback path), `examples/xunit-test-adapter/` (a minimal `AutoMancer.Testing.XUnit` walkthrough, complementing `samples/ConsumerNotepadTests`).
 
 **Creates:**
-- `examples/notepad/`, `examples/winforms-calculator/`, `examples/legacy-no-uia/`, `examples/xunit-test-adapter/` — each a minimal runnable console or test project with its own short README
+- `examples/notepad/`, `examples/winforms-calculator/`, `examples/xunit-test-adapter/` — each a minimal runnable console or test project with its own short README
 
 - [ ] **Build and run each example**
 
 ```bash
 dotnet build examples/notepad/
 dotnet build examples/winforms-calculator/
-dotnet build examples/legacy-no-uia/
 dotnet build examples/xunit-test-adapter/
 ```
 
-**Done when:** All four example projects build and run. Stage 2.7 complete — DPI/OS compat confidence, annotated failure diagnostics, and working examples. This stage is entirely engine-side; exposing the debug-screenshot flag over HTTP is Phase 3's job (daemon-spec.md Task 3.2.5/`automancer:debugScreenshots`).
+**Done when:** All three example projects build and run. Stage 2.7 complete — DPI/OS compat confidence, annotated failure diagnostics, and working examples. This stage is entirely engine-side; exposing the debug-screenshot flag over HTTP is Phase 3's job (daemon-spec.md Task 3.2.5/`automancer:debugScreenshots`).
 
 ---
 
@@ -1495,6 +1418,91 @@ As built:
 
 ---
 
+## Future Work: Visual Provider (OCR and Template Matching)
+
+> **Unscheduled — not part of Phase 2.** These tasks were Stage 2.6 Tasks 2.6.1–2.6.4 before that stage was narrowed to idle wait and visual regression (see roadmap-spec.md "Future Work Ideas"). Kept here as the ready-made task breakdown if the Visual Provider is picked up; the checkboxes and `Task VP.n` numbering are outside the Phase 2 sequence, and nothing in v1 depends on them. Task VP.4 is the integration step that also needs a no-UIA test app, which does not exist yet.
+
+---
+
+### Task VP.1: `VisualProvider` skeleton
+
+**What:** Implements `IElementProvider` (find-only, matching every other provider's contract). Screenshots the target window via the existing `ScreenshotAction`'s GDI+ `BitBlt` path — no separate capture code — then hands the bitmap to whichever strategy branch (OCR or template) the incoming `Locator.Strategy` selects. Returns `null` on not-found, same as every other provider; never throws.
+
+**Creates:**
+- `src/AutoMancer.Engine/Providers/VisualProvider.cs` — `FindElementAsync`/`FindElementsAsync`/`SnapshotTreeAsync` (snapshot returns an empty tree — there's no accessibility tree to walk, only ad hoc find-by-text/find-by-image); `ProviderName => "visual"`
+
+- [ ] **Implement and build**
+
+```bash
+dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
+```
+
+**Done when:** Engine builds with 0 errors; `VisualProvider` compiles against `IElementProvider` with no strategy branches wired yet (Tasks VP.2–VP.3 add them).
+
+---
+
+### Task VP.2: OCR path — `automancer:text` strategy
+
+**What:** `Windows.Media.Ocr.OcrEngine` (on-device, no external service, no extra package — available via the `windows10.x` TFM suffix per CLAUDE.md). Adds `automancer:text` as a locator value the `VisualProvider` recognizes: runs OCR against the captured bitmap, matches recognized word/line bounding boxes against the locator's text (exact or substring — substring by default, matching how `ToHaveText` already works elsewhere), and returns a synthetic `ElementHandle` whose `BoundingRect` is the matched text's screen rect and whose `NativeHandle` is the OCR result (opaque, per the `ElementHandle` contract).
+
+**Creates:**
+- `src/AutoMancer.Engine/Core/LocatorStrategy.cs` — add `AutoMancerText` (or reuse `Property`'s envelope pattern — pick whichever keeps `VisualProvider`'s dispatch simplest)
+- `src/AutoMancer.Engine/Core/Locator.cs` — add `Locator ByText(string text)` (the `app.find(text: ...)` surface referenced in the roadmap is the SDK-layer shorthand for this in Phase 3; the engine-level entry point is this factory)
+- `src/AutoMancer.Engine/Providers/VisualProvider.cs` — OCR branch using `OcrEngine.TryCreateFromUserProfileLanguages()` → `RecognizeAsync`
+
+- [ ] **Implement and build**
+
+```bash
+dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
+```
+
+**Done when:** Engine builds with 0 errors. Live behavior verified in Task VP.4.
+
+---
+
+### Task VP.3: Template matching — `automancer:image` strategy
+
+**What:** `OpenCvSharp4.Windows` — a new NuGet dependency, added to `AutoMancer.Engine.csproj`. `Locator.ByImage(byte[] templatePng)` (or a base64-string overload, matching Phase 3's `automancer:image` wire format) runs `Cv2.MatchTemplate` against the captured window bitmap and the decoded template, thresholded for a confident match, returning a synthetic `ElementHandle` at the matched region.
+
+**⚠️ Verify `OpenCvSharp4.Windows` actually has a build compatible with `net10.0-windows10.0.22621.0` before starting this task.** It's a native-wrapping package (bundles OpenCV's native binaries), and those tend to lag behind bleeding-edge target framework versions. If no compatible version is published yet, options are: target `net8.0-windows`/`net9.0-windows` for just this one dependency via multi-targeting (adds real build complexity), pin an older OpenCvSharp4 release and confirm it still loads under .NET 10, or swap to a different template-matching approach (a hand-rolled normalized cross-correlation over `System.Drawing`/`System.Numerics` is slower but dependency-free) if neither is acceptable. Don't assume this "just works" — confirm it first.
+
+**Creates:**
+- `src/AutoMancer.Engine/AutoMancer.Engine.csproj` — add `OpenCvSharp4.Windows` package reference
+- `src/AutoMancer.Engine/Core/Locator.cs` — add `ByImage(byte[] templatePng)` factory
+- `src/AutoMancer.Engine/Providers/VisualProvider.cs` — template-match branch
+
+- [ ] **Implement and build**
+
+```bash
+dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
+```
+
+**Done when:** Engine builds with 0 errors, `OpenCvSharp4.Windows` restores cleanly on `net10.0-windows10.0.22621.0`.
+
+---
+
+### Task VP.4: Wire `visual` into the default provider chain
+
+**What:** Adds `"visual"` to the default `ElementProviderOptions.ProviderChain`, as the last fallback after `win32` — an integration test against a no-UIA test app (e.g. one written in raw GDI/Direct2D with no accessibility support) proves `app.find(text: "Submit Order")` resolves through the full chain when no other provider can see the element.
+
+**⚠️ Two existing unit tests assert the exact 3-element default chain and will fail once `"visual"` is added — update them as part of this task, not as an incidental side effect discovered later.** `tests/AutoMancer.Engine.Tests/AppOptionsTests.cs` and `tests/AutoMancer.Engine.Tests/Core/ElementProviderOptionsTests.cs` both currently assert `Assert.Equal(["uia3", "uia2", "win32"], options.ProviderChain)` against `AppOptions.Default`/`ElementProviderOptions.Default`. Both need their expected array updated to `["uia3", "uia2", "win32", "visual"]`.
+
+**Creates:**
+- `src/AutoMancer.Engine/Core/ElementProviderOptions.cs` — default chain becomes `["uia3", "uia2", "win32", "visual"]`
+- `tests/AutoMancer.Engine.Tests/AppOptionsTests.cs`, `tests/AutoMancer.Engine.Tests/Core/ElementProviderOptionsTests.cs` — update the expected default-chain array in both (see warning above)
+- `tests/AutoMancer.Engine.Tests/Integration/VisualProviderIntegrationTests.cs` — OCR-text find and template-image find, both against a no-UIA test app
+
+- [ ] **Run integration tests**
+
+```bash
+dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration&FullyQualifiedName~VisualProvider"
+```
+
+**Done when:** `app.find(text: "Submit Order")` finds a button by its visible text in an app with no UIA elements.
+
+
+---
+
 ## Constraints
 
 - Every `.cs` file starts with `// Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.`
@@ -1503,7 +1511,6 @@ As built:
 - No DI container — new classes wired manually at call sites, same as Phase 1
 - `ElementHandle` stays opaque throughout this phase — only `Id` (string) and `NativeHandle` (object) are public. Every new action/provider that needs native pattern access goes through the existing `Operator`/`NativeHandle` seam, never a new public field
 - Every new UIA-pattern action (`ToggleAction`, `ExpandCollapseAction`, `SelectionAction`, `GridAction`, `RangeValueAction`) follows `ScrollAction`/`SetFocusAction`'s established shape: no-op silently when the handle isn't a UIA element or the pattern isn't supported, never throw for "pattern not available"
-- `VisualProvider` returns `null`/empty on not-found and never throws, matching every other provider — only `ElementResolver` throws `ElementNotFoundError`
 - Nothing in this phase modifies an existing Phase 1 public method's signature — every task adds new surface, it doesn't change what's already shipped
 - Nothing in this phase requires `AutoMancer.Daemon` to exist — Phase 3 wraps whatever this phase produces, not the other way around
 
@@ -1517,12 +1524,11 @@ Mirrors roadmap-spec.md's per-phase checklist; see there for the authoritative, 
 - [x] Task 2.1.9 — scoped find disambiguates identically-matched elements, and virtualized-list find locates unrealized items
 - [x] Task 2.2.6 — `Expect()` and `WaitForAsync` share a wait-condition vocabulary
 - [ ] Task 2.3.4 — native context menu fallback works when UIA can't see the popup
-- [ ] Task 2.4.2 — resource watch returns a plausible sample series against a live app
+- [x] Task 2.4.2 — resource watch returns a plausible sample series against a live app
 - [ ] Task 2.5.3 — accessibility audit reports a deliberately-unnamed control
-- [ ] Task 2.6.4 — visual provider finds an element by rendered text with no UIA tree
-- [ ] Task 2.6.6 — visual regression assertion fails on a drifted baseline
+- [ ] Task 2.6.2 — visual regression assertion fails on a drifted baseline
 - [ ] Task 2.7.2–2.7.3 — DPI and Windows 10/11 compat confirmed
-- [ ] Task 2.7.4 — all four example projects build and run
+- [ ] Task 2.7.4 — all three example projects build and run
 - [ ] Task 2.8.6 — toggle/select/grid/clipboard all verified against a live app
 - [ ] Task 2.8.8 — a slider/progress bar's value round-trips through `RangeValueAction`
 - [ ] Task 2.9.8 — window views drive a dialog without a separate `App`, and popups of several kinds open, act and close through one `Popup` handle (runs before Task 2.3.4)

@@ -365,7 +365,7 @@ Batch numbers below match the task numbers 1:1 in `extended-coverage-spec.md` (e
 
 | Batch | Work |
 |---|---|
-| 2.4.1 | Resource measurement — `ResourceMonitor.MeasureAsync(app, work)` reads GDI/USER objects, kernel handles, threads, working set and private bytes before and after `work` and returns a `ResourceSummary` of deltas; `Capture`/`DiffTo` for checkpoints; an internal `MeasureHostAsync` checks the engine process itself for leaks |
+| 2.4.1 | Resource measurement — `ResourceMonitor.MeasureAsync(app, work)` reads GDI/USER objects, kernel handles, threads, working set and private bytes before and after `work` and returns a `ResourceSummary` of deltas; `Capture`/`DiffTo` for checkpoints |
 | 2.4.2 | Tests — unit tests for the summary, plus integration tests measuring a live Notepad and the engine host across launch/kill cycles |
 
 **After 2.4.2:** The engine can report its own resource footprint over a run. Multi-monitor positioning, the other half of the original diagnostics idea, stays in Future Work Ideas — it needs a physical multi-monitor rig to pay off, which this doesn't. Phase 2 continues into the accessibility audit.

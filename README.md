@@ -7,7 +7,7 @@
 
 Bring older Windows applications back to life. AutoMancer enables modern testing patterns for UI automation with a C# class library and CLI.
 
-> **Status:** Phase 1 (engine + CLI) is complete and this is what's usable today. Phase 2 (richer locators, resilience, diagnostics, a visual fallback provider, and full UIA pattern coverage) is in progress. Its completion will be the v1 milestone. The HTTP daemon and Python/TypeScript SDKs are deliberately deferred future work, to be picked up once v1 has had real time in the field. See [docs/roadmap-spec.md](docs/roadmap-spec.md) for where things actually stand.
+> **Status:** Phase 1 (engine + CLI) is complete and this is what's usable today. Phase 2 (richer locators, resilience, diagnostics, idle-wait and visual regression, and full UIA pattern coverage) is in progress. Its completion will be the v1 milestone. The HTTP daemon and Python/TypeScript SDKs are deliberately deferred future work, to be picked up once v1 has had real time in the field. See [docs/roadmap-spec.md](docs/roadmap-spec.md) for where things actually stand.
 
 ## Overview:
 
@@ -328,6 +328,30 @@ Expect(element).ToBeVisible();
 `AutoMancer.Testing.XUnit` builds on that for xUnit. It provides an fixture for launch/teardown, plus a base class that exposes `App` and `Expect` to your test classes. When `AutoMancerTestOptions.CaptureScreenshotsOnFailure` is on, a failed validation automatically captures a screenshot and folds the path into the assertion message.
 
 See **[TESTING.md](TESTING.md)** for the full guide, including the fixture pattern, and [`samples/ConsumerNotepadTests`](samples/ConsumerNotepadTests) for a complete working test project built entirely on public API. [`samples/ConsumerVsCodeTests`](samples/ConsumerVsCodeTests) is a second one against a more complex, actively-changing Electron app — a useful second data point for what driving a real app beyond a simple native control actually takes.
+
+### Resource Diagnostics:
+
+Check whether an operation leaks GDI/USER objects, kernel handles, threads or memory in the app under test:
+
+```csharp
+// One call: readings before and after the work, as deltas.
+var cost = await ResourceMonitor.MeasureAsync(app, async () => await app.TypeAsync(document, "hello"));
+Assert.True(cost.HandleDelta <= 5, cost.ToString());   // ToString prints a before/after/delta table
+
+// Or take readings at checkpoints you choose and compare any two.
+var start = ResourceMonitor.Capture(app);
+await OpenReport();
+var open = ResourceMonitor.Capture(app);
+await CloseReport();
+var closed = ResourceMonitor.Capture(app);
+var leaked = start.DiffTo(closed);                       // earlier.DiffTo(later)
+```
+
+A few things to know when reading the numbers:
+- Each reading covers GDI objects, USER objects, kernel handles, threads, working set and private bytes. Handle counts and memory drift a little on their own, so compare against a small bound rather than zero.
+- Run the flow once before you start measuring, so one-time setup (UI Automation, COM, thread pool) isn't counted as growth.
+
+See [`samples/ConsumerNotepadTests/ResourceMeasureDemoTests.cs`](samples/ConsumerNotepadTests/ResourceMeasureDemoTests.cs) for working examples against a live Notepad.
 
 ## Logging:
 

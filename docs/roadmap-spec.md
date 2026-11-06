@@ -63,8 +63,8 @@ This project ships in three distinct phases. **Phase 1** is a self-contained C# 
 ║   Stage 2.5: Accessibility Audit ────► unnamed-element   ║
 ║       │                                 report           ║
 ║       │                                                  ║
-║   Stage 2.6: Visual Provider ────────► OCR + template    ║
-║       │                        find; +idle-wait/regression║
+║   Stage 2.6: Idle Wait + Visual ─────► WaitForIdle,      ║
+║       │                 Regression      pixel baseline   ║
 ║       │                                                  ║
 ║   Stage 2.7: Engine Hardening ───────► DPI matrix,       ║
 ║       │                               Win10/11, examples✓║
@@ -100,7 +100,7 @@ This project ships in three distinct phases. **Phase 1** is a self-contained C# 
 
 Phase 1 covers the full arc from first find to a complete interaction surface and a test adapter layer — proof of concept through "a C# consumer has everything they need" — in one phase, so there's no artificial seam between "does it work" and "is it complete." Stage 1.9 (test adapter layer) is sequenced at the end of Phase 1 because it's the natural next thing a C# consumer reaches for once the interaction surface is complete, and it only adds new projects (`AutoMancer.Testing`, `AutoMancer.Testing.XUnit`) on top of the `App`/`Locator` surface.
 
-Phase 2 deepens that surface — richer locators, canned wait conditions, opt-in resilience, a native context-menu fallback, a resource-leak diagnostic, a visual (OCR/template-matching) fallback for apps with no accessibility tree at all, and the checkbox/list/grid/clipboard interaction coverage Phase 1 never reached. Every batch in this phase is additive — existing callers and existing tests keep working unchanged whether or not a given batch has landed. **Phase 2's completion is the v1 milestone** — a hardened, complete C# engine, CLI, and test adapter, shipped and usable on its own with no daemon or SDKs required.
+Phase 2 deepens that surface — richer locators, canned wait conditions, opt-in resilience, a native context-menu fallback, a resource-leak diagnostic, animation-settle waits and pixel-baseline visual regression, and the checkbox/list/grid/clipboard interaction coverage Phase 1 never reached. Every batch in this phase is additive — existing callers and existing tests keep working unchanged whether or not a given batch has landed. **Phase 2's completion is the v1 milestone** — a hardened, complete C# engine, CLI, and test adapter, shipped and usable on its own with no daemon or SDKs required.
 
 Phase 3 adds the daemon and polyglot SDKs on top of whatever the engine looks like by then. Nothing in Phase 3 modifies engine source files. Unlike Phases 1 and 2, Phase 3 is not the next thing to pick up after v1 ships — it's long-running future work, taken up once the engine has had real field time to surface the bugs and API rough edges that only show up under sustained use. Rushing straight into a daemon and two SDKs on top of a freshly-shipped engine just multiplies the surface area that breaking changes have to ripple through.
 
@@ -361,12 +361,12 @@ Batch numbers below match the task numbers 1:1 in `extended-coverage-spec.md` (e
 
 ### Stage 2.4 — Resource Diagnostics
 > **Unlocks:** Visibility into whether the engine's own COM/UIA interop leaks GDI/USER handles or working-set memory across a long automation run — the exact pattern the existing Notepad/Paint integration suites already exercise by launching and killing real app instances dozens of times.
-> **Done when:** `app.WatchResourcesAsync()` returns a sampled series of GDI/USER handle counts and working-set memory across a run, usable to confirm the existing integration suite's repeated launch/kill cycles are clean.
+> **Done when:** `ResourceMonitor.MeasureAsync(app, work)` returns before/after GDI, USER, handle, thread and memory readings, usable to confirm the existing integration suite's repeated launch/kill cycles are clean.
 
 | Batch | Work |
 |---|---|
-| 2.4.1 | `ResourceWatch` — samples `GetGuiResources` (`GR_GDIOBJECTS`/`GR_USEROBJECTS`) and `Process.WorkingSet64` on a timer; `App.WatchResourcesAsync(TimeSpan interval)` returns an `IAsyncDisposable` sampler plus the snapshot history |
-| 2.4.2 | Integration test — wraps a resource watch around a live app across several launch/kill cycles (reusing the existing Notepad/Paint test fixtures), asserting the sample series is non-empty and plausible |
+| 2.4.1 | Resource measurement — `ResourceMonitor.MeasureAsync(app, work)` reads GDI/USER objects, kernel handles, threads, working set and private bytes before and after `work` and returns a `ResourceSummary` of deltas; `Capture`/`DiffTo` for checkpoints |
+| 2.4.2 | Tests — unit tests for the summary, plus integration tests measuring a live Notepad and the engine host across launch/kill cycles |
 
 **After 2.4.2:** The engine can report its own resource footprint over a run. Multi-monitor positioning, the other half of the original diagnostics idea, stays in Future Work Ideas — it needs a physical multi-monitor rig to pay off, which this doesn't. Phase 2 continues into the accessibility audit.
 
@@ -386,40 +386,34 @@ Batch numbers below match the task numbers 1:1 in `extended-coverage-spec.md` (e
 
 ---
 
-### Stage 2.6 — Visual Provider, Idle Wait, and Visual Regression
-> **This stage bundles two different capabilities that happen to share screenshot/pixel-diff plumbing — they don't unlock the same thing:**
-> - **Batches 2.6.1–2.6.4 (the actual Visual Provider):** a *locator* fallback for apps that expose no accessibility tree at all (legacy ERP, custom-rendered UIs) — finds elements by visible text (OCR) or a reference image (template matching) when no UIA/Win32 strategy can see anything.
-> - **Batches 2.6.5–2.6.6 (general-purpose, not tied to no-UIA apps):** `WaitForIdleAsync` (wait for animations to actually finish instead of guessing with a fixed delay) and visual regression assertions (fail when rendered pixels drift from a stored baseline) — both are useful against *any* app, UIA-accessible or not, and only landed in this stage because they reuse the screenshot capture and pixel-compare code the OCR/template-matching batches already needed.
+### Stage 2.6 — Idle Wait and Visual Regression
+> **Two general-purpose capabilities, useful against *any* app, UIA-accessible or not:** `WaitForIdleAsync` (wait for animations to actually finish instead of guessing with a fixed delay) and visual regression assertions (fail when rendered pixels drift from a stored baseline). Both build on the existing `ScreenshotAsync()` capture. The Visual Provider (OCR and template-matching locator fallback for apps with no accessibility tree) used to share this stage and now lives in Future Work Ideas.
 >
-> **Done when:** `app.find(text="Submit Order")` finds a button by its visible text in an app with no UIA elements; a visual regression assertion fails when a window's rendered output drifts from a stored baseline; `app.WaitForIdleAsync()` resolves once consecutive screenshots stop changing.
+> **Done when:** a visual regression assertion fails when a window's rendered output drifts from a stored baseline; `app.WaitForIdleAsync()` resolves once consecutive screenshots stop changing.
 
 | Batch | Work |
 |---|---|
-| 2.6.1 | `VisualProvider` skeleton — implements `IElementProvider`; screenshots target window via `GDI+` |
-| 2.6.2 | OCR path — `Windows.Media.Ocr.OcrEngine` (on-device, no external service); `automancer:text` strategy |
-| 2.6.3 | Template matching — `OpenCvSharp4.Windows`; `automancer:image` strategy (base64 PNG template) |
-| 2.6.4 | Add `visual` to default `ElementProviderOptions.ProviderChain`; update the two existing unit tests (`AppOptionsTests`, `ElementProviderOptionsTests`) that assert the exact 3-element default chain; integration test with a no-UIA test app |
-| 2.6.5 | `App.WaitForIdleAsync()` — diffs consecutive `ScreenshotAsync()` captures at a short interval until two frames match within a pixel-difference threshold, or a timeout is hit; replaces the ad-hoc `Task.Delay(300) // flyout animation` waits already scattered through the integration test suite with a real settledness check |
-| 2.6.6 | Visual regression snapshot assertion — captures the current window/element region and pixel-diffs it against a stored baseline PNG, failing past a configurable difference threshold; reuses the screenshot/pixel-compare plumbing built for template matching in 2.6.3. `ScreenshotAsync()` captures physical pixels, and the same logical window is a different physical *pixel size* at 100% vs. 150% DPI — resize whichever of the baseline/live capture was taken at a different DPI to match the other's pixel dimensions (by the `dpi / 96.0` scale ratio) before diffing, or the assertion spuriously fails whenever it runs on a differently-scaled machine than the one that recorded the baseline. `DpiHelper.PhysicalToLogical` converts a coordinate pair, not a bitmap, so it doesn't apply directly here |
+| 2.6.1 | `App.WaitForIdleAsync()` — diffs consecutive `ScreenshotAsync()` captures at a short interval until two frames match within a pixel-difference threshold, or a timeout is hit; replaces the ad-hoc `Task.Delay(300) // flyout animation` waits already scattered through the integration test suite with a real settledness check |
+| 2.6.2 | Visual regression snapshot assertion — captures the current window/element region and pixel-diffs it against a stored baseline PNG, failing past a configurable difference threshold; shares the pixel-compare code with 2.6.1. `ScreenshotAsync()` captures physical pixels, and the same logical window is a different physical *pixel size* at 100% vs. 150% DPI — resize whichever of the baseline/live capture was taken at a different DPI to match the other's pixel dimensions (by the `dpi / 96.0` scale ratio) before diffing, or the assertion spuriously fails whenever it runs on a differently-scaled machine than the one that recorded the baseline. `DpiHelper.PhysicalToLogical` converts a coordinate pair, not a bitmap, so it doesn't apply directly here |
 
-**This stage is entirely engine-side** — like the rest of Phase 2, it only touches `AutoMancer.Engine`. Exposing `VisualProvider` over HTTP is Phase 3's job (see batch 3.2.8), since that requires the daemon project to exist first.
+**This stage is entirely engine-side** — like the rest of Phase 2, it only touches `AutoMancer.Engine`.
 
-**After 2.6.6:** The full UIA3 → UIA2 → Win32 → Visual fallback chain is complete (the no-accessibility-tree gap is closed), and separately, any app — not just no-UIA ones — gets real animation-settle waits and pixel-level regression assertions for free from the same screenshot infrastructure. Phase 2 continues into engine hardening and examples.
+**After 2.6.2:** Any app — UIA-accessible or not — gets real animation-settle waits and pixel-level regression assertions from the existing screenshot infrastructure. The fallback chain stays UIA3 → UIA2 → Win32. Phase 2 continues into engine hardening and examples.
 
 ---
 
 ### Stage 2.7 — Engine Hardening and Examples
 > **Unlocks:** Confidence that the engine behaves identically across DPI settings and Windows versions, a failed find leaves behind an annotated screenshot instead of just a stack trace, and new C# consumers have working example projects to start from.
-> **Done when:** The Notepad integration suite passes at 100%, 125%, and 150% DPI with identical logical coordinates, and on both Windows 10 and 11; a failed find under a debug flag leaves an annotated PNG in `%TEMP%`; all four example projects build and run.
+> **Done when:** The Notepad integration suite passes at 100%, 125%, and 150% DPI with identical logical coordinates, and on both Windows 10 and 11; a failed find under a debug flag leaves an annotated PNG in `%TEMP%`; all three example projects build and run.
 
 | Batch | Work |
 |---|---|
 | 2.7.1 | Annotated error screenshots — on `ElementNotFoundError`, capture a screenshot and draw a red overlay around the search area / closest-match bounding rect via GDI+, save to `%TEMP%`; a new `AppOptions`/`ElementProviderOptions` flag (off by default) turns this on. The engine sibling of Stage 1.9's on-failure diagnostics, for direct `App` consumers rather than `Expect()` |
 | 2.7.2 | DPI compat matrix — run the Notepad integration test suite at 100%, 125%, and 150% DPI; assert identical logical coordinates across all three |
 | 2.7.3 | Windows 10/11 compat — run the full `AutoMancer.Engine.Tests` integration suite on both OS versions; fix any behavioral differences |
-| 2.7.4 | Example projects — `examples/notepad/`, `examples/winforms-calculator/`, `examples/legacy-no-uia/` (Visual Provider showcase), `examples/xunit-test-adapter/` |
+| 2.7.4 | Example projects — `examples/notepad/`, `examples/winforms-calculator/`, `examples/xunit-test-adapter/` |
 
-**This stage is entirely engine-side**, same as the rest of Phase 2 — none of these four batches touch `AutoMancer.Daemon` or either SDK. Exposing the debug-screenshot flag over HTTP is Phase 3's job (see batch 3.6.1), same split pattern as the Visual Provider's daemon wiring in batch 3.2.8.
+**This stage is entirely engine-side**, same as the rest of Phase 2 — none of these four batches touch `AutoMancer.Daemon` or either SDK. Exposing the debug-screenshot flag over HTTP is Phase 3's job (see batch 3.6.1), same split pattern as batch 3.2.8.
 
 **After 2.7.4:** DPI/OS compat and examples are done. Phase 2 continues into one more stage: the UIA pattern coverage the daemon and SDKs already assume exists.
 
@@ -486,9 +480,9 @@ Batch numbers below match `daemon-spec.md`'s task numbers 1:1 (batch `3.2.5` is 
 | 3.2.5 | `ScreenshotEndpoint` (base64 PNG), `TimeoutEndpoints`, `ExtensionEndpoints` — provider, scroll-to, app PID, kill, snapshot |
 | 3.2.6 | `ClipboardEndpoints` — `GET/POST /session/:id/clipboard` (text); `PatternEndpoints` — expand, collapse, toggle, select, addToSelection, removeFromSelection, allSelectedItems, rowcount, columncount, cell, under each element's `windows/` path segment |
 | 3.2.7 | C# daemon integration tests — `DaemonIntegrationTests.cs`; tests covering full HTTP surface including clipboard, pattern commands, and coordinate-based interactions |
-| 3.2.8 | Expose the Visual Provider over HTTP — add it to `FindEndpoints`' resolver builder; surface via `automancer:resolverChain` capability. Depends on Stage 2.6 having shipped (the engine-side `VisualProvider`); skip or defer this batch if Phase 2 hasn't reached that stage yet |
+| 3.2.8 | Expose the Visual Provider over HTTP — add it to `FindEndpoints`' resolver builder; surface via `automancer:resolverChain` capability. Depends on the Visual Provider (Future Work Ideas) having been built; skip this batch until then |
 
-**After 3.2.8:** Complete daemon. All W3C + extension endpoints covered by C# tests, including the visual fallback provider if Phase 2 built it first. No Python/TypeScript toolchain needed to verify daemon correctness.
+**After 3.2.8:** Complete daemon. All W3C + extension endpoints covered by C# tests, including the visual fallback provider if it was built first. No Python/TypeScript toolchain needed to verify daemon correctness.
 
 ---
 
@@ -587,14 +581,13 @@ Batch numbers below match `sdks-spec.md`'s task numbers 1:1 (batch `3.4.4` is Ta
 - [x] Stale-element re-resolve is on by default (`AppOptions.ReresolveOnStale`) and covered by a test — setting it `false` lets `StaleElementError` propagate to the caller
 - [x] `app.IsUnobscuredAsync(locator)` returns `false` when another window or an in-app overlay covers the element's hit point, `true` once it's clear, and doesn't change the behavior of any existing action
 - [ ] A native context-menu item is found and clicked via the `HMENU` fallback on an app where UIA doesn't expose it
-- [ ] `WatchResourcesAsync()` returns a non-empty handle/memory sample series over a live test run
+- [x] `ResourceMonitor.MeasureAsync()` returns before/after handle and memory readings over a live test run
 - [ ] `automancer audit <session>` reports at least one finding against a deliberately-unnamed test control
-- [ ] `app.find(text="Submit Order")` finds a button by its visible text in an app with no UIA elements
 - [ ] `app.WaitForIdleAsync()` resolves once consecutive screenshots stop changing, and a visual regression assertion fails when rendered output drifts from a stored baseline
 - [ ] The Notepad integration suite passes at 100%, 125%, and 150% DPI with identical logical coordinates
 - [ ] The full `AutoMancer.Engine.Tests` integration suite passes on both Windows 10 and 11
 - [ ] A failed find under the debug-screenshot flag leaves an annotated PNG in `%TEMP%`
-- [ ] All four example projects (`notepad`, `winforms-calculator`, `legacy-no-uia`, `xunit-test-adapter`) build and run
+- [ ] All three example projects (`notepad`, `winforms-calculator`, `xunit-test-adapter`) build and run
 - [ ] `app.ToggleAsync(locator)` flips a checkbox's `Toggle.ToggleState`
 - [ ] `app.SelectAsync(locator)` / `GetSelectedItemsAsync(locator)` round-trip a list selection
 - [ ] `app.GetGridCellAsync(locator, row, col)` returns the element at a table/`DataGrid`-style control's cell
@@ -615,6 +608,18 @@ Batch numbers below match `sdks-spec.md`'s task numbers 1:1 (batch `3.4.4` is Ta
 ## Future Work Ideas (Unscheduled)
 
 > Ideas worth building someday but not committed work — no `Phase.Stage.Batch` numbering, no place in the phase sequence above, picked up opportunistically if a real need surfaces rather than on a schedule. Unlike Phases 1–3, nothing else in this roadmap depends on any of these landing, and none of them block v1 or Phase 3.
+
+### Visual Provider (OCR and Template Matching)
+
+**Idea:** A *locator* fallback for apps that expose no accessibility tree at all (legacy ERP, custom-rendered UIs) — finds elements by visible text (OCR) or a reference image (template matching) when no UIA/Win32 strategy can see anything. Originally Stage 2.6 batches 2.6.1–2.6.4; moved here when that stage was narrowed to idle wait and visual regression.
+
+- `VisualProvider` — find-only `IElementProvider`; screenshots the target window via `ScreenshotAction`'s GDI+ path, then dispatches on the locator strategy. Returns `null`/empty on not-found like every other provider.
+- OCR path — `Windows.Media.Ocr.OcrEngine` (on-device, no external service, no extra package via the `windows10.x` TFM suffix); `automancer:text` strategy, `Locator.ByText`.
+- Template matching — `OpenCvSharp4.Windows` (native-wrapping package; verify it has a build compatible with `net10.0-windows10.0.22621.0` before starting); `automancer:image` strategy, `Locator.ByImage`.
+- Adds `visual` as the last entry of the default `ElementProviderOptions.ProviderChain`, which means updating the two unit tests that assert the exact 3-element default chain (`AppOptionsTests`, `ElementProviderOptionsTests`), plus an integration test against a no-UIA test app (raw GDI/Direct2D; none exists yet).
+- Unblocks daemon batch 3.2.8 (`automancer:resolverChain` including `"visual"`) and the Python/TypeScript SDKs' `find(text=...)`/`find(image=...)`, and the `examples/legacy-no-uia/` showcase dropped from Stage 2.7.
+- **Why it's here instead of a numbered stage:** it's the heaviest piece of the old Stage 2.6 (new native dependency, new test app, nondeterministic OCR/DPI behavior) and nothing in v1 depends on it; the general-purpose idle-wait and visual-regression batches stayed in Phase 2.
+- Detailed task breakdown (former Tasks 2.6.1–2.6.4) is preserved in `extended-coverage-spec.md`'s Future Work section.
 
 ### Multi-Monitor Positioning
 
@@ -637,7 +642,7 @@ Batch numbers below match `sdks-spec.md`'s task numbers 1:1 (batch `3.4.4` is Ta
 
 **Idea:** Compare a full `ElementSnapshot` tree against a stored baseline tree (names, types, positions — structure, not pixels) and fail when it drifts, catching accessibility-tree regressions between app versions that look identical on screen but have silently changed underneath.
 
-- Structural counterpart to Stage 2.6's pixel-based visual regression (batch 2.6.6) — same "capture now, diff against a stored baseline" shape, but comparing `ElementSnapshot` trees instead of bitmaps, so it reuses `TrySnapshotAsync` rather than `ScreenshotAsync`.
+- Structural counterpart to Stage 2.6's pixel-based visual regression (batch 2.6.2) — same "capture now, diff against a stored baseline" shape, but comparing `ElementSnapshot` trees instead of bitmaps, so it reuses `TrySnapshotAsync` rather than `ScreenshotAsync`.
 - An app can look pixel-identical while a renamed `AutomationId` or a reordered control silently breaks every locator built against it — pixel regression alone wouldn't catch that.
 - **Why it's here instead of extending Stage 2.6:** it's a different signal (tree structure vs. rendered pixels) serving a narrower audience (teams already using `SnapshotAsync` for tree dumps) rather than a gap in the core find/interact surface — nothing else in the roadmap assumes it exists.
 

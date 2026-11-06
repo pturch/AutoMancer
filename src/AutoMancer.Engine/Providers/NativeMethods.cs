@@ -385,6 +385,16 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     internal static extern uint GetWindowThreadProcessId(IntPtr windowHandle, out uint lpdwProcessId);
 
+    // GetGuiResources flag: count of GDI objects the process holds.
+    internal const uint GR_GDIOBJECTS = 0;
+
+    // GetGuiResources flag: count of USER objects the process holds.
+    internal const uint GR_USEROBJECTS = 1;
+
+    // Returns the number of GDI or USER objects (per uiFlags) owned by the process; 0 on failure or exit.
+    [DllImport("user32.dll")]
+    internal static extern uint GetGuiResources(IntPtr processHandle, uint uiFlags);
+
     // Returns the calling thread's id, for AttachThreadInput.
     [DllImport("kernel32.dll")]
     private static extern uint GetCurrentThreadId();

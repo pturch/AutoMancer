@@ -60,6 +60,6 @@ public static class XPathEvaluator
         Regex.Replace(xpath, @"\[(\d+)\]", m => $"[{int.Parse(m.Groups[1].Value) + 1}]");
 
     // Returns the control type name when it begins with a letter (valid XML start character), otherwise "Unknown".
-    private static string SafeTagName(string? controlType) =>
+    internal static string SafeTagName(string? controlType) =>
         !string.IsNullOrEmpty(controlType) && char.IsLetter(controlType[0]) ? controlType : "Unknown";
 }

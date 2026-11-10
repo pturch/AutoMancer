@@ -8,7 +8,7 @@ using Interop.UIAutomationClient;
 namespace AutoMancer.Engine.Providers;
 
 // Finds elements via the UIAutomation3 COM API (CUIAutomation8) — the primary, most capable provider in the fallback chain.
-public sealed class Uia3Provider : IElementProvider
+public sealed class Uia3Provider : IElementProvider, IElementIdentity
 {
     public string ProviderName => "uia3";
 
@@ -214,9 +214,26 @@ public sealed class Uia3Provider : IElementProvider
         }, ct);
     }
 
-    // Recursively builds a snapshot of an element and its children (defensive reads, since dynamic apps like Task Manager can invalidate elements mid-walk), stopping at MaxTreeDepth.
-    private static ElementSnapshot WalkTree(IUIAutomationElement element, IUIAutomationTreeWalker walker, int depth)
+    // True when both handles are UIA3 elements that UIA itself reports as the same element.
+    bool IElementIdentity.IsSameElement(ElementHandle a, ElementHandle b) =>
+        a.NativeHandle is IUIAutomationElement x && b.NativeHandle is IUIAutomationElement y && Automation.CompareElements(x, y) != 0;
+
+    // Snapshots the tree in one walk, recording live elements beside their nodes, and returns it with the Id of the node UIA says is target.
+    Task<(IReadOnlyList<ElementSnapshot> Tree, string TargetId)?> IElementIdentity.SnapshotLocatingAsync(ElementHandle target, AppSession session, CancellationToken ct = default) => Task.Run(() =>
     {
+        if (target.NativeHandle is not IUIAutomationElement native || TryGetRoot(session) is not { } root)
+            return ((IReadOnlyList<ElementSnapshot> Tree, string TargetId)?)null;
+        var live = new List<IUIAutomationElement>();
+        var snapshot = WalkTree(root, Automation.ControlViewWalker, 0, live);
+        var index = live.FindIndex(e => Automation.CompareElements(e, native) != 0);
+        return index < 0 ? null : ([snapshot], snapshot.DescendantsAndSelf().ElementAt(index).Id);
+    }, ct);
+
+    // Recursively builds a snapshot of an element and its children (defensive reads, since dynamic apps like Task Manager can invalidate elements mid-walk), stopping at MaxTreeDepth.
+    private static ElementSnapshot WalkTree(IUIAutomationElement element, IUIAutomationTreeWalker walker, int depth, List<IUIAutomationElement>? live = null)
+    {
+        // Pre-order, before the children, so an element's index here equals its flat index in the snapshot.
+        live?.Add(element);
         var children = new List<ElementSnapshot>();
         if (depth < MaxTreeDepth)
         {
@@ -224,7 +241,7 @@ public sealed class Uia3Provider : IElementProvider
             try { child = walker.GetFirstChildElement(element); } catch { }
             while (child is not null)
             {
-                try { children.Add(WalkTree(child, walker, depth + 1)); } catch { }
+                try { children.Add(WalkTree(child, walker, depth + 1, live)); } catch { }
                 IUIAutomationElement? next = null;
                 try { next = walker.GetNextSiblingElement(child); } catch { }
                 child = next;
@@ -258,27 +275,18 @@ public sealed class Uia3Provider : IElementProvider
 
     // ---- AutoMancerXPath/AutoMancerPath resolution (private helpers backing FindFirstAsync/FindAllAsync above) ----
 
-    // Snapshots the tree, evaluates the XPath expression, then re-walks the live tree to find the first matching element.
-    private ElementHandle? FindByXPath(string xpath, AppSession session)
-    {
-        var root = TryGetRoot(session);
-        if (root is null) return null;
-        var snapshot = WalkTree(root, Automation.ControlViewWalker, 0);
-        var indices = XPathEvaluator.Evaluate(xpath, [snapshot]);
-        if (indices.Count == 0) return null;
-        var matched = CollectElements(root, [.. indices]);
-        return matched.Count > 0 ? Wrap(matched[0]) : null;
-    }
+    // Walks the tree once, recording each live element beside its snapshot, evaluates the XPath, and returns the first match in tree order.
+    private ElementHandle? FindByXPath(string xpath, AppSession session) =>
+        FindAllByXPath(xpath, session).FirstOrDefault();
 
-    // Snapshots the tree, evaluates the XPath expression, then re-walks the live tree to find all matching elements.
+    // Walks the tree once, recording each live element beside its snapshot, so the evaluator's flat indices can't drift from a second walk of a changing tree.
     private List<ElementHandle> FindAllByXPath(string xpath, AppSession session)
     {
         var root = TryGetRoot(session);
         if (root is null) return [];
-        var snapshot = WalkTree(root, Automation.ControlViewWalker, 0);
-        var indices = XPathEvaluator.Evaluate(xpath, [snapshot]);
-        if (indices.Count == 0) return [];
-        return CollectElements(root, [.. indices]).Select(Wrap).OfType<ElementHandle>().ToList();
+        var live = new List<IUIAutomationElement>();
+        var snapshot = WalkTree(root, Automation.ControlViewWalker, 0, live);
+        return XPathEvaluator.Evaluate(xpath, [snapshot]).Order().Select(i => Wrap(live[i])).OfType<ElementHandle>().ToList();
     }
 
     // Resolves a tree-path locator ("Window > Pane[2] > Button[\"OK\"]") by walking live children segment by segment; returns the first match at the deepest level.
@@ -347,34 +355,6 @@ public sealed class Uia3Provider : IElementProvider
             child = next;
         }
         return result;
-    }
-
-    // Walks the live UIA tree depth-first and returns the elements whose flat indices are in targetIndices.
-    private static List<IUIAutomationElement> CollectElements(IUIAutomationElement root, HashSet<int> targetIndices)
-    {
-        var results = new List<IUIAutomationElement>();
-        int idx = 0;
-        CollectWalk(root, Automation.ControlViewWalker, targetIndices, results, ref idx, 0);
-        return results;
-    }
-
-    // Recursive depth-first walk matching the snapshot order in WalkTree; adds elements whose flat index is a target (defensive reads — a dynamic app can invalidate an element mid-walk).
-    private static void CollectWalk(IUIAutomationElement element, IUIAutomationTreeWalker walker,
-        HashSet<int> targets, List<IUIAutomationElement> results, ref int idx, int depth)
-    {
-        if (targets.Contains(idx))
-            results.Add(element);
-        idx++;
-        if (depth >= MaxTreeDepth) return;
-        IUIAutomationElement? child = null;
-        try { child = walker.GetFirstChildElement(element); } catch (Exception ex) when (ex is COMException or InvalidOperationException) { }
-        while (child is not null)
-        {
-            try { CollectWalk(child, walker, targets, results, ref idx, depth + 1); } catch (Exception ex) when (ex is COMException or InvalidOperationException) { }
-            IUIAutomationElement? next = null;
-            try { next = walker.GetNextSiblingElement(child); } catch (Exception ex) when (ex is COMException or InvalidOperationException) { }
-            child = next;
-        }
     }
 
     // ---- Internal: exposed only for BuildConditionParityTests, otherwise an implementation detail of the finders above ----

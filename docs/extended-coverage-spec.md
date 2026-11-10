@@ -6,7 +6,7 @@
 
 **Phase:** 2 of 3 — this plan deepens the Phase 1 engine surface (richer locators, wait/resilience primitives, native fallbacks, idle-wait and visual-regression, and UIA pattern coverage). No Phase 1 source files are removed or have their existing signatures changed; every task here is additive. **Completing this phase is the v1 milestone** — a hardened, complete C# engine, CLI, and test adapter, shippable on its own. Phase 3 (daemon + SDKs) is deliberately deferred, long-running future work picked up later, not the next phase in the queue. See [roadmap-spec.md](./roadmap-spec.md) for how this fits into the overall three-phase plan. **Task numbers here are the same numbers as roadmap-spec.md's batches** — Task `2.1.7` below is batch `2.1.7` there, not a separately-tracked ID. Each stage's tasks restart at `.1`, independent of every other stage's count, so a stage never needs renumbering because a different stage gained or lost a task.
 
-**Goal:** Take the Phase 1 engine — UIA3/UIA2/Win32 providers, `ElementResolver`, the full interaction/wait surface, and the `AutoMancer.Testing` adapter — and extend it with the coverage a real automation suite eventually needs but a proof of concept doesn't: locators for unlabeled/custom-property/scoped/virtualized-list elements, a canned wait vocabulary, stale-element resilience, native context menus, a resource-leak diagnostic, an accessibility audit, the general-purpose idle-wait and visual-regression capabilities, DPI/OS hardening, and the UIA pattern actions (`Toggle`/`ExpandCollapse`/`Selection`/`Grid`/`RangeValue`/clipboard) Phase 1 never reached — which Phase 3's daemon and SDKs also happen to assume exist, whenever that phase is picked up.
+**Goal:** Take the Phase 1 engine — UIA3/UIA2/Win32 providers, `ElementResolver`, the full interaction/wait surface, and the `AutoMancer.Testing` adapter — and extend it with the coverage a real automation suite eventually needs but a proof of concept doesn't: locators for unlabeled/custom-property/scoped/virtualized-list elements, a canned wait vocabulary, stale-element resilience, native context menus, a resource-leak diagnostic, locator suggestion, the general-purpose idle-wait and visual-regression capabilities, DPI/OS hardening, and the UIA pattern actions (`Toggle`/`ExpandCollapse`/`Selection`/`Grid`/`RangeValue`/clipboard) Phase 1 never reached — which Phase 3's daemon and SDKs also happen to assume exist, whenever that phase is picked up.
 
 **Architecture:** Every task in this plan touches only `AutoMancer.Engine` (and, for Stage 2.2's `Expect()` extension, `AutoMancer.Testing`) — no `AutoMancer.Daemon` project exists yet, so nothing here is reachable over HTTP. `ElementHandle` stays opaque throughout (only `Id`/`NativeHandle` public) — Phase 3's daemon element registry depends on that contract holding. Where a new capability wraps a UIA pattern the engine doesn't already touch (`TogglePattern`, `GridPattern`, `RangeValuePattern`, …), it follows the existing `IElementOperator`-optional, no-op-when-unsupported shape `ScrollAction`/`SetFocusAction` already established in Phase 1, rather than inventing a new dispatch convention. "Unsupported" means the element lacks the pattern, or Win32 has no equivalent — never "not a UIA3 handle": every UIA action covers both UIA3 and UIA2 handles, and Win32 hwnds too where user32 has a real counterpart (`ScrollAction`/`SetFocusAction` originally returned early for anything not UIA3, so a UIA2-resolved handle silently didn't scroll or focus; fixed alongside Task 2.2.5, with `SetFocusAction` also covering Win32 hwnds via `AttachThreadInput` + `SetFocus`. Scrolling into view stays a Win32 no-op: user32 has no general "scroll this child window into view", and list rows — what you'd scroll to — aren't windows the Win32 provider can find).
 
@@ -48,15 +48,12 @@ src/AutoMancer.Engine/
 │   └── RangeValueAction.cs           RangeValuePattern get/set
 ├── Diagnostics/
 │   ├── ResourceMonitor.cs, ResourceSample.cs, ResourceSummary.cs   static capture/measure for an app or the engine host; GDI/USER/handle/thread/memory reading and before/after deltas
-│   └── AccessibilityAuditor.cs       unnamed-interactive-element tree walker
+│   └── LocatorSuggester.cs           picks the most stable locator that resolves to only one element
 ├── App.cs                            façade methods for every task below
 └── AppOptions.cs / Core/ElementProviderOptions.cs   ReresolveOnStale, debug-screenshot flag
 
 src/AutoMancer.Testing/
-└── LocatorExpect.cs                  ToBeEnabledAsync/ToContainTextAsync built on WaitConditions
 
-src/AutoMancer.Cli/Commands/
-└── AuditCommand.cs                   `automancer audit <session>`
 
 examples/
 ├── notepad/
@@ -66,7 +63,7 @@ examples/
 tests/AutoMancer.Engine.Tests/
 ├── Core/SpatialMatcherTests.cs, WaitConditionsTests.cs, ScopedFindTests.cs, FindByScrollingTests.cs, ...
 ├── Actions/ClipboardActionTests.cs, ToggleActionTests.cs, RangeValueActionTests.cs, ...
-├── Diagnostics/AccessibilityAuditorTests.cs, ...
+├── Diagnostics/LocatorSuggesterTests.cs, ...
 └── Integration/ (one integration test class per stage)
 ```
 
@@ -843,15 +840,26 @@ As built: the integration test measures a live Notepad around typing and checks 
 
 ---
 
-## Stage 2.5 — Accessibility Audit Mode
+## Stage 2.5 — Locator Suggestion
 
-### Task 2.5.1: `AccessibilityAuditor`
+### Task 2.5.1: `LocatorSuggester` and verified `App.SuggestLocatorAsync`
 
-**What:** Walks an `ElementSnapshot` tree from the existing `App.SnapshotAsync`, flags nodes whose `ControlType` is interactive (`Button`, `Edit`, `CheckBox`, …) with a null or empty `Name`. Returns findings with a tree-path breadcrumb — likely buildable by walking the tree the same way `XPathEvaluator`'s index-to-element mapping already does, though whether that mapping is actually reusable for a breadcrumb string (rather than just an index lookup) isn't confirmed until tried.
+**What:** Given a live element, returns the most stable locator that the engine's own find path resolves to only that element. Two layers:
+- `LocatorSuggester.Candidates(elementId, tree)` is a pure function over an `ElementSnapshot` tree. It returns every locator that is unique in that tree, best first: a unique `AutomationId`, a unique `Name`, a unique `ClassName`, then a positional XPath (`Window[0]/Pane[1]/Button[1]`, 0-based among same-typed siblings, usable with `Locator.ByXPath`). `IsStable` is false for the last two: a class name unique today, and a sibling position, both break when the tree changes.
+- `App.SuggestLocatorAsync(element)` snapshots the tree, then runs each candidate through `FindAllAsync` (the same provider chain `FindAsync` uses) and returns the first that matches exactly one element **and** is the same element as the input. A candidate that is unique in the snapshot but resolves differently live (for example a `Name` shared with the window's title bar) is skipped, so the suggestion cannot drift from what the engine actually resolves.
+
+**Element identity is each provider's own, not `Id` strings.** The same non-client element (the title bar, Minimize, Maximize, Close) reports a different RuntimeId depending on how it was reached: the tree walker gives `42.<hwnd>.3.-2147483647.<hwnd>.-2.5` while `FindAll` gives `4.<hwnd>.0.5`. So each provider implements an internal `IElementIdentity` (`SnapshotLocatingAsync` finds a handle's node in a snapshot of its own tree, `IsSameElement` compares two of its handles) and `App.SuggestLocatorAsync` uses whichever provider owns the handle: UIA3 compares with `IUIAutomation.CompareElements`, UIA2 with `Automation.Compare` (both snapshot in one walk while recording the live elements, so the input's node is found by comparison), and Win32 by hwnd. Each provider can only resolve the strategies it supports, so a UIA2 or Win32 element with no unique `AutomationId`, `Name` or `ClassName` gets null instead of a positional XPath, which only UIA3 resolves (a UIA3 handle that FindAll returns for an XPath is never counted as the same element as a UIA2 or Win32 one).
+
+**XPath lookups walk the tree once.** `Uia3Provider.FindByXPath`/`FindAllByXPath` used to snapshot the tree, evaluate the XPath, then walk the live tree a second time and pick elements by flat index. Anything that changed between the two walks (Notepad builds and removes startup elements for a moment after launch) shifted the indices and returned a neighboring element. `WalkTree` now optionally records each live element in pre-order beside its snapshot node, the evaluator's indices are looked up in that list, and the second walk (`CollectElements`/`CollectWalk`) is removed.
+
+**Known limit:** an `AutomationId` that the app itself changes over time cannot be detected from one snapshot. Notepad's caption buttons report `Minimize-Restore` during startup and `Minimize` once settled, so a suggestion taken during startup can go stale.
 
 **Creates:**
-- `src/AutoMancer.Engine/Diagnostics/AccessibilityAuditor.cs` — `Audit(IReadOnlyList<ElementSnapshot> tree)` → `IReadOnlyList<AccessibilityFinding>` (`ControlType`, `TreePath`); a fixed `HashSet<string>` of interactive control-type names
-- `src/AutoMancer.Engine/App.cs` — `AuditAccessibilityAsync(CancellationToken ct = default)` → snapshots then audits
+- `src/AutoMancer.Engine/Diagnostics/LocatorSuggester.cs` — `Candidates(string elementId, IReadOnlyList<ElementSnapshot> tree)` → `IReadOnlyList<LocatorSuggestion>` (`Locator`, `IsStable`)
+- `src/AutoMancer.Engine/App.cs` — `SuggestLocatorAsync(ElementHandle element, CancellationToken ct = default)` → `LocatorSuggestion?`
+- `src/AutoMancer.Engine/Core/IElementIdentity.cs` — the internal interface above
+- `src/AutoMancer.Engine/Providers/Uia3Provider.cs`, `Uia2Provider.cs`, `Win32Provider.cs` — implement it; `Uia3Provider` also gets the single-walk XPath lookups
+- `src/AutoMancer.Engine/Core/XPathEvaluator.cs` — `SafeTagName` becomes `internal` so the suggester builds tags the evaluator will match
 
 - [ ] **Implement and build**
 
@@ -863,40 +871,26 @@ dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
 
 ---
 
-### Task 2.5.2: CLI `audit` command
+### Task 2.5.2: Unit and integration tests for Stage 2.5
 
-**What:** `automancer audit <session>` prints findings as a table, matching `tree`'s existing output style — likely able to reuse the CLI's existing table-printing helper rather than needing a new formatter, though that depends on how reusable that helper actually turns out to be.
-
-**Creates:**
-- `src/AutoMancer.Cli/Commands/AuditCommand.cs`
-
-- [ ] **Implement, build, and smoke test**
-
-```bash
-dotnet build src/AutoMancer.Cli/AutoMancer.Cli.csproj
-dotnet run --project src/AutoMancer.Cli -- audit <session-id>
-```
-
-**Done when:** `automancer audit <session>` prints a readable table against a live session.
-
----
-
-### Task 2.5.3: Unit and integration tests for Stage 2.5
-
-**What:** Unit tests for the auditor against a synthetic tree with mixed named/unnamed nodes; an integration test against a live app asserting the report is well-formed — not a fixed finding count, since that drifts across Windows versions.
+**What:** Unit tests against synthetic snapshot trees, and an integration test that every on-screen element of a settled Notepad window gets a suggestion that resolves back to that same element.
 
 **Creates:**
-- `tests/AutoMancer.Engine.Tests/Diagnostics/AccessibilityAuditorTests.cs` — synthetic tree: named interactive node excluded, unnamed interactive node flagged with correct breadcrumb, unnamed *non*-interactive node (e.g. a `Pane`) excluded
-- `tests/AutoMancer.Engine.Tests/Integration/AccessibilityAuditIntegrationTests.cs`
+- `tests/AutoMancer.Engine.Tests/Diagnostics/LocatorSuggesterTests.cs` — candidates rank `AutomationId`, `Name`, `ClassName`, then XPath; a duplicated `AutomationId` or shared `ClassName` is omitted; an element with neither gets only the unstable positional XPath; that XPath, run through `XPathEvaluator`, selects exactly the target; multiple roots index among each other; an unknown Id returns no candidates
+- `tests/AutoMancer.Engine.Tests/Integration/LocatorSuggestionIntegrationTests.cs` — waits until Notepad's startup LoadingRing is gone and two consecutive snapshots agree, then for every on-screen node: gets its handle through its positional XPath, calls `SuggestLocatorAsync`, runs the result through `FindAsync`, and asserts UIA reports the same element (title-bar chrome and the window itself included)
+- `tests/AutoMancer.Engine.Tests/Integration/LocatorSuggestionProviderIntegrationTests.cs` — the same accuracy check for handles owned by UIA2 (Notepad) and Win32 (the WinForms test app): every suggestion finds the same element, elements with a unique AutomationId always get one, and at least one handle gets a suggestion; a destroyed hwnd, a handle from another provider and a native menu item (`NativeMenuPathTests`) get `null`, and a cancelled token throws
+- `tests/AutoMancer.Engine.Tests/Providers/Win32ProviderIdentityTests.cs` — `IsSameElement` is true only for equal hwnds
+- The UIA3 integration test also asserts `IsStable` is true exactly for AutomationId/Name suggestions, and a second test that a multi-match `ByXPath` returns every match in document order
+- `samples/ConsumerNotepadTests/LocatorSuggestionDemoTests.cs` (listed in the sample README) — a stable suggestion for the File menu item that finds it again, and a sweep over the menu items showing which suggestions are fragile
 
 - [ ] **Write tests, run (expect FAIL), implement, run (expect PASS), then run integration**
 
 ```bash
-dotnet test tests/AutoMancer.Engine.Tests/ --filter "AccessibilityAuditorTests"
-dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration&FullyQualifiedName~AccessibilityAudit"
+dotnet test tests/AutoMancer.Engine.Tests/ --filter "LocatorSuggesterTests"
+dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration&FullyQualifiedName~LocatorSuggestion"
 ```
 
-**Done when:** `automancer audit <session>` reports at least one finding against a deliberately-unnamed test control. Stage 2.5 complete.
+**Done when:** A suggested locator resolves back to the element it was built for, on a live app. Stage 2.5 complete.
 
 ---
 
@@ -1525,7 +1519,7 @@ Mirrors roadmap-spec.md's per-phase checklist; see there for the authoritative, 
 - [x] Task 2.2.6 — `Expect()` and `WaitForAsync` share a wait-condition vocabulary
 - [ ] Task 2.3.4 — native context menu fallback works when UIA can't see the popup
 - [x] Task 2.4.2 — resource watch returns a plausible sample series against a live app
-- [ ] Task 2.5.3 — accessibility audit reports a deliberately-unnamed control
+- [ ] Task 2.5.2 — a suggested locator resolves back to the same live element
 - [ ] Task 2.6.2 — visual regression assertion fails on a drifted baseline
 - [ ] Task 2.7.2–2.7.3 — DPI and Windows 10/11 compat confirmed
 - [ ] Task 2.7.4 — all three example projects build and run

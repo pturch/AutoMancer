@@ -8,7 +8,7 @@ using AutoMancer.Engine.Operators;
 namespace AutoMancer.Engine.Providers;
 
 // Finds elements via the managed System.Windows.Automation API — the second provider in the fallback chain, used when UIA3 returns nothing.
-public sealed class Uia2Provider : IElementProvider
+public sealed class Uia2Provider : IElementProvider, IElementIdentity
 {
     public string ProviderName => "uia2";
 
@@ -184,8 +184,10 @@ public sealed class Uia2Provider : IElementProvider
     }
 
     // Recursively builds a snapshot of an element and its children (defensive reads, since dynamic apps like Task Manager can invalidate elements mid-walk), stopping at MaxTreeDepth.
-    private static ElementSnapshot WalkTree(AutomationElement element, TreeWalker walker, int depth)
+    private static ElementSnapshot WalkTree(AutomationElement element, TreeWalker walker, int depth, List<AutomationElement>? live = null)
     {
+        // Pre-order, before the children, so an element's index here equals its flat index in the snapshot.
+        live?.Add(element);
         var children = new List<ElementSnapshot>();
         if (depth < MaxTreeDepth)
         {
@@ -193,7 +195,7 @@ public sealed class Uia2Provider : IElementProvider
             try { child = walker.GetFirstChild(element); } catch { }
             while (child is not null)
             {
-                try { children.Add(WalkTree(child, walker, depth + 1)); } catch { }
+                try { children.Add(WalkTree(child, walker, depth + 1, live)); } catch { }
                 AutomationElement? next = null;
                 try { next = walker.GetNextSibling(child); } catch { }
                 child = next;
@@ -217,6 +219,21 @@ public sealed class Uia2Provider : IElementProvider
 
         return new ElementSnapshot(id, name, automationId, className, controlTypeName, rect, children);
     }
+
+    // True when both handles are UIA2 elements that UIA itself reports as the same element.
+    bool IElementIdentity.IsSameElement(ElementHandle a, ElementHandle b) =>
+        a.NativeHandle is AutomationElement x && b.NativeHandle is AutomationElement y && Automation.Compare(x, y);
+
+    // Snapshots the tree in one walk, recording live elements beside their nodes, and returns it with the Id of the node UIA says is target.
+    Task<(IReadOnlyList<ElementSnapshot> Tree, string TargetId)?> IElementIdentity.SnapshotLocatingAsync(ElementHandle target, AppSession session, CancellationToken ct) => Task.Run(() =>
+    {
+        if (target.NativeHandle is not AutomationElement native || TryGetRoot(session) is not { } root)
+            return ((IReadOnlyList<ElementSnapshot> Tree, string TargetId)?)null;
+        var live = new List<AutomationElement>();
+        var snapshot = WalkTree(root, TreeWalker.ControlViewWalker, 0, live);
+        var index = live.FindIndex(e => Automation.Compare(e, native));
+        return index < 0 ? null : ([snapshot], snapshot.DescendantsAndSelf().ElementAt(index).Id);
+    }, ct);
 
     // ---- Internal: exposed only for BuildConditionParityTests, otherwise an implementation detail of the finders above ----
 

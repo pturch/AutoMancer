@@ -52,6 +52,18 @@ public sealed class NativeMenuPathTests(ContextMenuHostFixture host) : IClassFix
         await native.CloseAsync();
     }
 
+    // A native menu item has no window handle for Win32Provider to compare, so it gets no suggestion rather than an error or a guess.
+    [Fact]
+    public async Task SuggestLocatorAsync_NativeMenuItem_ReturnsNull()
+    {
+        var native = await OpenNativePathAsync(host.App);
+        var item = await native.FindAsync(Locator.ByName("Alpha"));
+
+        Assert.Null(await native.SuggestLocatorAsync(item));
+
+        await native.CloseAsync();
+    }
+
     // A click through the HMENU path delivers the command.
     [Fact]
     public async Task Click_DeliversCommand()

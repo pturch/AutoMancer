@@ -306,6 +306,24 @@ public class App : IAsyncDisposable
     public Task<IReadOnlyList<ElementSnapshot>?> SnapshotAsync(CancellationToken ct = default)
         => _resolver.TrySnapshotAsync(_session, ct);
 
+    // Returns the most stable locator that FindAllAsync resolves to exactly this element, judged by the owning provider's own element comparison
+    public async Task<LocatorSuggestion?> SuggestLocatorAsync(ElementHandle element, CancellationToken ct = default)
+    {
+        foreach (var owner in _providers.OfType<IElementIdentity>())
+        {
+            if (await owner.SnapshotLocatingAsync(element, _session, ct) is not { } located)
+                continue;
+            foreach (var candidate in LocatorSuggester.Candidates(located.TargetId, located.Tree))
+            {
+                var matches = await FindAllAsync(candidate.Locator, ct);
+                if (matches.Count == 1 && owner.IsSameElement(matches[0], element))
+                    return candidate;
+            }
+            return null; // No candidate verifies
+        }
+        return null; // No provider owns
+    }
+
     // Captures the root window's current on-screen pixels as a PNG.
     public Task<byte[]> ScreenshotAsync(CancellationToken ct = default)
         => ScreenshotAction.CaptureAsync(_session.RootWindowHandle, ct);

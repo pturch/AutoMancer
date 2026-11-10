@@ -60,8 +60,8 @@ This project ships in three distinct phases. **Phase 1** is a self-contained C# 
 ║   Stage 2.4: Resource Diagnostics ───► GDI/USER handle   ║
 ║       │                                 + memory watch   ║
 ║       │                                                  ║
-║   Stage 2.5: Accessibility Audit ────► unnamed-element   ║
-║       │                                 report           ║
+║   Stage 2.5: Locator Suggestion ─────► best unique       ║
+║       │                                 locator          ║
 ║       │                                                  ║
 ║   Stage 2.6: Idle Wait + Visual ─────► WaitForIdle,      ║
 ║       │                 Regression      pixel baseline   ║
@@ -368,21 +368,20 @@ Batch numbers below match the task numbers 1:1 in `extended-coverage-spec.md` (e
 | 2.4.1 | Resource measurement — `ResourceMonitor.MeasureAsync(app, work)` reads GDI/USER objects, kernel handles, threads, working set and private bytes before and after `work` and returns a `ResourceSummary` of deltas; `Capture`/`DiffTo` for checkpoints |
 | 2.4.2 | Tests — unit tests for the summary, plus integration tests measuring a live Notepad and the engine host across launch/kill cycles |
 
-**After 2.4.2:** The engine can report its own resource footprint over a run. Multi-monitor positioning, the other half of the original diagnostics idea, stays in Future Work Ideas — it needs a physical multi-monitor rig to pay off, which this doesn't. Phase 2 continues into the accessibility audit.
+**After 2.4.2:** The engine can report its own resource footprint over a run. Multi-monitor positioning, the other half of the original diagnostics idea, stays in Future Work Ideas — it needs a physical multi-monitor rig to pay off, which this doesn't. Phase 2 continues into locator suggestion.
 
 ---
 
-### Stage 2.5 — Accessibility Audit Mode
-> **Unlocks:** A standalone report of interactive elements with no accessible name — useful for QA and for actual screen-reader compliance, built entirely from data the tree walker already collects.
-> **Done when:** `automancer audit <session>` (or `app.AuditAccessibilityAsync()`) lists every interactive control with a missing or empty `Name`, alongside its control type and tree path.
+### Stage 2.5 — Locator Suggestion
+> **Unlocks:** Given any element, the engine can say which locator to use for it — the strongest one that matches only that element — instead of the tester working it out by hand from a tree dump. Built entirely from the snapshot data the tree walker already collects.
+> **Done when:** `app.SuggestLocatorAsync(element)` returns a locator that, passed back to `FindAsync`, resolves to that same element.
 
 | Batch | Work |
 |---|---|
-| 2.5.1 | `AccessibilityAuditor` — walks an `ElementSnapshot` tree from `SnapshotAsync`, flags nodes whose `ControlType` is interactive (`Button`, `Edit`, `CheckBox`, ...) with a null/empty `Name`; returns findings with a tree-path breadcrumb |
-| 2.5.2 | CLI command — `automancer audit <session>` prints findings as a table, matching `tree`'s existing output style |
-| 2.5.3 | Unit tests for the auditor against a synthetic tree with mixed named/unnamed nodes; integration test against a live app asserting the report is well-formed (not a fixed finding count, since that drifts across Windows versions) |
+| 2.5.1 | `LocatorSuggester` — ranks the locators that single out one element in an `ElementSnapshot` tree: a unique `AutomationId`, else a unique `Name`, else a unique `ClassName`, else a positional XPath (the last two marked unstable). `App.SuggestLocatorAsync(ElementHandle)` runs each candidate through `FindAllAsync` and returns the first that matches exactly one element the owning provider reports as the same one, so a suggestion cannot drift from what the engine resolves (UIA3, UIA2 and Win32 each implement their own identity check, because a non-client element's RuntimeId differs by how it was reached; UIA2 and Win32 cannot resolve the XPath, so an element with nothing unique to name it gets no suggestion there). Also fixes `Uia3Provider`'s XPath lookup, which walked the tree twice and returned a neighboring element when the tree changed between walks — it now walks once |
+| 2.5.2 | Unit tests against synthetic trees (candidate ranking, duplicate omission, XPath round-trips through `XPathEvaluator`, unknown Id); integration tests that UIA2 (Notepad) and Win32 (the WinForms test app) handles get only accurate suggestions, and that, in a settled Notepad window, every on-screen element — title-bar chrome included — gets a suggestion that `FindAsync` resolves back to that same element, `IsStable` matches the strategy, and multi-match XPath returns every match in order; destroyed, cross-provider and native-menu handles get `null`, and a cancelled token throws. `ConsumerNotepadTests` gains `LocatorSuggestionDemoTests` |
 
-**After 2.5.3:** The engine can locate elements no named strategy reaches, wait on more than raw predicates, opt into stale-element resilience, drive native context menus, and report on unnamed interactive controls — all additive to the Phase 1 surface. Phase 2 continues into the visual fallback provider.
+**After 2.5.2:** The engine can locate elements no named strategy reaches, wait on more than raw predicates, opt into stale-element resilience, drive native context menus, and suggest a stable locator for any element — all additive to the Phase 1 surface. This is also the engine half of the Interactive Element Inspector in Future Work Ideas, which would add point resolution and a CLI on top of it. Phase 2 continues into idle wait and visual regression.
 
 ---
 
@@ -582,7 +581,7 @@ Batch numbers below match `sdks-spec.md`'s task numbers 1:1 (batch `3.4.4` is Ta
 - [x] `app.IsUnobscuredAsync(locator)` returns `false` when another window or an in-app overlay covers the element's hit point, `true` once it's clear, and doesn't change the behavior of any existing action
 - [ ] A native context-menu item is found and clicked via the `HMENU` fallback on an app where UIA doesn't expose it
 - [x] `ResourceMonitor.MeasureAsync()` returns before/after handle and memory readings over a live test run
-- [ ] `automancer audit <session>` reports at least one finding against a deliberately-unnamed test control
+- [ ] `app.SuggestLocatorAsync(element)` returns a locator that resolves back to that same element
 - [ ] `app.WaitForIdleAsync()` resolves once consecutive screenshots stop changing, and a visual regression assertion fails when rendered output drifts from a stored baseline
 - [ ] The Notepad integration suite passes at 100%, 125%, and 150% DPI with identical logical coordinates
 - [ ] The full `AutoMancer.Engine.Tests` integration suite passes on both Windows 10 and 11
@@ -634,7 +633,7 @@ Batch numbers below match `sdks-spec.md`'s task numbers 1:1 (batch `3.4.4` is Ta
 
 **Idea:** A live "hover to inspect" mode — CLI or lightweight GUI — that highlights whatever element is under the cursor in real time and prints its locator candidates (`Name`, `AutomationId`, `ControlType`, `AutoMancerXPath`), the way browser dev tools' "inspect element" does.
 
-- Reuses existing engine primitives end to end: `Uia3Provider`'s element-from-point lookup, `ElementSnapshot`/`XPathEvaluator` for candidate locator strings, and `ScreenshotAction`'s GDI+ path for the highlight overlay — no new resolution or interaction logic.
+- Reuses existing engine primitives end to end: `Uia3Provider`'s element-from-point lookup, `LocatorSuggester` (Stage 2.5) for the locator to print, and `ScreenshotAction`'s GDI+ path for the highlight overlay — no new resolution or interaction logic.
 - New surface is really just a CLI mode (or a tiny always-on-top overlay window) that polls the cursor position and re-renders.
 - **Why it's here instead of a numbered stage:** it's a developer-experience tool for *writing* automation faster, not a capability the engine or a consuming test needs — nothing downstream depends on it, and `automancer find`/`tree` already cover the non-interactive version of the same job.
 

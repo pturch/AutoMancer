@@ -9,7 +9,7 @@ namespace AutoMancer.Engine.Providers;
 internal sealed record NativeMenuItem(IntPtr PopupWindow, IntPtr Menu, int Position);
 
 // Last-resort provider using EnumChildWindows P/Invoke — works on apps with no accessibility tree, matching by title or class name; under a #32768 popup scope it finds the native menu's items instead.
-public sealed class Win32Provider : IElementProvider
+public sealed class Win32Provider : IElementProvider, IElementIdentity
 {
     public string ProviderName => "win32";
 
@@ -127,6 +127,20 @@ public sealed class Win32Provider : IElementProvider
             var root = BuildSnapshot(rootWindow, children);
             return (IReadOnlyList<ElementSnapshot>)[root];
         }, ct);
+    }
+
+    // True when both handles are windows with the same hwnd.
+    bool IElementIdentity.IsSameElement(ElementHandle a, ElementHandle b) =>
+        a.NativeHandle is IntPtr x && b.NativeHandle is IntPtr y && x == y;
+
+    // Snapshots the tree and returns it with the Id of target's node; null if target isn't a window of this tree (a native menu item has no hwnd).
+    async Task<(IReadOnlyList<ElementSnapshot> Tree, string TargetId)?> IElementIdentity.SnapshotLocatingAsync(ElementHandle target, AppSession session, CancellationToken ct)
+    {
+        if (target.NativeHandle is not IntPtr hwnd)
+            return null;
+        var tree = await SnapshotTreeAsync(session, ct).ConfigureAwait(false);
+        var id = $"hwnd:{hwnd}";
+        return tree.DescendantsAndSelf().Any(n => n.Id == id) ? (tree, id) : null;
     }
 
     // ---- Native #32768 menus ----

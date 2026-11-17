@@ -13,6 +13,7 @@ public sealed class ActionLoggingShapeTests
     private static readonly HashSet<string> Exempt =
     [
         "ScreenshotAction.CaptureAsync",
+        "ScreenshotAction.CaptureRegionAsync",
         "WindowAction.GetSizeAsync",
         "WindowAction.MoveAsync",
         "WindowAction.ResizeAsync",

@@ -114,6 +114,10 @@ internal static class NativeMethods
     [DllImport("user32.dll", SetLastError = true)]
     internal static extern bool GetWindowRect(IntPtr windowHandle, out RECT lpRect);
 
+    // Reads one DWM window attribute (e.g. DWMWA_EXTENDED_FRAME_BOUNDS = 9) into value; returns 0 on success.
+    [DllImport("dwmapi.dll")]
+    internal static extern int DwmGetWindowAttribute(IntPtr windowHandle, int attribute, out RECT value, int size);
+
     [StructLayout(LayoutKind.Sequential)]
     internal struct RECT
     {

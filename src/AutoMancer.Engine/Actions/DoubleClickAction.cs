@@ -5,15 +5,15 @@ using AutoMancer.Engine.Providers;
 
 namespace AutoMancer.Engine.Actions;
 
-// Double-clicks a resolved element via two SendInput clicks with a short gap between them.
+// Double-clicks an element or a screen point: a move, a short hover pause, then both clicks sent as one atomic SendInput batch.
 public static class DoubleClickAction
 {
     // No operator fast path — InvokePattern has no double-click equivalent, so this always goes through SendInput.
 
-    // Real gap between presses — instantaneous double-clicks aren't reliably recognized (WinUI3's gesture recognizer included).
-    private const int BetweenClicksDelayMs = 50;
+    // Lets the pointer register over the target before the press, which WinUI3 hit-testing needs.
+    private const int HoverSettleMs = 60;
 
-    // Builds one move+down+up click batch, then sends it twice with a gap in between; logs via whatever logger the element was resolved with.
+    // Double-clicks the element's center via SendInput; logs via whatever logger the element was resolved with.
     public static Task ExecuteAsync(ElementHandle element, CancellationToken ct = default)
         => ExecuteCoreAsync(element, element.Logger, ct);
 
@@ -22,19 +22,23 @@ public static class DoubleClickAction
     {
         ElementInputHelpers.EnsureInteractable(element);
         ElementInputHelpers.EnsureForeground(element);
-
-        // Leading move required — see NativeMethods.SendMouseClick's comment on WinUI3 hit-testing.
         var (x, y) = ElementInputHelpers.GetCenter(element);
+        ExecuteAt(x, y, logger);
+    }, ct);
+
+    // Double-clicks a physical screen point; both presses go in one batch because newer Notepad only recognizes a double-click when the presses are nearly simultaneous, and a sleep between them is too long and jittery.
+    internal static void ExecuteAt(int x, int y, IEngineLogger? logger)
+    {
         var (normX, normY) = SendInputBuilders.Normalize(x, y);
-        NativeMethods.INPUT[] click =
+        NativeMethods.SendInputs([SendInputBuilders.MouseInputAt(normX, normY, NativeMethods.MouseEventFlags.Move)], logger);
+        Thread.Sleep(HoverSettleMs);
+        NativeMethods.INPUT[] doubleClick =
         [
-            SendInputBuilders.MouseInputAt(normX, normY, NativeMethods.MouseEventFlags.Move),
+            SendInputBuilders.MouseInputAt(normX, normY, NativeMethods.MouseEventFlags.LeftDown),
+            SendInputBuilders.MouseInputAt(normX, normY, NativeMethods.MouseEventFlags.LeftUp),
             SendInputBuilders.MouseInputAt(normX, normY, NativeMethods.MouseEventFlags.LeftDown),
             SendInputBuilders.MouseInputAt(normX, normY, NativeMethods.MouseEventFlags.LeftUp),
         ];
-
-        NativeMethods.SendInputs(click, logger);
-        Thread.Sleep(BetweenClicksDelayMs);
-        NativeMethods.SendInputs(click, logger);
-    }, ct);
+        NativeMethods.SendInputs(doubleClick, logger);
+    }
 }

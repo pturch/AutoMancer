@@ -81,6 +81,7 @@ Asserting against an element you already resolved yourself doesn't retry. It che
 | `ToHaveCountAsync(int, timeoutMs?, pollIntervalMs?)` | locator only | Exactly that many elements match; waits for a list still populating, which `FindAllAsync` alone doesn't |
 | `ToBeUnobscuredAsync(timeoutMs?, pollIntervalMs?)` / `ToBeObscuredAsync(...)` | locator only | A click at the element's center would / wouldn't reach it, via `App.IsUnobscuredAsync`; polls, since an overlay fading in or out can briefly report the old state |
 | `ToHaveValueAsync(string, timeoutMs?, pollIntervalMs?)` | locator only | The element's live value (not its `Name`) equals exactly. This is the one that reads what's actually typed into an editor. |
+| `ToMatchScreenshotAsync(path, maxDifferenceRatio?, timeoutMs?, pollIntervalMs?)` | app / locator | The window's (or element's) pixels match a stored baseline PNG within the ratio (default 1%). A missing baseline is recorded and the assertion fails so you review it. Same display scale only; see [Visual Stability and Baselines](README.md#visual-stability-and-baselines) for keeping captures stable |
 
 The locator-based, retrying assertions and the element-based, one-shot ones live in separate helper classes internally, but you call both the same way, through the `Expect` you saw above. Either kind throws on failure, and the message names what was expected alongside what was actually found.
 

@@ -294,7 +294,7 @@ Overlays inside the app are only detected for elements found by the `uia3` provi
 Use these methods to help with test execution and debugging:
 
 ```csharp
-byte[] png = await app.ScreenshotAsync();                                 // full-window PNG capture
+byte[] png = await app.TakeScreenshotAsync();                                 // full-window PNG capture
 
 // Waits for a locator to disappear (e.g. a dialog closing) instead of guessing with a fixed delay.
 await app.WaitUntilGoneAsync(Locator.ByName("Save changes?"));
@@ -306,6 +306,38 @@ var button = await app.WaitForAsync(Locator.ByAutomationId("SubmitButton"), e =>
 var roots = await app.SnapshotAsync();
 var everyButton = roots!.DescendantsAndSelf().Where(e => e.ControlType == "Button");
 ```
+
+### Visual Stability and Baselines:
+
+For apps with animations, or UI you can only check by how it looks, AutoMancer works from the window's pixels:
+
+```csharp
+// Waits until two consecutive captures match (default: at most 0.1% of pixels differ, polled every 100ms, 5s timeout, TimeoutException after that).
+await app.WaitForVisualStableAsync();
+await app.WaitForVisualStableAsync(Locator.ByAutomationId("Chart"));   // watches only that element's pixels
+
+byte[] chart = await app.TakeScreenshotAsync(Locator.ByAutomationId("Chart"));   // just the element, cropped from the window
+
+// Save a capture to a file (missing folders are created), then compare a later capture against it.
+await app.TakeScreenshotAsync("baselines/main-window.png");
+VisualComparison result = await app.CompareScreenshotAsync("baselines/main-window.png");   // result.Passed, result.DifferenceRatio
+
+// Compares against a stored baseline PNG (default: at most 1% of pixels differ), retrying until it matches or the wait expires.
+// The first run records the baseline and fails so you can review it; rerun to compare.
+await Expect(app).ToMatchScreenshotAsync("baselines/main-window.png");
+await Expect(app, Locator.ByAutomationId("Chart")).ToMatchScreenshotAsync("baselines/chart.png");
+```
+
+Comparisons are same-display-scale only. Each capture records the window's DPI, and comparing against a screenshot recorded at a different scale (100% vs 150%) fails with a message saying to re-record the baseline at the new scale. 
+
+Captures are the window's visible frame, so an opaque app's pixels don't depend on what's behind it. 
+
+These settings reduce noise on the machine that records and runs the checks:
+
+- **Transparency effects:** turn them off (Settings → Personalization → Colors → Transparency effects). Windows 11 apps with Mica or acrylic surfaces blend in the desktop behind them, and anything moving there (a video, an animated wallpaper, another window updating) changes your pixels. Also avoid putting a video or other animation behind the window under test.
+- **Animation effects:** turn them off (Settings → Accessibility → Visual effects → Animation effects) so menus and flyouts appear without fading, and settle faster.
+- **Text cursor blink:** a blinking caret changes pixels inside an editor. Turn the blink rate to its lowest setting (Control Panel → Keyboard → Cursor blink rate) or scope the baseline to an element that doesn't contain the caret.
+- **One display scale, theme and font smoothing (ClearType) for recording and checking.** Text rasterisation differs between them, and a baseline recorded on one machine may need a looser `maxDifferenceRatio` on another.
 
 ## Testing Your Own App:
 

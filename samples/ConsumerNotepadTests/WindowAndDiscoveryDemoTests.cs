@@ -50,11 +50,11 @@ public sealed class WindowAndDiscoveryDemoTests(NotepadFixture fixture) : AutoMa
         Assert.Contains(Flatten(snapshot!), node => node.ControlType == "Document");
     }
 
-    // ScreenshotAsync captures the window's current on-screen pixels as a PNG byte array.
+    // TakeScreenshotAsync captures the window's current on-screen pixels as a PNG byte array.
     [Fact]
-    public async Task ScreenshotAsync_ReturnsNonEmptyPng()
+    public async Task TakeScreenshotAsync_ReturnsNonEmptyPng()
     {
-        var png = await App.ScreenshotAsync();
+        var png = await App.TakeScreenshotAsync();
         Assert.NotEmpty(png);
     }
 

@@ -1,5 +1,6 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
 using System.ComponentModel;
+using System.IO;
 using System.Runtime.InteropServices;
 using AutoMancer.Engine.Actions;
 using AutoMancer.Engine.Core;
@@ -325,10 +326,51 @@ public class App : IAsyncDisposable
     }
 
     // Captures the root window's current on-screen pixels as a PNG.
-    public Task<byte[]> ScreenshotAsync(CancellationToken ct = default)
+    public Task<byte[]> TakeScreenshotAsync(CancellationToken ct = default)
         => ScreenshotAction.CaptureAsync(_session.RootWindowHandle, ct);
 
+    // Captures just the located element's on-screen rectangle as a PNG, cropped from the root window's capture; throws if the element is outside the window.
+    public async Task<byte[]> TakeScreenshotAsync(Locator locator, CancellationToken ct = default)
+        => await ScreenshotAction.CaptureRegionAsync(_session.RootWindowHandle, (await FindAsync(locator, ct)).BoundingRect, ct);
+
+    // Captures the root window and writes the PNG to savePath, creating any missing directories.
+    public async Task TakeScreenshotAsync(string savePath, CancellationToken ct = default)
+        => await WriteScreenshotAsync(await TakeScreenshotAsync(ct), savePath, ct);
+
+    // Captures the located element and writes the PNG to savePath, creating any missing directories.
+    public async Task TakeScreenshotAsync(Locator locator, string savePath, CancellationToken ct = default)
+        => await WriteScreenshotAsync(await TakeScreenshotAsync(locator, ct), savePath, ct);
+
+    // Writes png to savePath, creating any missing directories.
+    private static async Task WriteScreenshotAsync(byte[] png, string savePath, CancellationToken ct)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(savePath))!);
+        await File.WriteAllBytesAsync(savePath, png, ct);
+    }
+
+    // Captures the root window and pixel-diffs it against the PNG at baselinePath, passing when at most maxDifferenceRatio of pixels differ; throws BaselineDpiMismatchError when the two were captured at different display scales.
+    public async Task<VisualComparison> CompareScreenshotAsync(string baselinePath, double maxDifferenceRatio = 0.01, CancellationToken ct = default)
+        => VisualRegression.CompareToBaseline(await TakeScreenshotAsync(ct), baselinePath, maxDifferenceRatio);
+
+    // Captures the located element and pixel-diffs it against the PNG at baselinePath, with the same pass rule and DPI error as the window overload.
+    public async Task<VisualComparison> CompareScreenshotAsync(Locator locator, string baselinePath, double maxDifferenceRatio = 0.01, CancellationToken ct = default)
+        => VisualRegression.CompareToBaseline(await TakeScreenshotAsync(locator, ct), baselinePath, maxDifferenceRatio);
+
     // ---- Waiting (public) ----
+
+    // Polls screenshots (of region's element when given, else the whole window) until two consecutive frames differ by at most maxDifferenceRatio of pixels; throws TimeoutException if they never settle within timeout (default 5s, poll default 100ms).
+    public Task WaitForVisualStableAsync(Locator? region = null, TimeSpan? pollInterval = null, TimeSpan? timeout = null, double maxDifferenceRatio = 0.001, CancellationToken ct = default)
+    {
+        Func<CancellationToken, Task<byte[]>> capture;
+        if (region is null)
+            capture = token => TakeScreenshotAsync(token);
+        else
+            capture = token => TakeScreenshotAsync(region, token);
+
+        var interval = pollInterval ?? TimeSpan.FromMilliseconds(100);
+        var limit = timeout ?? TimeSpan.FromSeconds(5);
+        return VisualStability.WaitAsync(capture, interval, limit, maxDifferenceRatio, ct);
+    }
 
     // Waits until every provider in the chain returns null for the locator; throws ElementStillPresentError if it's still found after ImplicitWaitMs.
     public Task WaitUntilGoneAsync(Locator locator, CancellationToken ct = default)
@@ -413,6 +455,17 @@ public class App : IAsyncDisposable
         {
             EnsureWindowReady();
             NativeMethods.SendMouseClick(x, y, _logger);
+        }, ct);
+        if (_actionDelayMs > 0) await Task.Delay(_actionDelayMs, ct);
+    }
+
+    // Double-clicks at a physical screen coordinate without finding a UIA element; the point counterpart of DoubleClickAsync.
+    public async Task DoubleClickAtAsync(int x, int y, CancellationToken ct = default)
+    {
+        await Task.Run(() =>
+        {
+            EnsureWindowReady();
+            DoubleClickAction.ExecuteAt(x, y, _logger);
         }, ct);
         if (_actionDelayMs > 0) await Task.Delay(_actionDelayMs, ct);
     }

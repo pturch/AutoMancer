@@ -12,7 +12,7 @@
 
 **WinAppDriver lessons incorporated:** WinAppDriver defaulted to port 4723 (Appium standard) making it usable by stock Selenium/Appium clients. AutoMancer uses 27272 by default but should accept `--port 4723` for Appium compat mode. WinAppDriver also omitted window management endpoints entirely; AutoMancer adds `GET/POST .../window/size` and `POST .../window/:handle/maximize`. New locator strategies `id` (RuntimeId) and `automancer:xpath` are routed here.
 
-**Tech Stack:** C# latest / .NET 10 Windows (`net10.0-windows10.0.22621.0`), `System.Net.HttpListener`, `System.Text.Json`, `AutoMancer.Engine` project reference. No new screenshot dependency needed — `App.ScreenshotAsync()` already returns PNG bytes via the engine's existing WPF-based `ScreenshotAction`.
+**Tech Stack:** C# latest / .NET 10 Windows (`net10.0-windows10.0.22621.0`), `System.Net.HttpListener`, `System.Text.Json`, `AutoMancer.Engine` project reference. No new screenshot dependency needed — `App.TakeScreenshotAsync()` already returns PNG bytes via the engine's existing WPF-based `ScreenshotAction`.
 
 **Test Stack:** xunit 2.8, Moq 4.20, `Microsoft.NET.Test.Sdk` 17.9.0 — all tests are C# in `tests/AutoMancer.Daemon.Tests/`; run with `dotnet test`
 
@@ -298,7 +298,7 @@ curl -X POST http://127.0.0.1:27272/session/$SESSION_ID/hotkey -d '{"modifiers":
 **What:** Completes the daemon's core surface area. Screenshot captures the app window as a base64 PNG. Timeout endpoints read the session's current wait settings and let a client change them mid-session — `DaemonSession` holds `ImplicitWaitMs`/`PollIntervalMs` as mutable fields rather than baking them into an immutable resolver at creation, so `ToAppSession()` (Task 3.1.3) always builds the resolver from whatever the session's settings are *right now*. This matches Appium's `/session/:id/appium/settings`, which actually mutates live session config, instead of silently discarding the write. Extension endpoints expose AutoMancer-specific capabilities: provider info, scroll-to, PID, kill app, and annotated snapshot.
 
 **Creates:**
-- `src/AutoMancer.Daemon/Endpoints/ScreenshotEndpoint.cs` — calls the session's `App.ScreenshotAsync()` (already returns PNG `byte[]` via the engine's `ScreenshotAction`) and base64-encodes the result; `CaptureBase64Internal` for extension endpoint reuse — no new screenshot capture code, no new package
+- `src/AutoMancer.Daemon/Endpoints/ScreenshotEndpoint.cs` — calls the session's `App.TakeScreenshotAsync()` (already returns PNG `byte[]` via the engine's `ScreenshotAction`) and base64-encodes the result; `CaptureBase64Internal` for extension endpoint reuse — no new screenshot capture code, no new package
 - `src/AutoMancer.Daemon/Endpoints/TimeoutEndpoints.cs` — GET returns `{ implicitWaitMs, pollIntervalMs }` from the live `DaemonSession`; POST updates those fields on the session so subsequent finds in that session pick up the new values immediately
 - `src/AutoMancer.Daemon/Endpoints/ExtensionEndpoints.cs` — `/automancer/element/:id/provider`, `/automancer/element/:id/scroll-to`, `/automancer/app/pid`, `/automancer/app` (DELETE = kill), `/automancer/snapshot`
 

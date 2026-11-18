@@ -7,7 +7,7 @@ using AutoMancer.Engine.Providers;
 
 namespace AutoMancer.Engine.Tests.Integration;
 
-// Verifies ScreenshotAction captures a live window's pixels as a valid, correctly-sized PNG.
+// Verifies ScreenshotAction captures a live window's visible frame as a valid, correctly-sized PNG.
 [Collection("Notepad")]
 [Trait("Category", "Integration")]
 public sealed class ScreenshotActionIntegrationTests
@@ -22,7 +22,7 @@ public sealed class ScreenshotActionIntegrationTests
         try
         {
             var windowHandle = Process.GetProcessById(app.ProcessId).MainWindowHandle;
-            NativeMethods.GetWindowRect(windowHandle, out var rect);
+            var rect = ScreenshotAction.VisibleBounds(windowHandle);
 
             var png = await ScreenshotAction.CaptureAsync(windowHandle);
 

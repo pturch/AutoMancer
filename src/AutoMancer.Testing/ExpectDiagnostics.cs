@@ -15,7 +15,7 @@ internal static class ExpectDiagnostics
 
         try
         {
-            var bytes = await app.ScreenshotAsync(ct);
+            var bytes = await app.TakeScreenshotAsync(ct);
             var path = Path.Combine(options.ScreenshotDirectory, $"automancer-expect-{DateTime.UtcNow:yyyyMMdd-HHmmss-fff}.png");
             await File.WriteAllBytesAsync(path, bytes, ct);
             return $" Screenshot: {path}";

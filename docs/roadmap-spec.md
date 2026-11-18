@@ -63,14 +63,16 @@ This project ships in three distinct phases. **Phase 1** is a self-contained C# 
 ║   Stage 2.5: Locator Suggestion ─────► best unique       ║
 ║       │                                 locator          ║
 ║       │                                                  ║
-║   Stage 2.6: Idle Wait + Visual ─────► WaitForIdle,      ║
-║       │                 Regression      pixel baseline   ║
+║   Stage 2.6: Visual Stability ───────► WaitForVisual-    ║
+║       │       + Regression              Stable, pixel    ║
+║       │                                 baseline         ║
 ║       │                                                  ║
 ║   Stage 2.7: Engine Hardening ───────► DPI matrix,       ║
 ║       │                               Win10/11, examples✓║
 ║       │                                                  ║
 ║   Stage 2.8: Interaction Coverage ─► toggle/expand/select,║
 ║                          clipboard, grid cells, range val║
+║                          + AppExpect window checks       ║
 ║                                     v1.0 shippable ✓     ║
 ╚══════════════════════════════════════════════════════════╝
                         │
@@ -242,14 +244,14 @@ All C# code (engine + daemon) is tested in C# with xunit + Moq. SDK client code 
 
 ### Stage 1.8 — Screenshot, Wait Utilities, and App Facade
 > **Unlocks:** Screenshot capture and reactive wait patterns; the `App` facade exposes everything as a single cohesive C# API.
-> **Done when:** `app.ScreenshotAsync()` returns a valid PNG; `app.WaitUntilGoneAsync(locator)` resolves when an element disappears; `app.WaitForAsync(locator, predicate)` resolves once the predicate is true instead of racing a single find.
+> **Done when:** `app.TakeScreenshotAsync()` returns a valid PNG; `app.WaitUntilGoneAsync(locator)` resolves when an element disappears; `app.WaitForAsync(locator, predicate)` resolves once the predicate is true instead of racing a single find.
 > **Planned engine API work finished after this stage.**
 
 | Batch | Work |
 |---|---|
 | 1.8.1 | `ScreenshotAction` — `CaptureAsync(hwnd)` → `byte[]` PNG via GDI+ `BitBlt`; no external dependencies |
 | 1.8.2 | `WaitUntilGoneAsync` in `ElementResolver` — retry until every provider returns null within the implicit wait window |
-| 1.8.3 | `App` facade enrichment — add `DoubleClickAsync`, `RightClickAsync`, `HoverAsync`, `HotkeyAsync`, `DragAsync`, `ScrollWheelAsync`, `SetFocusAsync`, `CloseAsync`, `ScreenshotAsync`, `WaitUntilGoneAsync` |
+| 1.8.3 | `App` facade enrichment — add `DoubleClickAsync`, `RightClickAsync`, `HoverAsync`, `HotkeyAsync`, `DragAsync`, `ScrollWheelAsync`, `SetFocusAsync`, `CloseAsync`, `TakeScreenshotAsync`, `WaitUntilGoneAsync` |
 | 1.8.4 | Integration tests — screenshot returns non-empty bytes; wait-until-gone resolves after Notepad dialog is dismissed |
 | 1.8.5 | `WaitForAsync(Locator, Func<ElementHandle, bool> condition)` in `ElementResolver`/`App` — generic retry-asserting primitive (poll-until-true, not just poll-until-found); this is the primitive Stage 1.9's `Expect()` API is built on |
 | 1.8.6 | `AppOptions.TestDefaults` static — longer implicit wait, shorter action delay, tuned for CI/test-runner use rather than interactive scripting |
@@ -385,15 +387,15 @@ Batch numbers below match the task numbers 1:1 in `extended-coverage-spec.md` (e
 
 ---
 
-### Stage 2.6 — Idle Wait and Visual Regression
-> **Two general-purpose capabilities, useful against *any* app, UIA-accessible or not:** `WaitForIdleAsync` (wait for animations to actually finish instead of guessing with a fixed delay) and visual regression assertions (fail when rendered pixels drift from a stored baseline). Both build on the existing `ScreenshotAsync()` capture. The Visual Provider (OCR and template-matching locator fallback for apps with no accessibility tree) used to share this stage and now lives in Future Work Ideas.
+### Stage 2.6 — Visual Stability Wait and Visual Regression
+> **Two general-purpose capabilities, useful against *any* app, UIA-accessible or not:** `WaitForVisualStableAsync` (wait for animations to actually finish instead of guessing with a fixed delay) and visual regression assertions (fail when rendered pixels drift from a stored baseline). Both build on the existing `TakeScreenshotAsync()` capture. The Visual Provider (OCR and template-matching locator fallback for apps with no accessibility tree) used to share this stage and now lives in Future Work Ideas.
 >
-> **Done when:** a visual regression assertion fails when a window's rendered output drifts from a stored baseline; `app.WaitForIdleAsync()` resolves once consecutive screenshots stop changing.
+> **Done when:** a visual regression assertion fails when a window's rendered output drifts from a stored baseline; `app.WaitForVisualStableAsync()` resolves once consecutive screenshots stop changing.
 
 | Batch | Work |
 |---|---|
-| 2.6.1 | `App.WaitForIdleAsync()` — diffs consecutive `ScreenshotAsync()` captures at a short interval until two frames match within a pixel-difference threshold, or a timeout is hit; replaces the ad-hoc `Task.Delay(300) // flyout animation` waits already scattered through the integration test suite with a real settledness check |
-| 2.6.2 | Visual regression snapshot assertion — captures the current window/element region and pixel-diffs it against a stored baseline PNG, failing past a configurable difference threshold; shares the pixel-compare code with 2.6.1. `ScreenshotAsync()` captures physical pixels, and the same logical window is a different physical *pixel size* at 100% vs. 150% DPI — resize whichever of the baseline/live capture was taken at a different DPI to match the other's pixel dimensions (by the `dpi / 96.0` scale ratio) before diffing, or the assertion spuriously fails whenever it runs on a differently-scaled machine than the one that recorded the baseline. `DpiHelper.PhysicalToLogical` converts a coordinate pair, not a bitmap, so it doesn't apply directly here |
+| 2.6.1 | `App.WaitForVisualStableAsync()` — diffs consecutive `TakeScreenshotAsync()` captures at a short interval until two frames match within a pixel-difference threshold, or a timeout is hit; a real settledness check in place of guessing with a fixed delay |
+| 2.6.2 | Visual regression snapshot assertion — captures the current window/element region and pixel-diffs it against a stored baseline PNG, failing past a configurable difference threshold; shares the pixel-compare code with 2.6.1. Baselines are same-DPI only: `TakeScreenshotAsync()` captures physical pixels, so a capture at a different display scale than the baseline fails with a message saying so, rather than rescaling (tried and measured live; text rasterisation differs too much across scales to give a dependable threshold) |
 
 **This stage is entirely engine-side** — like the rest of Phase 2, it only touches `AutoMancer.Engine`.
 
@@ -421,7 +423,7 @@ Batch numbers below match the task numbers 1:1 in `extended-coverage-spec.md` (e
 ### Stage 2.8 — Extended UIA Pattern and Clipboard Actions
 > **Unlocks:** Core interaction coverage Phase 1 never reached. Checkboxes, list/combo selections, grid cells, and clipboard text are as common in real Windows apps as clicking a button or typing into a field — Phase 1's action set (`ClickAction`, `TypeAction`, `ScrollAction`, ...) has no answer for any of them today, so a checkbox or a `DataGrid` cell simply can't be driven from `App` without this stage, independent of anything else in the roadmap.
 > **Also unblocks Phase 3, whenever that's picked up:** the daemon's `PatternEndpoints`/`ClipboardEndpoints` (roadmap batch 3.2.6) and the SDKs' `ComboBox`/`DataGrid` control classes (sdks-spec.md) need `Toggle`/`ExpandCollapse`/`SelectionItem`/`Grid` and clipboard access to delegate to; without this stage, the daemon can only get there by reaching around the engine (`ElementHandle.NativeHandle` cast directly to `IUIAutomationElement`) instead of calling a real `App` method the way every other endpoint does. This is a secondary bonus, not the reason to build it — Phase 3 has no start date, and the capability stands on its own for direct C# consumers today.
-> **Done when:** `app.ToggleAsync(locator)` flips a checkbox's `Toggle.ToggleState`; `app.SelectAsync(locator)`/`GetSelectedItemsAsync(locator)` round-trip a list selection; `app.GetGridCellAsync(locator, row, col)` returns the element at a `DataGrid` cell; `app.SetClipboardTextAsync(...)`/`GetClipboardTextAsync()` round-trip a string through the system clipboard; `app.SetRangeValueAsync(locator, value)`/`GetRangeValueAsync(locator)` round-trip a slider/progress-bar's numeric value.
+> **Done when:** `app.ToggleAsync(locator)` flips a checkbox's `Toggle.ToggleState`; `app.SelectAsync(locator)`/`GetSelectedItemsAsync(locator)` round-trip a list selection; `app.GetGridCellAsync(locator, row, col)` returns the element at a `DataGrid` cell; `app.SetClipboardTextAsync(...)`/`GetClipboardTextAsync()` round-trip a string through the system clipboard; `app.SetRangeValueAsync(locator, value)`/`GetRangeValueAsync(locator)` round-trip a slider/progress-bar's numeric value. `Expect(app)` also asserts window title, state, bounds, process liveness, dialog presence, visual stability and resource bounds, each retrying until a match or timeout.
 
 | Batch | Work |
 |---|---|
@@ -433,8 +435,10 @@ Batch numbers below match the task numbers 1:1 in `extended-coverage-spec.md` (e
 | 2.8.6 | Unit tests for each action's no-op/unsupported-pattern path (mirroring `ScrollActionTests`/`SetFocusActionTests`); integration tests — toggle a checkbox, select/multi-select a list, read a `ListView`/`DataGrid`-style control's row and column counts and fetch a specific cell, clipboard round-trip |
 | 2.8.7 | `RangeValueAction` — `RangeValuePattern.SetValue(double)`; reads `CurrentValue`/`CurrentMinimum`/`CurrentMaximum`/`CurrentLargeChange`/`CurrentSmallChange`; mirrors `ToggleAction`'s no-op-when-unsupported shape. `App.SetRangeValueAsync(Locator, double value)`, `App.GetRangeValueAsync(Locator)` → a `RangeValueInfo(double Value, double Minimum, double Maximum)` record. Covers sliders, scrollbars, and progress bars — controls Phase 1's `ClickAction`/`DragAction` could only fake with pixel-position math |
 | 2.8.8 | Unit tests for `RangeValueAction`'s no-op/unsupported-pattern path; integration test — set a live slider/progress bar's value and read it back, and confirm `CurrentMinimum`/`CurrentMaximum` match the control's declared range |
+| 2.8.9 | `AppExpect` window-level assertions, each retrying until a match or timeout and throwing `ExpectFailedError` with `ExpectDiagnostics`, like `ToMatchScreenshotAsync`. State and geometry: `ToHaveTitleAsync(string \| Regex)`, `ToBeMinimizedAsync`/`ToBeMaximizedAsync`/`ToBeForegroundAsync`, `ToHaveBoundsAsync(Rect, tolerancePx)`. Process and windows: `ToBeRunningAsync`/`ToHaveExitedAsync`/`ToBeRespondingAsync`, `ToHaveWindowCountAsync(n)`, `ToHaveDialogAsync(WindowMatchOptions)`/`ToHaveNoDialogAsync()` (reusing Stage 2.3's window-view matching). Stability and resources: `ToBeVisuallyStableAsync()` over Stage 2.6, `ToHaveMemoryBelowAsync`/`ToHaveHandleCountBelowAsync` over Stage 2.4's sampling. Element-level checks stay on `LocatorExpect` |
+| 2.8.10 | Unit tests through the `TestingAdapter` fake-provider seam; integration tests against live Notepad that use the new pattern and clipboard actions as setup and teardown, so the end of Stage 2.8 validates both; a `samples/ConsumerNotepadTests` demo |
 
-**After 2.8.8:** Phase 2 complete — **v1**. The engine, CLI, and test adapter are a hardened, complete C# product on their own; this is what ships. Phase 3 (below) is deferred, long-running future work, not the next thing in the queue. Whenever it is picked up, the daemon's `PatternEndpoints`/`ClipboardEndpoints` (Stage 3.2.6) and the SDKs' `ComboBox`/`DataGrid` controls can delegate to real `App` methods instead of reaching around the engine — daemon-spec.md Task 3.2.6 and sdks-spec.md's control-subclass tasks (3.3.5, 3.4.5) should be revisited at that point to switch from the `NativeHandle`-direct workaround to calling these actions.
+**After 2.8.10:** Phase 2 complete — **v1**. The engine, CLI, and test adapter are a hardened, complete C# product on their own; this is what ships. Phase 3 (below) is deferred, long-running future work, not the next thing in the queue. Whenever it is picked up, the daemon's `PatternEndpoints`/`ClipboardEndpoints` (Stage 3.2.6) and the SDKs' `ComboBox`/`DataGrid` controls can delegate to real `App` methods instead of reaching around the engine — daemon-spec.md Task 3.2.6 and sdks-spec.md's control-subclass tasks (3.3.5, 3.4.5) should be revisited at that point to switch from the `NativeHandle`-direct workaround to calling these actions.
 
 ---
 
@@ -561,7 +565,7 @@ Batch numbers below match `sdks-spec.md`'s task numbers 1:1 (batch `3.4.4` is Ta
 - [ ] `automancer launch notepad.exe && automancer tree <id>` produces a readable element tree
 - [ ] `ElementNotFoundError` includes `closestMatch` when a near-match exists
 - [ ] Double-click, right-click, hover, hotkey, drag all verified against a live app
-- [ ] `ScreenshotAsync()` returns a valid PNG from a live window
+- [ ] `TakeScreenshotAsync()` returns a valid PNG from a live window
 - [ ] `WaitUntilGoneAsync()` resolves correctly when an element disappears
 - [ ] `WaitForAsync(locator, condition)` resolves once the condition is true, not merely once the element is found
 - [ ] `AutoMancer.Testing` / `AutoMancer.Testing.XUnit` ship; `Expect(locator).ToHaveName(...)` and direct `App`/`Locator` calls both work in the same test method against the same engine surface
@@ -582,7 +586,7 @@ Batch numbers below match `sdks-spec.md`'s task numbers 1:1 (batch `3.4.4` is Ta
 - [ ] A native context-menu item is found and clicked via the `HMENU` fallback on an app where UIA doesn't expose it
 - [x] `ResourceMonitor.MeasureAsync()` returns before/after handle and memory readings over a live test run
 - [ ] `app.SuggestLocatorAsync(element)` returns a locator that resolves back to that same element
-- [ ] `app.WaitForIdleAsync()` resolves once consecutive screenshots stop changing, and a visual regression assertion fails when rendered output drifts from a stored baseline
+- [ ] `app.WaitForVisualStableAsync()` resolves once consecutive screenshots stop changing, and a visual regression assertion fails when rendered output drifts from a stored baseline
 - [ ] The Notepad integration suite passes at 100%, 125%, and 150% DPI with identical logical coordinates
 - [ ] The full `AutoMancer.Engine.Tests` integration suite passes on both Windows 10 and 11
 - [ ] A failed find under the debug-screenshot flag leaves an annotated PNG in `%TEMP%`
@@ -641,7 +645,7 @@ Batch numbers below match `sdks-spec.md`'s task numbers 1:1 (batch `3.4.4` is Ta
 
 **Idea:** Compare a full `ElementSnapshot` tree against a stored baseline tree (names, types, positions — structure, not pixels) and fail when it drifts, catching accessibility-tree regressions between app versions that look identical on screen but have silently changed underneath.
 
-- Structural counterpart to Stage 2.6's pixel-based visual regression (batch 2.6.2) — same "capture now, diff against a stored baseline" shape, but comparing `ElementSnapshot` trees instead of bitmaps, so it reuses `TrySnapshotAsync` rather than `ScreenshotAsync`.
+- Structural counterpart to Stage 2.6's pixel-based visual regression (batch 2.6.2) — same "capture now, diff against a stored baseline" shape, but comparing `ElementSnapshot` trees instead of bitmaps, so it reuses `TrySnapshotAsync` rather than `TakeScreenshotAsync`.
 - An app can look pixel-identical while a renamed `AutomationId` or a reordered control silently breaks every locator built against it — pixel regression alone wouldn't catch that.
 - **Why it's here instead of extending Stage 2.6:** it's a different signal (tree structure vs. rendered pixels) serving a narrower audience (teams already using `SnapshotAsync` for tree dumps) rather than a gap in the core find/interact surface — nothing else in the roadmap assumes it exists.
 

@@ -5,17 +5,16 @@ namespace AutoMancer.Cli.Tests.Commands;
 
 public sealed class TreeCommandTests
 {
-    // A session ID that was never launched fails with a clear message and a non-zero exit code.
+    // With no --pid and no current target, the command fails with a clear message and the target-not-found exit code.
     [Fact]
-    public async Task Tree_UnknownSession_PrintsErrorAndExitsNonZero()
+    public async Task Tree_NoTarget_PrintsErrorAndExitsTargetNotFound()
     {
-        var sessionId = Guid.NewGuid().ToString("N");
+        CliTestHelper.ClearState();
 
-        var (stdout, stderr, exitCode) = await CliTestHelper.RunAsync(TreeCommand.Build(), sessionId);
+        var (stdout, stderr, exitCode) = await CliTestHelper.RunAsync(TreeCommand.Build());
 
-        Assert.Equal(1, exitCode);
+        Assert.Equal(CliExitCode.TargetNotFound, exitCode);
         Assert.Empty(stdout);
-        Assert.Contains(sessionId, stderr);
-        Assert.Contains("not found", stderr);
+        Assert.Contains("No target", stderr);
     }
 }

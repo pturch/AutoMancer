@@ -42,18 +42,17 @@ public sealed class FindCommandTests
         Assert.Contains("name, id, class, control, path, runtime, xpath", ex.Message);
     }
 
-    // A session ID that was never launched fails with a clear message and a non-zero exit code, without touching UIA.
+    // With no --pid and no current target, the command fails with a clear message and the target-not-found exit code, without touching UIA.
     [Fact]
-    public async Task Find_UnknownSession_PrintsErrorAndExitsNonZero()
+    public async Task Find_NoTarget_PrintsErrorAndExitsTargetNotFound()
     {
-        var sessionId = Guid.NewGuid().ToString("N");
+        CliTestHelper.ClearState();
 
         var (stdout, stderr, exitCode) = await CliTestHelper.RunAsync(
-            FindCommand.Build(), sessionId, "--by", "name", "--value", "irrelevant");
+            FindCommand.Build(), "--by", "name", "--value", "irrelevant");
 
-        Assert.Equal(1, exitCode);
+        Assert.Equal(CliExitCode.TargetNotFound, exitCode);
         Assert.Empty(stdout);
-        Assert.Contains(sessionId, stderr);
-        Assert.Contains("not found", stderr);
+        Assert.Contains("No target", stderr);
     }
 }

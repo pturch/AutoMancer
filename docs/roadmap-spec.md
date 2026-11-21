@@ -210,13 +210,13 @@ All C# code (engine + daemon) is tested in C# with xunit + Moq. SDK client code 
 
 ### Stage 1.6 — Window Management and CLI Harness
 > **Unlocks:** The `automancer` command-line tool is usable for manual testing of any app.
-> **Done when:** `automancer launch notepad.exe && automancer tree <id>` produces a readable element tree.
+> **Done when:** `automancer launch notepad.exe && automancer tree` produces a readable element tree.
 > **Proof-of-concept milestone — Phase 1 continues through Stage 1.9 (interaction depth, wait utilities, and the test adapter layer).**
 
 | Batch | Work | Plan ref |
 |---|---|---|
 | 1.6.1 | `WindowAction` — `ResizeAsync`, `MoveAsync`, `SetVisualStateAsync` (maximize/minimize/restore), `GetSizeAsync`; `WindowPattern` → `SetWindowPos` fallback | Engine Task 19 |
-| 1.6.2 | `SessionStore.cs` — `%TEMP%\automancer-sessions.json` | Engine Task 16 |
+| 1.6.2 | `SessionStore.cs` — `%TEMP%\automancer-sessions.json` (later replaced by PID targets and `%LOCALAPPDATA%\AutoMancer\state.json`; see CLI Parity) | Engine Task 16 |
 | 1.6.3 | CLI commands — `launch`, `find`, `tree` (first three) | Engine Task 16 |
 | 1.6.4 | CLI commands — `click`, `type` | Engine Task 16 |
 | 1.6.5 | Full unit test pass | Engine Task 20 |
@@ -442,6 +442,29 @@ Batch numbers below match the task numbers 1:1 in `extended-coverage-spec.md` (e
 
 ---
 
+### CLI Parity — Closing the CLI's Gap with the Engine
+> **Unlocks:** An AI agent or a shell script can launch an app, look at it, act on it, check the result, and recover from failures using only the command line, with machine-readable output and exit codes that say what kind of failure it was.
+> **Done when:** Every engine capability that makes sense as a one-shot command has one, `--json` gives exactly one object for every command (including a mistake in the command line), and a systematic check (random option combinations plus a comparison of `assert`, `find` and `tree` against the full element tree on live Notepad) finds nothing that disagrees.
+
+Not a numbered stage, and entirely CLI-side — `AutoMancer.Engine` isn't touched. Phase 1 left the CLI with five commands (`launch`, `find`, `tree`, `click`, `type`) while Phase 2 grew the engine a long way; this brings the command line up to the engine's surface, each command wrapping one or two existing `App` methods. It ran alongside Phase 2, after Stage 2.6, and is complete. The working plan is `cli-parity-plan.md`.
+
+| Batch | Work |
+|---|---|
+| CP.1 | Shared command plumbing — one helper that does the argument handling, the attach and the error-to-exit-code mapping, so each command is only what makes it different; a global `--json`; structured errors with a fixed exit-code table (0 success, 1 expectation not met, 2 bad command line, 3 no app to act on, 4 the tool broke) |
+| CP.2 | `tree` filters (`--depth`, `--interactive-only`) so an observation doesn't return the whole UI Automation tree, and `find --json` returns the locator that resolved |
+| CP.3 | `screenshot` — the window, or one element, as a PNG |
+| CP.4 | `assert` — element properties and counts, window stability, and a two-image comparison. Its `--timeout` also drives the engine's own wait, which makes it the CLI's wait: it appears, goes away, or settles. `compare`, `wait` and `wait-stable` were built or planned and folded into it; `suggest` was built and dropped as redundant with `tree`, `find --json` and `assert` |
+| CP.5 | `key`, `hotkey` and `hover` |
+| CP.6 | Apps are identified by process ID instead of session ID: a global `--pid`, a current target set by `launch` and `configure --attach`, and `configure` for saved engine settings, with everything kept in one atomically written `state.json`. This replaced the first design (one JSON file of sessions in the temp folder), which could lose entries under overlapping commands and could attach to the wrong program after Windows reused a PID |
+| CP.7 | `window` — `--move`, `--resize`, `--state`, `--close` and `--kill`, with `--close` and `--kill` clearing the current target when that app goes away |
+| CP.8 | `focus`. A `context-menu` command was built and removed: live testing showed `click --right` then `click` on the item works in two steps, and the command failed where those steps succeeded. A `get-value` command was built here and removed again: reading an element's live value belongs with the other property reads, as part of `find --details` in the inspector plan, not in a command of its own |
+| CP.9 | Scoped locators — `--within-by` and `--within-value` on every command that takes a locator, backed by one shared option group. Path and XPath locators can't be scoped, because the engine always searches them from the window root |
+| CP.10 | A hardening pass — about 3,000 random option combinations, a model-based check of `assert`, `find` and `tree` against the full element tree on live Notepad, and targeted probes for Unicode, file paths, state-file damage and concurrency. It fixed syntax errors ignoring `--json`, text that wasn't UTF-8, a race on the state file, and a set of validation gaps |
+
+**After CP.10:** the command line covers the engine's surface. Left out on purpose are the things that hold state which disappears when the process exits, or that need design for little scripting value: `KeyDownAsync`/`KeyUpAsync`, `DragAsync`, `ScrollWheelAsync`, `OpenPopupAsync` (it returns a stateful `Popup`), custom UIA property registration, `TypeDirectAsync`, and launching a packaged app by its AUMID (`configure --attach` covers the main need). The reference is [src/AutoMancer.Cli/README.md](../src/AutoMancer.Cli/README.md).
+
+---
+
 ## Phase 3 — Polyglot HTTP Layer (Future)
 
 > **Not the next phase to pick up after v1.** Phase 2's completion ships v1 — the engine, CLI, and test adapter as a complete, hardened C# product. Phase 3 is deliberately deferred, long-running future work: a daemon and polyglot SDKs on top of that surface, started once v1 has had real time in the field to prove the engine's API and behavior out under sustained use, not immediately after Phase 2 lands. There's no fixed date for starting it — this section documents the plan for when it's picked up.
@@ -529,7 +552,7 @@ Batch numbers below match `sdks-spec.md`'s task numbers 1:1 (batch `3.4.4` is Ta
 ### Stage 3.5 — CI Session (`automancer-session`)
 > **Unlocks:** Running AutoMancer tests in GitHub Actions and Azure Pipelines without a real desktop.
 > **Done when:** `automancer-session start && automancer-session run pytest tests/ && automancer-session stop` exits 0 in a CI pipeline.
-> **Not the `automancer` CLI from Stage 1.6.** The CLI (`launch`/`find`/`tree`/`click`/`type`) drives one action at a time against a desktop a human is already logged into — a developer tool. `automancer-session` solves a different problem: `SendInput`/UIA generally need an interactive desktop (`WinSta0\Default`), which most CI runners don't have — clicks silently go nowhere and screenshots come back black. `start`/`stop` create and tear down an isolated virtual desktop (`CreateDesktop`/`SetThreadDesktop`); `run <command>` executes a whole test command (`pytest tests/`, `npm test`, ...) inside it, not individual UI actions.
+> **Not the `automancer` CLI from Stage 1.6.** The CLI (`launch`, `find`, `click`, `type`, `assert`, ...) drives one action at a time against a desktop a human is already logged into — a developer tool. `automancer-session` solves a different problem: `SendInput`/UIA generally need an interactive desktop (`WinSta0\Default`), which most CI runners don't have — clicks silently go nowhere and screenshots come back black. `start`/`stop` create and tear down an isolated virtual desktop (`CreateDesktop`/`SetThreadDesktop`); `run <command>` executes a whole test command (`pytest tests/`, `npm test`, ...) inside it, not individual UI actions.
 
 **No detailed spec doc covers this stage yet** — unlike Phases 1–3's other stages, there's no `Task N` breakdown for `VirtualDesktop.cs`/`automancer-session` in any of the four spec docs. Write one before starting, matching the format of `core-engine-spec.md`/`daemon-spec.md`.
 

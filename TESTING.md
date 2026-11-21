@@ -99,6 +99,33 @@ internal static class TestSetup
 
 It's a process-wide switch, not a per-class setting, so setting it once covers every test class. Screenshots land in the configured directory, `%TEMP%` by default.
 
+## Checking from the command line
+
+AutoMancer can work without C# through the command line interface:
+
+```bash
+automancer launch notepad.exe
+automancer type "Hello" --by control --value Document
+automancer assert --by control --value Document --check enabled --check "text=Hello" --timeout 3000 \
+  || { echo "Notepad did not show the text"; exit 1; }
+```
+
+The available checks in the `assert` command line up with the library's assertions:
+
+| Library assertion | `automancer assert` |
+|---|---|
+| `ToHaveNameAsync("Save")` | `--check "name=Save"` |
+| `ToHaveTextAsync` / `ToContainTextAsync("Sav")` | `--check "name~Sav"` |
+| `ToBeVisibleAsync()` | `--check visible` |
+| `ToBeEnabledAsync()` | `--check enabled` |
+| `ToHaveCountAsync(3)` | `--check count=3` |
+| `ToBeUnobscuredAsync()` / `ToBeObscuredAsync()` | `--check unobscured` / `--check "!unobscured"` |
+| `ToHaveValueAsync("abc")` | `--check "text=abc"` |
+| `App.WaitForVisualStableAsync()` | `--check stable` |
+| `ToMatchScreenshotAsync(path)` | `screenshot --out actual.png`, then `assert --expected path --actual actual.png` |
+
+The [CLI README](src/AutoMancer.Cli/README.md#assert) explains every command, the exit codes, and the `--json` output for tools that parse the result.
+
 ## A complete worked example
 
 [`samples/ConsumerNotepadTests`](samples/ConsumerNotepadTests) is a full test project built entirely on this public API. Nothing in it reaches into AutoMancer's own internals. Its [README](samples/ConsumerNotepadTests/README.md) walks through what each file demonstrates, including what a failure message actually looks like in practice.

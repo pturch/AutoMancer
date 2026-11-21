@@ -5,39 +5,42 @@ namespace AutoMancer.Cli.Tests.Commands;
 
 public sealed class ClickCommandTests
 {
-    // A session ID that was never launched fails with a clear message and a non-zero exit code.
+    // With no --pid and no current target, the command fails with a clear message and the target-not-found exit code.
     [Fact]
-    public async Task Click_UnknownSession_PrintsErrorAndExitsNonZero()
+    public async Task Click_NoTarget_PrintsErrorAndExitsTargetNotFound()
     {
-        var sessionId = Guid.NewGuid().ToString("N");
+        CliTestHelper.ClearState();
 
         var (stdout, stderr, exitCode) = await CliTestHelper.RunAsync(
-            ClickCommand.Build(), sessionId, "--by", "name", "--value", "irrelevant");
+            ClickCommand.Build(), "--by", "name", "--value", "irrelevant");
 
-        Assert.Equal(1, exitCode);
+        Assert.Equal(CliExitCode.TargetNotFound, exitCode);
         Assert.Empty(stdout);
-        Assert.Contains(sessionId, stderr);
-        Assert.Contains("not found", stderr);
+        Assert.Contains("No target", stderr);
+    }
+
+    // A --pid that no process has fails as target-not-found with the engine's reason and a hint.
+    [Fact]
+    public async Task Click_DeadPid_ExitsTargetNotFoundWithHint()
+    {
+        var (stdout, stderr, exitCode) = await CliTestHelper.RunAsync(
+            ClickCommand.Build(), [.. CliTestHelper.Dead, "--by", "name", "--value", "irrelevant"]);
+
+        Assert.Equal(CliExitCode.TargetNotFound, exitCode);
+        Assert.Empty(stdout);
+        Assert.Contains("No process with PID", stderr);
+        Assert.Contains("owns the window", stderr);
     }
 
     // An unrecognized --by strategy is rejected before the command ever tries to attach to the target process.
     [Fact]
     public async Task Click_UnknownStrategy_PrintsLocatorErrorWithoutAttaching()
     {
-        var sessionId = Guid.NewGuid().ToString("N");
-        SessionStore.Save(new SessionEntry(sessionId, ProcessId: -1, "unused.exe"));
-        try
-        {
-            var (stdout, stderr, exitCode) = await CliTestHelper.RunAsync(
-                ClickCommand.Build(), sessionId, "--by", "css", "--value", "irrelevant");
+        var (stdout, stderr, exitCode) = await CliTestHelper.RunAsync(
+            ClickCommand.Build(), [.. CliTestHelper.Self, "--by", "css", "--value", "irrelevant"]);
 
-            Assert.Equal(1, exitCode);
-            Assert.Empty(stdout);
-            Assert.Contains("Unknown strategy 'css'", stderr);
-        }
-        finally
-        {
-            SessionStore.Remove(sessionId);
-        }
+        Assert.Equal(CliExitCode.Usage, exitCode);
+        Assert.Empty(stdout);
+        Assert.Contains("Unknown strategy 'css'", stderr);
     }
 }

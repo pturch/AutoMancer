@@ -13,7 +13,7 @@ public sealed class LaunchCommandTests
 
         var (stdout, stderr, exitCode) = await CliTestHelper.RunAsync(LaunchCommand.Build(), badPath);
 
-        Assert.Equal(1, exitCode);
+        Assert.Equal(CliExitCode.Error, exitCode);
         Assert.Empty(stdout);
         Assert.Contains("Launch failed", stderr);
     }
@@ -26,7 +26,7 @@ public sealed class LaunchCommandTests
 
         var (stdout, stderr, exitCode) = await CliTestHelper.RunAsync(LaunchCommand.Build(), badPath, "--args", "--some-flag \"value with spaces\"");
 
-        Assert.Equal(1, exitCode);
+        Assert.Equal(CliExitCode.Error, exitCode);
         Assert.Empty(stdout);
         Assert.Contains("Launch failed", stderr);
     }

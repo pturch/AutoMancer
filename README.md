@@ -20,9 +20,9 @@ Windows automation is harder than web testing. Locator rules are more complex, i
 AutoMancer is built to make Windows desktop automation reliable enough to build real test suites and tooling on top of:
 
 - **Finds controls in complicated setups.** Not every control is well-exposed to UIA3. Falling back through UIA2 and raw Win32 window enumeration means a locator keeps working even against apps with weak or partial UIA support.
-- **Runs like a function library from the command line.** Every action — `launch`, `find`, `click`, `type` — is its own subcommand taking explicit arguments and returning plain text and an exit code, so it composes into scripts and CI steps.
+- **Runs like a function library from the command line.** Every action — `launch`, `find`, `click`, `type`, `key`, `window`, `screenshot`, `assert`, … — is its own subcommand taking explicit arguments and returning plain text (or one JSON object) and an exit code, so it composes into scripts and CI steps. `assert` checks what happened and doubles as the wait.
 - **Built to run async.** Every engine call (`LaunchAsync`, `FindAsync`, `ClickAsync`, `TypeAsync`, …) returns a `Task` and accepts a `CancellationToken`, so it drops straight into modern `await`-based test methods.
-- **A natural fit for AI-driven automation.** Each action is a small, self-contained, text-in/text-out operation against a stable session ID. Since this is the same shape an LLM tool call expects, an agent can drive a real desktop app through the same CLI surface a human or script uses.
+- **A natural fit for AI-driven automation.** Each action is a small, self-contained, text-in/text-out operation against an app identified by its process ID, with `--json` output and distinct exit codes for "the check failed" versus "something broke". Since this is the same shape an LLM tool call expects, an agent can drive a real desktop app through the same CLI surface a human or script uses.
 
 ## Getting Started:
 
@@ -43,7 +43,10 @@ Builds everything in the solution: the engine (`AutoMancer.Engine`), the CLI (`A
 
 ```bash
 dotnet test tests/AutoMancer.Engine.Tests --filter "Category!=Integration"
+dotnet test tests/AutoMancer.Cli.Tests
 ```
+
+`AutoMancer.Cli.Tests` covers the command line (argument handling, targeting, exit codes, the JSON output, `configure`). It needs no live UI, so it's safe to run alongside anything.
 
 Runs the engine's unit tests. The `Category=Integration` tests and `samples/ConsumerNotepadTests` drive a real Notepad window, so they need an interactive Windows session and aren't part of CI. `samples/ConsumerVsCodeTests` needs Windows + Visual Studio Code installed instead, and launches its own isolated instance rather than sharing a window — but like the others, it still drives real keyboard/mouse input, so it shouldn't run concurrently with them either. See [CONTRIBUTING.md](CONTRIBUTING.md#build--test) for more information.
 
@@ -77,44 +80,77 @@ src/AutoMancer.Cli/bin/Debug/<net10 version>/automancer.exe <command> [args]
 
 ### CLI Commands:
 
-| Command | Arguments | Options | What it does |
-|---|---|---|---|
-| `launch <executable>` | path to the executable | `--args` | Launches the app, registers a session, and prints the session ID, PID, and path |
-| `find <session-id>` | session ID | `--by`, `--value` | Resolves one element and prints its properties (name, automation ID, control type, class name, bounding rect, …) |
-| `tree <session-id>` | session ID | — | Snapshots the whole element tree and prints it as an indented list |
-| `click <session-id>` | session ID | `--by`, `--value`, `--double`, `--right` | Resolves one element and clicks it |
-| `type <session-id> <text>` | session ID, text | `--by`, `--value` | Resolves one element and types the text into it |
+Every command acts on one app. Name it with `--pid <n>`, or leave that out and the command uses the *current target*, which is whichever app `launch` or `configure --attach` pointed at last. Add `--json` to any command and you get a single JSON object back instead of text.
 
-`launch` doesn't take a session ID since it creates one. Every other command takes that ID as its first argument to reattach to the running session.
+| Command | What it does |
+|---|---|
+| `launch <executable>` | Starts the app, makes it the current target, and prints its PID. `--args` passes command-line arguments straight through |
+| `configure` | Shows or changes the current target (`--attach`, `--clear`) and the saved engine settings (`--implicit-wait`, `--action-delay`, …, `--reset`) |
+| `find` | Resolves one element and prints its properties (name, automation ID, control type, class name, bounding rect, …) |
+| `tree` | Snapshots the element tree and prints it as an indented list; `--depth` and `--interactive-only` keep it short |
+| `click` | Resolves one element and clicks it; `--double` and `--right` change the click |
+| `type <text>` | Resolves one element and types the text into it |
+| `key <key>`, `hotkey <chord>` | Presses a key (`Enter`, `F5`, …) or a combination (`ctrl+shift+s`) |
+| `hover`, `focus` | Moves the pointer over an element, or gives it keyboard focus |
+| `screenshot --out file.png` | Saves the window, or one element, as a PNG |
+| `window` | Reports the window's position and size, or moves, resizes, minimizes, maximizes, closes or kills it |
+| `assert` | Checks properties, counts, stability, or two images, and exits 1 with what it expected and what it found when a check fails |
+
+Commands that act on an element take `--by <strategy> --value <text>`, and can add `--within-by` and `--within-value` to search only inside another element. The [CLI README](src/AutoMancer.Cli/README.md) is the full reference: targeting, every `assert` check, the saved settings, and the shape of the JSON.
+
+### Exit codes:
+
+A script can tell what kind of problem it hit from the exit code. The split that matters most is between a failed check (1) and a broken tool (4):
+
+| Exit | Meaning |
+|---|---|
+| 0 | Success |
+| 1 | The app ran fine, but an expectation wasn't met (a failed assertion, an element not found, a timeout) |
+| 2 | The command line was wrong |
+| 3 | There was no app to act on: no target, it has exited, or the PID has no window |
+| 4 | The tool or the environment broke |
 
 ### CLI Example:
 
+A short session against Notepad. `launch` makes the app the current target, so nothing after it needs an ID:
+
 ```bash
-# Launch Notepad and capture the session ID it prints
+# Launch Notepad; it becomes the current target
 automancer launch "C:\Windows\System32\notepad.exe"
 
 # --args passes command-line arguments straight through to the launched process
 automancer launch "C:\...\Code.exe" --args "--new-window \"C:\my-project\""
 
-# Snapshot the element tree
-automancer tree <session-id>
+# Snapshot the element tree to see what can be acted on
+automancer tree --interactive-only --depth 1
 
 # Find an element (--by: name, id, class, control, path, runtime, xpath)
-automancer find <session-id> --by name --value "Text Editor"
+automancer find --by control --value Document
 
 # Click or double-/right-click an element
-automancer click <session-id> --by name --value "Text Editor"
-automancer click <session-id> --by name --value "Text Editor" --double
-automancer click <session-id> --by name --value "Text Editor" --right
+automancer click --by control --value Document
+automancer click --by control --value Document --double
+automancer click --by control --value Document --right
 
-# Type text into an element
-automancer type <session-id> "Hello, world!" --by name --value "Text Editor"
+# Type text into an element and press keys
+automancer type "Hello, world!" --by control --value Document
+automancer hotkey ctrl+a
+
+# Check the result; a failed check exits 1, and --timeout makes assert wait for it
+automancer assert --by control --value Document --check enabled --check "text~Hello" --timeout 3000
+
+# Act on a specific app when more than one is running
+automancer --pid 31608 window --state max
+
+# Attach to an app that's already open, by process name or PID
+automancer configure --attach notepad
 ```
+
 ## Locator Reference:
 
 ### Locators:
 
-A `Locator` is how you address an element. Every element-resolving operation, in C# or via the CLI, takes one. In C#, `Locator.By*` factory methods on `AutoMancer.Engine.Core.Locator` build one directly; `FindAsync`, `ClickAsync`, `TypeAsync`, and every other resolving `App` method accepts it. The CLI's `find`/`click`/`type` commands build the same `Locator` under the hood from `--by <strategy> --value <value>`.
+A `Locator` is how you address an element. Every element-resolving operation, in C# or via the CLI, takes one. In C#, `Locator.By*` factory methods on `AutoMancer.Engine.Core.Locator` build one directly; `FindAsync`, `ClickAsync`, `TypeAsync`, and every other resolving `App` method accepts it. Every CLI command that takes `--by <strategy> --value <value>` builds the same `Locator` under the hood.
 
 | Strategy | `Locator` factory (C#) | `--by` value (CLI) | Matches | Match type |
 |---|---|---|---|---|
@@ -133,14 +169,14 @@ Locator.ByRuntimeId("42.333896.3.1")
 ```
 
 ```bash
-automancer find <session-id> --by id --value "PencilTool"
-automancer find <session-id> --by control --value "Button"
-automancer find <session-id> --by runtime --value "42.333896.3.1"
+automancer find --by id --value "PencilTool"
+automancer find --by control --value "Button"
+automancer find --by runtime --value "42.333896.3.1"
 ```
 
 **Provider support:** Name, automation ID, class name, control type, and runtime ID all resolve through both the `uia3` and `uia2` providers. Path and XPath locators only work against UIA3. The `win32` fallback only kicks in when neither UIA provider exposes an accessibility tree, and it only understands name (a case-insensitive substring match against the window title) and class name (exact window class, case-insensitive). Narrow `ProviderChain` down to `["win32"]` alone and automation ID, control type, runtime ID, path, and XPath locators simply won't resolve.
 
-**A runtime ID only lasts one session.** Unlike automation ID, which is stable across relaunches, a runtime ID is only valid for the lifetime of the app instance that produced it. Use it to confirm you're still looking at the same element after doing something to it — not as a locator you write into a test ahead of time, since you won't have one until you've already found the element once.
+**A runtime ID only lasts as long as its element.** Unlike automation ID, which is stable across relaunches, a runtime ID is only valid for the lifetime of the app instance that produced it. Use it to confirm you're still looking at the same element after doing something to it — not as a locator you write into a test ahead of time, since you won't have one until you've already found the element once.
 
 ### Locators vs. Element Handles:
 
@@ -162,7 +198,7 @@ Locator.ByPath("Window > Pane[2] > Pane > MenuBar > MenuItem[\"File\"]")
 
 ```bash
 # Walk from the root window down to Notepad's File menu item
-automancer find <session-id> --by path --value 'Window > Pane[2] > Pane > MenuBar > MenuItem["File"]'
+automancer find --by path --value 'Window > Pane[2] > Pane > MenuBar > MenuItem["File"]'
 ```
 
 If you don't want to spell out every intervening level, or need to filter on more than an exact name, reach for an XPath locator instead — it runs real XPath against the same UIA tree rather than a fixed parent-child chain.
@@ -178,13 +214,27 @@ Locator.ByXPath("//MenuBar//MenuItem[@Name='File']")
 
 ```bash
 # Find the File menu item anywhere in the tree, regardless of nesting depth
-automancer find <session-id> --by xpath --value "//MenuItem[@Name='File']"
+automancer find --by xpath --value "//MenuItem[@Name='File']"
 
 # Anchor the search under a specific ancestor
-automancer find <session-id> --by xpath --value "//MenuBar//MenuItem[@Name='File']"
+automancer find --by xpath --value "//MenuBar//MenuItem[@Name='File']"
 ```
 
 Positional predicates use 0-based indices, so `//Button[0]` is the first `Button`, matching every other AutoMancer locator even though XPath itself is 1-based under the hood.
+
+### Searching inside an element:
+
+A name or control type often repeats across an app: a dozen `Button`s, or an `OK` in every dialog. To search inside just one element, scope the lookup to it. In C#, `FindScopedAsync` and `FindAllScopedAsync` take the scope as a `Locator`. On the command line, add `--within-by` and `--within-value` to any command that takes `--by`/`--value`:
+
+```bash
+# A menu item inside Notepad's menu bar, not one of the others in the window
+automancer find --by control --value MenuItem --within-by id --within-value MenuBar
+
+# How many menu items are inside it? (File, Edit, View)
+automancer assert --by control --value MenuItem --check count=3 --within-by id --within-value MenuBar
+```
+
+The scope is resolved from the window root, and the first match is used if several elements match. Path and XPath locators always search from the window root, so the CLI refuses to combine them with a scope instead of quietly ignoring it.
 
 ## Example: Calculator
 
@@ -294,7 +344,7 @@ Overlays inside the app are only detected for elements found by the `uia3` provi
 Use these methods to help with test execution and debugging:
 
 ```csharp
-byte[] png = await app.ScreenshotAsync();                                 // full-window PNG capture
+byte[] png = await app.TakeScreenshotAsync();                                 // full-window PNG capture
 
 // Waits for a locator to disappear (e.g. a dialog closing) instead of guessing with a fixed delay.
 await app.WaitUntilGoneAsync(Locator.ByName("Save changes?"));
@@ -306,6 +356,38 @@ var button = await app.WaitForAsync(Locator.ByAutomationId("SubmitButton"), e =>
 var roots = await app.SnapshotAsync();
 var everyButton = roots!.DescendantsAndSelf().Where(e => e.ControlType == "Button");
 ```
+
+### Visual Stability and Baselines:
+
+For apps with animations, or UI you can only check by how it looks, AutoMancer works from the window's pixels:
+
+```csharp
+// Waits until two consecutive captures match (default: at most 0.1% of pixels differ, polled every 100ms, 5s timeout, TimeoutException after that).
+await app.WaitForVisualStableAsync();
+await app.WaitForVisualStableAsync(Locator.ByAutomationId("Chart"));   // watches only that element's pixels
+
+byte[] chart = await app.TakeScreenshotAsync(Locator.ByAutomationId("Chart"));   // just the element, cropped from the window
+
+// Save a capture to a file (missing folders are created), then compare a later capture against it.
+await app.TakeScreenshotAsync("baselines/main-window.png");
+VisualComparison result = await app.CompareScreenshotAsync("baselines/main-window.png");   // result.Passed, result.DifferenceRatio
+
+// Compares against a stored baseline PNG (default: at most 1% of pixels differ), retrying until it matches or the wait expires.
+// The first run records the baseline and fails so you can review it; rerun to compare.
+await Expect(app).ToMatchScreenshotAsync("baselines/main-window.png");
+await Expect(app, Locator.ByAutomationId("Chart")).ToMatchScreenshotAsync("baselines/chart.png");
+```
+
+Comparisons are same-display-scale only. Each capture records the window's DPI, and comparing against a screenshot recorded at a different scale (100% vs 150%) fails with a message saying to re-record the baseline at the new scale. 
+
+Captures are the window's visible frame, so an opaque app's pixels don't depend on what's behind it. 
+
+These settings reduce noise on the machine that records and runs the checks:
+
+- **Transparency effects:** turn them off (Settings → Personalization → Colors → Transparency effects). Windows 11 apps with Mica or acrylic surfaces blend in the desktop behind them, and anything moving there (a video, an animated wallpaper, another window updating) changes your pixels. Also avoid putting a video or other animation behind the window under test.
+- **Animation effects:** turn them off (Settings → Accessibility → Visual effects → Animation effects) so menus and flyouts appear without fading, and settle faster.
+- **Text cursor blink:** a blinking caret changes pixels inside an editor. Turn the blink rate to its lowest setting (Control Panel → Keyboard → Cursor blink rate) or scope the baseline to an element that doesn't contain the caret.
+- **One display scale, theme and font smoothing (ClearType) for recording and checking.** Text rasterisation differs between them, and a baseline recorded on one machine may need a looser `maxDifferenceRatio` on another.
 
 ## Testing Your Own App:
 

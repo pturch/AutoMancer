@@ -63,14 +63,16 @@ This project ships in three distinct phases. **Phase 1** is a self-contained C# 
 ║   Stage 2.5: Locator Suggestion ─────► best unique       ║
 ║       │                                 locator          ║
 ║       │                                                  ║
-║   Stage 2.6: Idle Wait + Visual ─────► WaitForIdle,      ║
-║       │                 Regression      pixel baseline   ║
+║   Stage 2.6: Visual Stability ───────► WaitForVisual-    ║
+║       │       + Regression              Stable, pixel    ║
+║       │                                 baseline         ║
 ║       │                                                  ║
-║   Stage 2.7: Engine Hardening ───────► DPI matrix,       ║
-║       │                               Win10/11, examples✓║
+║   Stage 2.7: Engine Hardening ───────► error shots,     ║
+║       │                                                  ║
 ║       │                                                  ║
 ║   Stage 2.8: Interaction Coverage ─► toggle/expand/select,║
 ║                          clipboard, grid cells, range val║
+║                          + AppExpect window checks       ║
 ║                                     v1.0 shippable ✓     ║
 ╚══════════════════════════════════════════════════════════╝
                         │
@@ -208,13 +210,13 @@ All C# code (engine + daemon) is tested in C# with xunit + Moq. SDK client code 
 
 ### Stage 1.6 — Window Management and CLI Harness
 > **Unlocks:** The `automancer` command-line tool is usable for manual testing of any app.
-> **Done when:** `automancer launch notepad.exe && automancer tree <id>` produces a readable element tree.
+> **Done when:** `automancer launch notepad.exe && automancer tree` produces a readable element tree.
 > **Proof-of-concept milestone — Phase 1 continues through Stage 1.9 (interaction depth, wait utilities, and the test adapter layer).**
 
 | Batch | Work | Plan ref |
 |---|---|---|
 | 1.6.1 | `WindowAction` — `ResizeAsync`, `MoveAsync`, `SetVisualStateAsync` (maximize/minimize/restore), `GetSizeAsync`; `WindowPattern` → `SetWindowPos` fallback | Engine Task 19 |
-| 1.6.2 | `SessionStore.cs` — `%TEMP%\automancer-sessions.json` | Engine Task 16 |
+| 1.6.2 | `SessionStore.cs` — `%TEMP%\automancer-sessions.json` (later replaced by PID targets and `%LOCALAPPDATA%\AutoMancer\state.json`; see CLI Parity) | Engine Task 16 |
 | 1.6.3 | CLI commands — `launch`, `find`, `tree` (first three) | Engine Task 16 |
 | 1.6.4 | CLI commands — `click`, `type` | Engine Task 16 |
 | 1.6.5 | Full unit test pass | Engine Task 20 |
@@ -242,14 +244,14 @@ All C# code (engine + daemon) is tested in C# with xunit + Moq. SDK client code 
 
 ### Stage 1.8 — Screenshot, Wait Utilities, and App Facade
 > **Unlocks:** Screenshot capture and reactive wait patterns; the `App` facade exposes everything as a single cohesive C# API.
-> **Done when:** `app.ScreenshotAsync()` returns a valid PNG; `app.WaitUntilGoneAsync(locator)` resolves when an element disappears; `app.WaitForAsync(locator, predicate)` resolves once the predicate is true instead of racing a single find.
+> **Done when:** `app.TakeScreenshotAsync()` returns a valid PNG; `app.WaitUntilGoneAsync(locator)` resolves when an element disappears; `app.WaitForAsync(locator, predicate)` resolves once the predicate is true instead of racing a single find.
 > **Planned engine API work finished after this stage.**
 
 | Batch | Work |
 |---|---|
 | 1.8.1 | `ScreenshotAction` — `CaptureAsync(hwnd)` → `byte[]` PNG via GDI+ `BitBlt`; no external dependencies |
 | 1.8.2 | `WaitUntilGoneAsync` in `ElementResolver` — retry until every provider returns null within the implicit wait window |
-| 1.8.3 | `App` facade enrichment — add `DoubleClickAsync`, `RightClickAsync`, `HoverAsync`, `HotkeyAsync`, `DragAsync`, `ScrollWheelAsync`, `SetFocusAsync`, `CloseAsync`, `ScreenshotAsync`, `WaitUntilGoneAsync` |
+| 1.8.3 | `App` facade enrichment — add `DoubleClickAsync`, `RightClickAsync`, `HoverAsync`, `HotkeyAsync`, `DragAsync`, `ScrollWheelAsync`, `SetFocusAsync`, `CloseAsync`, `TakeScreenshotAsync`, `WaitUntilGoneAsync` |
 | 1.8.4 | Integration tests — screenshot returns non-empty bytes; wait-until-gone resolves after Notepad dialog is dismissed |
 | 1.8.5 | `WaitForAsync(Locator, Func<ElementHandle, bool> condition)` in `ElementResolver`/`App` — generic retry-asserting primitive (poll-until-true, not just poll-until-found); this is the primitive Stage 1.9's `Expect()` API is built on |
 | 1.8.6 | `AppOptions.TestDefaults` static — longer implicit wait, shorter action delay, tuned for CI/test-runner use rather than interactive scripting |
@@ -385,15 +387,15 @@ Batch numbers below match the task numbers 1:1 in `extended-coverage-spec.md` (e
 
 ---
 
-### Stage 2.6 — Idle Wait and Visual Regression
-> **Two general-purpose capabilities, useful against *any* app, UIA-accessible or not:** `WaitForIdleAsync` (wait for animations to actually finish instead of guessing with a fixed delay) and visual regression assertions (fail when rendered pixels drift from a stored baseline). Both build on the existing `ScreenshotAsync()` capture. The Visual Provider (OCR and template-matching locator fallback for apps with no accessibility tree) used to share this stage and now lives in Future Work Ideas.
+### Stage 2.6 — Visual Stability Wait and Visual Regression
+> **Two general-purpose capabilities, useful against *any* app, UIA-accessible or not:** `WaitForVisualStableAsync` (wait for animations to actually finish instead of guessing with a fixed delay) and visual regression assertions (fail when rendered pixels drift from a stored baseline). Both build on the existing `TakeScreenshotAsync()` capture. The Visual Provider (OCR and template-matching locator fallback for apps with no accessibility tree) used to share this stage and now lives in Future Work Ideas.
 >
-> **Done when:** a visual regression assertion fails when a window's rendered output drifts from a stored baseline; `app.WaitForIdleAsync()` resolves once consecutive screenshots stop changing.
+> **Done when:** a visual regression assertion fails when a window's rendered output drifts from a stored baseline; `app.WaitForVisualStableAsync()` resolves once consecutive screenshots stop changing.
 
 | Batch | Work |
 |---|---|
-| 2.6.1 | `App.WaitForIdleAsync()` — diffs consecutive `ScreenshotAsync()` captures at a short interval until two frames match within a pixel-difference threshold, or a timeout is hit; replaces the ad-hoc `Task.Delay(300) // flyout animation` waits already scattered through the integration test suite with a real settledness check |
-| 2.6.2 | Visual regression snapshot assertion — captures the current window/element region and pixel-diffs it against a stored baseline PNG, failing past a configurable difference threshold; shares the pixel-compare code with 2.6.1. `ScreenshotAsync()` captures physical pixels, and the same logical window is a different physical *pixel size* at 100% vs. 150% DPI — resize whichever of the baseline/live capture was taken at a different DPI to match the other's pixel dimensions (by the `dpi / 96.0` scale ratio) before diffing, or the assertion spuriously fails whenever it runs on a differently-scaled machine than the one that recorded the baseline. `DpiHelper.PhysicalToLogical` converts a coordinate pair, not a bitmap, so it doesn't apply directly here |
+| 2.6.1 | `App.WaitForVisualStableAsync()` — diffs consecutive `TakeScreenshotAsync()` captures at a short interval until two frames match within a pixel-difference threshold, or a timeout is hit; a real settledness check in place of guessing with a fixed delay |
+| 2.6.2 | Visual regression snapshot assertion — captures the current window/element region and pixel-diffs it against a stored baseline PNG, failing past a configurable difference threshold; shares the pixel-compare code with 2.6.1. Baselines are same-DPI only: `TakeScreenshotAsync()` captures physical pixels, so a capture at a different display scale than the baseline fails with a message saying so, rather than rescaling (tried and measured live; text rasterisation differs too much across scales to give a dependable threshold) |
 
 **This stage is entirely engine-side** — like the rest of Phase 2, it only touches `AutoMancer.Engine`.
 
@@ -401,27 +403,27 @@ Batch numbers below match the task numbers 1:1 in `extended-coverage-spec.md` (e
 
 ---
 
-### Stage 2.7 — Engine Hardening and Examples
-> **Unlocks:** Confidence that the engine behaves identically across DPI settings and Windows versions, a failed find leaves behind an annotated screenshot instead of just a stack trace, and new C# consumers have working example projects to start from.
-> **Done when:** The Notepad integration suite passes at 100%, 125%, and 150% DPI with identical logical coordinates, and on both Windows 10 and 11; a failed find under a debug flag leaves an annotated PNG in `%TEMP%`; all three example projects build and run.
+### Stage 2.7 — Engine Hardening
+> **Unlocks:** A failed find leaves behind an annotated screenshot instead of just a stack trace.
+> **Done when:** A failed find under a debug flag leaves an annotated PNG in `%TEMP%`. Done — the stage's other three batches were dropped.
 
 | Batch | Work |
 |---|---|
 | 2.7.1 | Annotated error screenshots — on `ElementNotFoundError`, capture a screenshot and draw a red overlay around the search area / closest-match bounding rect via GDI+, save to `%TEMP%`; a new `AppOptions`/`ElementProviderOptions` flag (off by default) turns this on. The engine sibling of Stage 1.9's on-failure diagnostics, for direct `App` consumers rather than `Expect()` |
-| 2.7.2 | DPI compat matrix — run the Notepad integration test suite at 100%, 125%, and 150% DPI; assert identical logical coordinates across all three |
-| 2.7.3 | Windows 10/11 compat — run the full `AutoMancer.Engine.Tests` integration suite on both OS versions; fix any behavioral differences |
-| 2.7.4 | Example projects — `examples/notepad/`, `examples/winforms-calculator/`, `examples/xunit-test-adapter/` |
+| 2.7.2 | ~~DPI compat matrix~~ — dropped: the engine's only load-bearing DPI piece is `DpiAwareness` (physical-pixel rects, already exercised by every live test), and `DpiHelper`'s logical coordinates have no consumer to validate. Number kept so later references stay stable |
+| 2.7.3 | ~~Windows 10/11 compat~~ — dropped: a verification pass that needs a Windows 10 machine the project doesn't have. The integration suite passes on Windows 11; Windows 10 is unverified. Number kept so later references stay stable |
+| 2.7.4 | ~~Example projects~~ — dropped: `samples/ConsumerNotepadTests` and `samples/ConsumerVsCodeTests` already cover the Notepad and xunit examples, and a WinForms app built only as an example isn't worth it. Number kept so later references stay stable |
 
-**This stage is entirely engine-side**, same as the rest of Phase 2 — none of these four batches touch `AutoMancer.Daemon` or either SDK. Exposing the debug-screenshot flag over HTTP is Phase 3's job (see batch 3.6.1), same split pattern as batch 3.2.8.
+**This stage is entirely engine-side**, same as the rest of Phase 2 — none of the batches touch `AutoMancer.Daemon` or either SDK. Exposing the debug-screenshot flag over HTTP is Phase 3's job (see batch 3.6.1), same split pattern as batch 3.2.8.
 
-**After 2.7.4:** DPI/OS compat and examples are done. Phase 2 continues into one more stage: the UIA pattern coverage the daemon and SDKs already assume exists.
+**After 2.7.1:** Stage 2.7 is done. Phase 2 continues into one more stage: the UIA pattern coverage the daemon and SDKs already assume exists.
 
 ---
 
 ### Stage 2.8 — Extended UIA Pattern and Clipboard Actions
 > **Unlocks:** Core interaction coverage Phase 1 never reached. Checkboxes, list/combo selections, grid cells, and clipboard text are as common in real Windows apps as clicking a button or typing into a field — Phase 1's action set (`ClickAction`, `TypeAction`, `ScrollAction`, ...) has no answer for any of them today, so a checkbox or a `DataGrid` cell simply can't be driven from `App` without this stage, independent of anything else in the roadmap.
 > **Also unblocks Phase 3, whenever that's picked up:** the daemon's `PatternEndpoints`/`ClipboardEndpoints` (roadmap batch 3.2.6) and the SDKs' `ComboBox`/`DataGrid` control classes (sdks-spec.md) need `Toggle`/`ExpandCollapse`/`SelectionItem`/`Grid` and clipboard access to delegate to; without this stage, the daemon can only get there by reaching around the engine (`ElementHandle.NativeHandle` cast directly to `IUIAutomationElement`) instead of calling a real `App` method the way every other endpoint does. This is a secondary bonus, not the reason to build it — Phase 3 has no start date, and the capability stands on its own for direct C# consumers today.
-> **Done when:** `app.ToggleAsync(locator)` flips a checkbox's `Toggle.ToggleState`; `app.SelectAsync(locator)`/`GetSelectedItemsAsync(locator)` round-trip a list selection; `app.GetGridCellAsync(locator, row, col)` returns the element at a `DataGrid` cell; `app.SetClipboardTextAsync(...)`/`GetClipboardTextAsync()` round-trip a string through the system clipboard; `app.SetRangeValueAsync(locator, value)`/`GetRangeValueAsync(locator)` round-trip a slider/progress-bar's numeric value.
+> **Done when:** `app.ToggleAsync(locator)` flips a checkbox's `Toggle.ToggleState`; `app.SelectAsync(locator)`/`GetSelectedItemsAsync(locator)` round-trip a list selection; `app.GetGridCellAsync(locator, row, col)` returns the element at a `DataGrid` cell; `app.SetClipboardTextAsync(...)`/`GetClipboardTextAsync()` round-trip a string through the system clipboard; `app.SetRangeValueAsync(locator, value)`/`GetRangeValueAsync(locator)` round-trip a slider/progress-bar's numeric value. `Expect(app)` also asserts window title, state, bounds, process liveness, dialog presence, visual stability and resource bounds, each retrying until a match or timeout.
 
 | Batch | Work |
 |---|---|
@@ -433,8 +435,33 @@ Batch numbers below match the task numbers 1:1 in `extended-coverage-spec.md` (e
 | 2.8.6 | Unit tests for each action's no-op/unsupported-pattern path (mirroring `ScrollActionTests`/`SetFocusActionTests`); integration tests — toggle a checkbox, select/multi-select a list, read a `ListView`/`DataGrid`-style control's row and column counts and fetch a specific cell, clipboard round-trip |
 | 2.8.7 | `RangeValueAction` — `RangeValuePattern.SetValue(double)`; reads `CurrentValue`/`CurrentMinimum`/`CurrentMaximum`/`CurrentLargeChange`/`CurrentSmallChange`; mirrors `ToggleAction`'s no-op-when-unsupported shape. `App.SetRangeValueAsync(Locator, double value)`, `App.GetRangeValueAsync(Locator)` → a `RangeValueInfo(double Value, double Minimum, double Maximum)` record. Covers sliders, scrollbars, and progress bars — controls Phase 1's `ClickAction`/`DragAction` could only fake with pixel-position math |
 | 2.8.8 | Unit tests for `RangeValueAction`'s no-op/unsupported-pattern path; integration test — set a live slider/progress bar's value and read it back, and confirm `CurrentMinimum`/`CurrentMaximum` match the control's declared range |
+| 2.8.9 | `AppExpect` window-level assertions, each retrying until a match or timeout and throwing `ExpectFailedError` with `ExpectDiagnostics`, like `ToMatchScreenshotAsync`. State and geometry: `ToHaveTitleAsync(string \| Regex)`, `ToBeMinimizedAsync`/`ToBeMaximizedAsync`/`ToBeForegroundAsync`, `ToHaveBoundsAsync(Rect, tolerancePx)`. Process and windows: `ToBeRunningAsync`/`ToHaveExitedAsync`/`ToBeRespondingAsync`, `ToHaveWindowCountAsync(n)`, `ToHaveDialogAsync(WindowMatchOptions)`/`ToHaveNoDialogAsync()` (reusing Stage 2.3's window-view matching). Stability and resources: `ToBeVisuallyStableAsync()` over Stage 2.6, `ToHaveMemoryBelowAsync`/`ToHaveHandleCountBelowAsync` over Stage 2.4's sampling. Element-level checks stay on `LocatorExpect` |
+| 2.8.10 | Unit tests through the `TestingAdapter` fake-provider seam; integration tests against live Notepad that use the new pattern and clipboard actions as setup and teardown, so the end of Stage 2.8 validates both; a `samples/ConsumerNotepadTests` demo |
 
-**After 2.8.8:** Phase 2 complete — **v1**. The engine, CLI, and test adapter are a hardened, complete C# product on their own; this is what ships. Phase 3 (below) is deferred, long-running future work, not the next thing in the queue. Whenever it is picked up, the daemon's `PatternEndpoints`/`ClipboardEndpoints` (Stage 3.2.6) and the SDKs' `ComboBox`/`DataGrid` controls can delegate to real `App` methods instead of reaching around the engine — daemon-spec.md Task 3.2.6 and sdks-spec.md's control-subclass tasks (3.3.5, 3.4.5) should be revisited at that point to switch from the `NativeHandle`-direct workaround to calling these actions.
+**After 2.8.10:** Phase 2 complete — **v1**. The engine, CLI, and test adapter are a hardened, complete C# product on their own; this is what ships. Phase 3 (below) is deferred, long-running future work, not the next thing in the queue. Whenever it is picked up, the daemon's `PatternEndpoints`/`ClipboardEndpoints` (Stage 3.2.6) and the SDKs' `ComboBox`/`DataGrid` controls can delegate to real `App` methods instead of reaching around the engine — daemon-spec.md Task 3.2.6 and sdks-spec.md's control-subclass tasks (3.3.5, 3.4.5) should be revisited at that point to switch from the `NativeHandle`-direct workaround to calling these actions.
+
+---
+
+### CLI Parity — Closing the CLI's Gap with the Engine
+> **Unlocks:** An AI agent or a shell script can launch an app, look at it, act on it, check the result, and recover from failures using only the command line, with machine-readable output and exit codes that say what kind of failure it was.
+> **Done when:** Every engine capability that makes sense as a one-shot command has one, `--json` gives exactly one object for every command (including a mistake in the command line), and a systematic check (random option combinations plus a comparison of `assert`, `find` and `tree` against the full element tree on live Notepad) finds nothing that disagrees.
+
+Not a numbered stage, and entirely CLI-side — `AutoMancer.Engine` isn't touched. Phase 1 left the CLI with five commands (`launch`, `find`, `tree`, `click`, `type`) while Phase 2 grew the engine a long way; this brings the command line up to the engine's surface, each command wrapping one or two existing `App` methods. It ran alongside Phase 2, after Stage 2.6, and is complete. The working plan is `cli-parity-plan.md`.
+
+| Batch | Work |
+|---|---|
+| CP.1 | Shared command plumbing — one helper that does the argument handling, the attach and the error-to-exit-code mapping, so each command is only what makes it different; a global `--json`; structured errors with a fixed exit-code table (0 success, 1 expectation not met, 2 bad command line, 3 no app to act on, 4 the tool broke) |
+| CP.2 | `tree` filters (`--depth`, `--interactive-only`) so an observation doesn't return the whole UI Automation tree, and `find --json` returns the locator that resolved |
+| CP.3 | `screenshot` — the window, or one element, as a PNG |
+| CP.4 | `assert` — element properties and counts, window stability, and a two-image comparison. Its `--timeout` also drives the engine's own wait, which makes it the CLI's wait: it appears, goes away, or settles. `compare`, `wait` and `wait-stable` were built or planned and folded into it; `suggest` was built and dropped as redundant with `tree`, `find --json` and `assert` |
+| CP.5 | `key`, `hotkey` and `hover` |
+| CP.6 | Apps are identified by process ID instead of session ID: a global `--pid`, a current target set by `launch` and `configure --attach`, and `configure` for saved engine settings, with everything kept in one atomically written `state.json`. This replaced the first design (one JSON file of sessions in the temp folder), which could lose entries under overlapping commands and could attach to the wrong program after Windows reused a PID |
+| CP.7 | `window` — `--move`, `--resize`, `--state`, `--close` and `--kill`, with `--close` and `--kill` clearing the current target when that app goes away |
+| CP.8 | `focus`. A `context-menu` command was built and removed: live testing showed `click --right` then `click` on the item works in two steps, and the command failed where those steps succeeded. A `get-value` command was built here and removed again: reading an element's live value belongs with the other property reads, as part of `find --details` in the inspector plan, not in a command of its own |
+| CP.9 | Scoped locators — `--within-by` and `--within-value` on every command that takes a locator, backed by one shared option group. Path and XPath locators can't be scoped, because the engine always searches them from the window root |
+| CP.10 | A hardening pass — about 3,000 random option combinations, a model-based check of `assert`, `find` and `tree` against the full element tree on live Notepad, and targeted probes for Unicode, file paths, state-file damage and concurrency. It fixed syntax errors ignoring `--json`, text that wasn't UTF-8, a race on the state file, and a set of validation gaps |
+
+**After CP.10:** the command line covers the engine's surface. Left out on purpose are the things that hold state which disappears when the process exits, or that need design for little scripting value: `KeyDownAsync`/`KeyUpAsync`, `DragAsync`, `ScrollWheelAsync`, `OpenPopupAsync` (it returns a stateful `Popup`), custom UIA property registration, `TypeDirectAsync`, and launching a packaged app by its AUMID (`configure --attach` covers the main need). The reference is [src/AutoMancer.Cli/README.md](../src/AutoMancer.Cli/README.md).
 
 ---
 
@@ -525,7 +552,7 @@ Batch numbers below match `sdks-spec.md`'s task numbers 1:1 (batch `3.4.4` is Ta
 ### Stage 3.5 — CI Session (`automancer-session`)
 > **Unlocks:** Running AutoMancer tests in GitHub Actions and Azure Pipelines without a real desktop.
 > **Done when:** `automancer-session start && automancer-session run pytest tests/ && automancer-session stop` exits 0 in a CI pipeline.
-> **Not the `automancer` CLI from Stage 1.6.** The CLI (`launch`/`find`/`tree`/`click`/`type`) drives one action at a time against a desktop a human is already logged into — a developer tool. `automancer-session` solves a different problem: `SendInput`/UIA generally need an interactive desktop (`WinSta0\Default`), which most CI runners don't have — clicks silently go nowhere and screenshots come back black. `start`/`stop` create and tear down an isolated virtual desktop (`CreateDesktop`/`SetThreadDesktop`); `run <command>` executes a whole test command (`pytest tests/`, `npm test`, ...) inside it, not individual UI actions.
+> **Not the `automancer` CLI from Stage 1.6.** The CLI (`launch`, `find`, `click`, `type`, `assert`, ...) drives one action at a time against a desktop a human is already logged into — a developer tool. `automancer-session` solves a different problem: `SendInput`/UIA generally need an interactive desktop (`WinSta0\Default`), which most CI runners don't have — clicks silently go nowhere and screenshots come back black. `start`/`stop` create and tear down an isolated virtual desktop (`CreateDesktop`/`SetThreadDesktop`); `run <command>` executes a whole test command (`pytest tests/`, `npm test`, ...) inside it, not individual UI actions.
 
 **No detailed spec doc covers this stage yet** — unlike Phases 1–3's other stages, there's no `Task N` breakdown for `VirtualDesktop.cs`/`automancer-session` in any of the four spec docs. Write one before starting, matching the format of `core-engine-spec.md`/`daemon-spec.md`.
 
@@ -561,7 +588,7 @@ Batch numbers below match `sdks-spec.md`'s task numbers 1:1 (batch `3.4.4` is Ta
 - [ ] `automancer launch notepad.exe && automancer tree <id>` produces a readable element tree
 - [ ] `ElementNotFoundError` includes `closestMatch` when a near-match exists
 - [ ] Double-click, right-click, hover, hotkey, drag all verified against a live app
-- [ ] `ScreenshotAsync()` returns a valid PNG from a live window
+- [ ] `TakeScreenshotAsync()` returns a valid PNG from a live window
 - [ ] `WaitUntilGoneAsync()` resolves correctly when an element disappears
 - [ ] `WaitForAsync(locator, condition)` resolves once the condition is true, not merely once the element is found
 - [ ] `AutoMancer.Testing` / `AutoMancer.Testing.XUnit` ship; `Expect(locator).ToHaveName(...)` and direct `App`/`Locator` calls both work in the same test method against the same engine surface
@@ -582,11 +609,8 @@ Batch numbers below match `sdks-spec.md`'s task numbers 1:1 (batch `3.4.4` is Ta
 - [ ] A native context-menu item is found and clicked via the `HMENU` fallback on an app where UIA doesn't expose it
 - [x] `ResourceMonitor.MeasureAsync()` returns before/after handle and memory readings over a live test run
 - [ ] `app.SuggestLocatorAsync(element)` returns a locator that resolves back to that same element
-- [ ] `app.WaitForIdleAsync()` resolves once consecutive screenshots stop changing, and a visual regression assertion fails when rendered output drifts from a stored baseline
-- [ ] The Notepad integration suite passes at 100%, 125%, and 150% DPI with identical logical coordinates
-- [ ] The full `AutoMancer.Engine.Tests` integration suite passes on both Windows 10 and 11
-- [ ] A failed find under the debug-screenshot flag leaves an annotated PNG in `%TEMP%`
-- [ ] All three example projects (`notepad`, `winforms-calculator`, `xunit-test-adapter`) build and run
+- [ ] `app.WaitForVisualStableAsync()` resolves once consecutive screenshots stop changing, and a visual regression assertion fails when rendered output drifts from a stored baseline
+- [x] A failed find under the debug-screenshot flag leaves an annotated PNG in `%TEMP%`
 - [ ] `app.ToggleAsync(locator)` flips a checkbox's `Toggle.ToggleState`
 - [ ] `app.SelectAsync(locator)` / `GetSelectedItemsAsync(locator)` round-trip a list selection
 - [ ] `app.GetGridCellAsync(locator, row, col)` returns the element at a table/`DataGrid`-style control's cell
@@ -622,7 +646,7 @@ Batch numbers below match `sdks-spec.md`'s task numbers 1:1 (batch `3.4.4` is Ta
 
 ### Multi-Monitor Positioning
 
-**Idea:** Reposition a window to a specific monitor and read each monitor's bounds/DPI — useful for DPI-matrix-style testing across a multi-monitor rig, the counterpart to Stage 2.7's single-monitor DPI compat matrix.
+**Idea:** Reposition a window to a specific monitor and read each monitor's bounds/DPI — useful for testing across a multi-monitor rig with mixed scaling.
 
 - `MonitorHelper` — enumerates monitors via `EnumDisplayMonitors`; `App.MoveToMonitorAsync(int monitorIndex)` would reposition a window to a specific monitor's work area.
 - **Done when (if picked up):** `MoveToMonitorAsync(index)` relocates a window to a specific monitor, or degrades gracefully — inconclusive, not failed — on single-monitor CI.
@@ -641,7 +665,7 @@ Batch numbers below match `sdks-spec.md`'s task numbers 1:1 (batch `3.4.4` is Ta
 
 **Idea:** Compare a full `ElementSnapshot` tree against a stored baseline tree (names, types, positions — structure, not pixels) and fail when it drifts, catching accessibility-tree regressions between app versions that look identical on screen but have silently changed underneath.
 
-- Structural counterpart to Stage 2.6's pixel-based visual regression (batch 2.6.2) — same "capture now, diff against a stored baseline" shape, but comparing `ElementSnapshot` trees instead of bitmaps, so it reuses `TrySnapshotAsync` rather than `ScreenshotAsync`.
+- Structural counterpart to Stage 2.6's pixel-based visual regression (batch 2.6.2) — same "capture now, diff against a stored baseline" shape, but comparing `ElementSnapshot` trees instead of bitmaps, so it reuses `TrySnapshotAsync` rather than `TakeScreenshotAsync`.
 - An app can look pixel-identical while a renamed `AutomationId` or a reordered control silently breaks every locator built against it — pixel regression alone wouldn't catch that.
 - **Why it's here instead of extending Stage 2.6:** it's a different signal (tree structure vs. rendered pixels) serving a narrower audience (teams already using `SnapshotAsync` for tree dumps) rather than a gap in the core find/interact surface — nothing else in the roadmap assumes it exists.
 

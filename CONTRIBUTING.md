@@ -10,6 +10,7 @@ dotnet build AutoMancer.slnx
 
 # Unit Tests:
 dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category!=Integration"
+dotnet test tests/AutoMancer.Cli.Tests/                                      # no live UI needed
 
 # Integration Tests (requires Windows + Notepad):
 dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration"   

@@ -1,5 +1,4 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
-using System.Diagnostics;
 using AutoMancer.Engine;
 using AutoMancer.Engine.Core;
 using AutoMancer.Engine.Errors;
@@ -61,27 +60,18 @@ public sealed class LocatorExpect
         => PollOrFailAsync(() => _app.IsUnobscuredAsync(_locator, ct), clear => !clear, "to be obscured",
             _ => "it was still clear", timeoutMs, pollIntervalMs, ct);
 
-    // Polls a live async read until accept holds, for assertions WaitOrFailAsync can't express; on timeout throws ExpectFailedError with describeLast's account of the last read, or "no matching element was ever found" if the locator never resolved.
-    private async Task PollOrFailAsync<T>(Func<Task<T>> read, Func<T, bool> accept, string description, Func<T, string> describeLast, int? timeoutMs, int? pollIntervalMs, CancellationToken ct)
-    {
-        var stopwatch = Stopwatch.StartNew();
-        string describedActual;
-        long elapsedMs;
-        try
-        {
-            var (success, last, pollElapsedMs) = await Poll.UntilAsync(read, accept, timeoutMs ?? _app.ImplicitWaitMs, pollIntervalMs ?? _app.PollIntervalMs, ct);
-            if (success)
-                return;
-            (describedActual, elapsedMs) = (describeLast(last), pollElapsedMs);
-        }
-        catch (ElementNotFoundError)
-        {
-            (describedActual, elapsedMs) = ("no matching element was ever found", stopwatch.ElapsedMilliseconds);
-        }
+    // Polls until the located element's on-screen pixels match the baseline PNG within maxDifferenceRatio; a missing baseline is recorded from the current capture and fails so it gets reviewed. Throws ExpectFailedError on timeout.
+    public Task ToMatchScreenshotAsync(string baselinePath, double maxDifferenceRatio = 0.01, int? timeoutMs = null, int? pollIntervalMs = null, CancellationToken ct = default)
+        => ExpectScreenshot.MatchAsync(
+            () => _app.TakeScreenshotAsync(_locator, baselinePath, ct),
+            () => _app.CompareScreenshotAsync(_locator, baselinePath, maxDifferenceRatio, ct),
+            () => ExpectDiagnostics.DescribeScreenshotAsync(_app, _options, ct),
+            $"{_locator.Strategy}={_locator.Value}", baselinePath, maxDifferenceRatio, timeoutMs ?? _app.ImplicitWaitMs, pollIntervalMs ?? _app.PollIntervalMs, ct);
 
-        var screenshot = await ExpectDiagnostics.DescribeScreenshotAsync(_app, _options, ct);
-        throw new ExpectFailedError($"Expected {_locator.Strategy}={_locator.Value} {description}, but {describedActual} (elapsed {elapsedMs}ms){screenshot}");
-    }
+    // Polls a live async read through ExpectPolling with this locator as the subject, this app's wait defaults and its failure screenshot, for assertions WaitOrFailAsync can't express.
+    private Task PollOrFailAsync<T>(Func<Task<T>> read, Func<T, bool> accept, string description, Func<T, string> describeLast, int? timeoutMs, int? pollIntervalMs, CancellationToken ct)
+        => ExpectPolling.PollOrFailAsync($"{_locator.Strategy}={_locator.Value}", read, accept, description, describeLast,
+            timeoutMs ?? _app.ImplicitWaitMs, pollIntervalMs ?? _app.PollIntervalMs, () => ExpectDiagnostics.DescribeScreenshotAsync(_app, _options, ct), ct);
 
     // Delegates to App.WaitForAsync and rewraps a timeout as ExpectFailedError carrying what was actually found, self-contained with no logger required.
     private async Task WaitOrFailAsync(Func<ElementHandle, bool> condition, string description, CancellationToken ct)

@@ -34,6 +34,9 @@ public sealed class AppOptions
     // Locator-taking element methods (ClickAsync, TypeAsync, etc.) re-run the locator on a StaleElementError and retry until ImplicitWaitMs elapses; set false to let the error propagate.
     public bool ReresolveOnStale { get; init; } = true;
 
+    // When true, a find that throws ElementNotFoundError first saves a window screenshot to %TEMP% with a red overlay on the closest match (or the whole window when there is none) and folds the path into the exception. Off by default.
+    public bool AnnotateFailureScreenshots { get; init; } = false;
+
     // Trace of the engine's own retry/resolve process, e.g. for debugging flaky element timing. Defaults to plain text on stderr so it never pollutes a CLI command's stdout; pass null to disable, or your own IEngineLogger to redirect it.
     public IEngineLogger? Logger { get; init; } = new EngineLogger(Console.Error);
 

@@ -53,7 +53,7 @@ public sealed class HelloWorldScriptDemoTests
         {
             // TestSetup's CaptureScreenshotsOnFailure only covers Expect() failures; this also covers Assert.* and the engine's own errors, so it captures its own screenshot.
             var path = Path.Combine(AutoMancerTestOptions.ScreenshotDirectory, $"vscode-hello-world-failure-{DateTime.UtcNow:yyyyMMdd-HHmmss}.png");
-            await File.WriteAllBytesAsync(path, await app.ScreenshotAsync());
+            await File.WriteAllBytesAsync(path, await app.TakeScreenshotAsync());
             throw new Exception($"{ex.Message} (screenshot saved to {path})", ex);
         }
         finally

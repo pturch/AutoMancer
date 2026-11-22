@@ -1,11 +1,9 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
-using System.CommandLine;
-using AutoMancer.Cli.Commands;
+using System.CommandLine.Parsing;
+using AutoMancer.Cli;
 
-var root = new RootCommand("AutoMancer — Windows UI automation CLI");
-root.AddCommand(LaunchCommand.Build());
-root.AddCommand(FindCommand.Build());
-root.AddCommand(TreeCommand.Build());
-root.AddCommand(ClickCommand.Build());
-root.AddCommand(TypeCommand.Build());
-return await root.InvokeAsync(args);
+// Write UTF-8 so non-ASCII text (element names, typed text, file paths) isn't turned into question marks; with no console attached there is nothing to configure.
+try { Console.OutputEncoding = new System.Text.UTF8Encoding(false); }
+catch (System.IO.IOException) { }
+
+return await CliSession.BuildParser(CliApp.BuildRoot()).InvokeAsync(args);

@@ -4,6 +4,38 @@ All notable changes to AutoMancer are documented here, described by what you'll 
 
 ## Unreleased
 
+### CLI Parity — The Command Line Catches Up with the Engine
+
+#### Added
+
+- **A much bigger command line** — besides `launch`, `find`, `tree`, `click` and `type`, `automancer` can now press keys and combinations (`key`, `hotkey`), hover over or focus an element, save a screenshot, and move, resize, minimize, maximize, close or kill the window (`window`). See the [CLI README](src/AutoMancer.Cli/README.md).
+- **Checks you can script** — `assert` confirms that an element exists, is enabled, visible, clickable or unobscured, has a given name, text, ID, class or control type (exactly, by a phrase it contains, or by pattern), that a number of elements match, that the window has stopped changing, or that two screenshots match within a tolerance. Every check you give has to hold, and a failure exits with code 1 and shows what was expected next to what was found. It retries until its `--timeout`, so it's also how a script waits for something to appear, go away, or settle.
+- **Output a program can read** — add `--json` to any command and you get exactly one JSON object back, including when the command line itself is wrong. Exit codes now say what kind of problem it was: 1 when the app ran but your expectation wasn't met, 2 for a bad command, 3 when there's no app to act on, and 4 when something broke.
+- **Search inside an element** — `--within-by` and `--within-value` limit a lookup to one element's subtree, so a name that repeats across the app (a dozen buttons, an `OK` in every dialog) no longer needs a fragile path. `tree` uses the same option to print just one subtree. Path and XPath lookups can't be scoped, since they always search from the window root, so combining them with a scope is refused.
+- **A shorter `tree`** — `--depth` and `--interactive-only` keep what comes back to the controls you can act on, instead of the whole UI Automation tree.
+- **`configure`** — shows the current target and the saved settings, attaches to a running app by PID, process name or window title, and saves engine settings such as the implicit wait and the pause after each action.
+- **A quiet CLI** — the engine's trace log no longer prints before every result; `--verbose` brings it back.
+
+#### Changed
+
+- **Apps are identified by process ID, not session ID** — `launch` prints the PID and makes that app the current target, so later commands don't need an ID at all, and `--pid` points a command at a different app. The session IDs, the `sessions` command and the session file in the temp folder are gone; what the CLI remembers now lives in one file under `%LOCALAPPDATA%\AutoMancer`.
+- **`tree`'s `--root-by` and `--root-value` became `--within-by` and `--within-value`**, matching the scope option on every other command.
+- **Acting on a disabled element exits with 1** — the element was there and the app was fine, it just couldn't take the action — where it used to exit with 4, which now means the tool itself broke.
+- **A mistake in the command line prints one message** — and a hint at `--help` — to stderr, where it used to print the whole help text to stdout. With `--json` it's a JSON error instead. `--help`, `--version` and a bare `automancer` now succeed.
+
+#### Fixed
+
+- **A command that attached to an app killed it when the command finished.** Every command except `launch` did this.
+- **Text with accents, CJK characters or emoji came out as question marks** in element names, typed text and file paths. Output is now UTF-8.
+- **Running several commands at once could fail, or wipe the saved settings and target.** The file the CLI keeps between commands is now safe to use from overlapping commands.
+- **A few inputs were mishandled instead of rejected.** An empty `--value` matched some arbitrary element, a `--tolerance` of NaN passed validation, trailing spaces in a check value were silently trimmed so the check could never match, and an empty `launch` or `configure --attach` argument was acted on. All of them are now handled.
+
+### Stage 2.7 — Failure Screenshots
+
+#### Added
+
+- **A screenshot of what the engine was looking at when a find fails** — set `AnnotateFailureScreenshots` in `AppOptions` and a find that can't succeed saves a picture of the window to your temp folder, with a red box around the closest match (or around the whole window when nothing is close). The error message ends with the file's path, and `ElementNotFoundError.ScreenshotPath` holds it. Off by default. It covers finds through the normal lookup chain, not spatial finds or lookups inside a popup or second window.
+
 ### Stage 2.3 — Context Menus, Popups and Windows
 
 #### Added

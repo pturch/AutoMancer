@@ -13,10 +13,10 @@ internal static class HoverCommand
 
         var command = new Command("hover", "Move the mouse over an element without clicking.");
         locatorOpts.AddTo(command);
-        command.SetHandler(ctx => CliSession.RunAsync(ctx, async (pid, ct) =>
+        command.SetAction((pr, token) => CliSession.RunAsync(pr, token, async (pid, ct) =>
         {
             // Step 1: read the locator options and parse them before touching the app.
-            var target = locatorOpts.Parse(ctx.ParseResult)!;
+            var target = locatorOpts.Parse(pr)!;
 
             // Step 2: attach and move the pointer to the element's center.
             await using var app = await CliSession.AttachAsync(pid, ct);

@@ -10,7 +10,7 @@ public sealed class TargetResolutionTests
     private static Command Probe()
     {
         var command = new Command("probe");
-        command.SetHandler(ctx => CliSession.RunAsync(ctx, (pid, _) => Task.FromResult(new CliResult($"pid={pid}"))));
+        command.SetAction((pr, token) => CliSession.RunAsync(pr, token, (pid, _) => Task.FromResult(new CliResult($"pid={pid}"))));
         return command;
     }
 
@@ -92,11 +92,11 @@ public sealed class TargetResolutionTests
         try
         {
             var root = new RootCommand();
-            root.AddGlobalOption(CliSession.JsonOption);
-            root.AddGlobalOption(CliSession.PidOption);
-            root.AddCommand(Probe());
+            root.Add(CliSession.JsonOption);
+            root.Add(CliSession.PidOption);
+            root.Add(Probe());
 
-            var exitCode = await CliSession.BuildParser(root).InvokeAsync(["--pid", "777", "probe"]);
+            var exitCode = await CliSession.InvokeAsync(root, ["--pid", "777", "probe"]);
 
             Assert.Equal(0, exitCode);
             Assert.Equal("pid=777", stdout.ToString().Trim());
@@ -112,7 +112,7 @@ public sealed class TargetResolutionTests
     public async Task Verbose_IsSetOnlyWhenGiven()
     {
         var command = new Command("probe");
-        command.SetHandler(ctx => CliSession.RunAsync(ctx, ct => Task.FromResult(new CliResult($"verbose={CliSession.Verbose}"))));
+        command.SetAction((pr, token) => CliSession.RunAsync(pr, token, ct => Task.FromResult(new CliResult($"verbose={CliSession.Verbose}"))));
 
         var (off, _, _) = await CliTestHelper.RunAsync(command);
         var (on, _, _) = await CliTestHelper.RunAsync(command, "--verbose");

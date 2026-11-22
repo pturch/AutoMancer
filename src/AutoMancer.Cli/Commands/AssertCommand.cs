@@ -24,30 +24,29 @@ internal static class AssertCommand
     {
         // Declare the arguments and options; --check is repeatable, the rest are single-valued.
         var locatorOpts  = new LocatorOptions(required: false, byHelp: "Locator strategy: name, id, class, control, path, runtime, xpath. Omit --by/--value to run the window-level check (stable) or an image comparison.");
-        var checkOpt     = new Option<string[]>("--check",
-            "A check to assert; repeat for several (all must hold). Forms: name, !name, name=value, name~value (contains), name=~regex. " +
+        var checkOpt     = new Option<string[]>("--check") { Description = "A check to assert; repeat for several (all must hold). Forms: name, !name, name=value, name~value (contains), name=~regex. " +
             "Booleans: exists enabled visible clickable unobscured stable. Text: name text automation-id class-name control-type. " +
-            "Also: count=N. With no --check, a locator asserts existence.");
-        var expectedOpt  = new Option<string?>("--expected", "Image comparison: the reference PNG. Use with --actual.");
-        var actualOpt    = new Option<string?>("--actual", "Image comparison: the PNG to check against --expected.");
-        var toleranceOpt = new Option<double>("--tolerance", () => 0.01, "For --expected/--actual: largest fraction of differing pixels (0-1) that still passes.");
-        var timeoutOpt   = new Option<int?>("--timeout", "Total time to wait, in milliseconds: for the element to appear and for the checks to pass, re-checking every 100 ms (0 = a single pass, no waiting). Default: the saved implicit wait, else 5000. This makes assert double as a wait.");
+            "Also: count=N. With no --check, a locator asserts existence." };
+        var expectedOpt  = new Option<string?>("--expected") { Description = "Image comparison: the reference PNG. Use with --actual." };
+        var actualOpt    = new Option<string?>("--actual") { Description = "Image comparison: the PNG to check against --expected." };
+        var toleranceOpt = new Option<double>("--tolerance") { DefaultValueFactory = _ => 0.01, Description = "For --expected/--actual: largest fraction of differing pixels (0-1) that still passes." };
+        var timeoutOpt   = new Option<int?>("--timeout") { Description = "Total time to wait, in milliseconds: for the element to appear and for the checks to pass, re-checking every 100 ms (0 = a single pass, no waiting). Default: the saved implicit wait, else 5000. This makes assert double as a wait." };
 
         // Assemble the command and attach the handler.
         var command = new Command("assert", "Assert properties or counts of an element, the window's stability, or that two PNG files match; exits 1 and reports expected vs actual when any check fails.");
         locatorOpts.AddTo(command);
         foreach (var o in new Option[] { checkOpt, expectedOpt, actualOpt, toleranceOpt, timeoutOpt })
-            command.AddOption(o);
-        command.SetHandler(ctx => CliSession.RunAsync(ctx, async (pid, ct) =>
+            command.Add(o);
+        command.SetAction((pr, token) => CliSession.RunAsync(pr, token, async (pid, ct) =>
         {
             // Step 1: read the options and parse every --check expression up front, so syntax errors surface before touching the app.
-            var r = ctx.ParseResult;
+            var r = pr;
             var target    = locatorOpts.Parse(r);
-            var checks    = (r.GetValueForOption(checkOpt) ?? []).Select(AssertChecks.Parse).ToList();
-            var expected  = r.GetValueForOption(expectedOpt);
-            var actual    = r.GetValueForOption(actualOpt);
-            var tolerance = r.GetValueForOption(toleranceOpt);
-            var timeout   = r.GetValueForOption(timeoutOpt) ?? CliState.Load().Settings.ImplicitWaitMs ?? 5000;
+            var checks    = (r.GetValue(checkOpt) ?? []).Select(AssertChecks.Parse).ToList();
+            var expected  = r.GetValue(expectedOpt);
+            var actual    = r.GetValue(actualOpt);
+            var tolerance = r.GetValue(toleranceOpt);
+            var timeout   = r.GetValue(timeoutOpt) ?? CliState.Load().Settings.ImplicitWaitMs ?? 5000;
 
             // Step 2: reject invalid option combinations as usage errors, still before attaching.
             if (timeout < 0)

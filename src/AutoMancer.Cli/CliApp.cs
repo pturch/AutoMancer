@@ -13,23 +13,23 @@ public static class CliApp
     {
         var root = new RootCommand("AutoMancer — Windows UI automation CLI");
         // With no subcommand, show the command list (a successful, harmless request) instead of a "command required" error.
-        root.SetHandler(ctx => ctx.HelpBuilder.Write(new HelpContext(ctx.HelpBuilder, root, Console.Out)));
-        root.AddGlobalOption(CliSession.JsonOption);
-        root.AddGlobalOption(CliSession.PidOption);
-        root.AddGlobalOption(CliSession.VerboseOption);
-        root.AddCommand(LaunchCommand.Build());
-        root.AddCommand(ConfigureCommand.Build());
-        root.AddCommand(FindCommand.Build());
-        root.AddCommand(TreeCommand.Build());
-        root.AddCommand(ClickCommand.Build());
-        root.AddCommand(TypeCommand.Build());
-        root.AddCommand(ScreenshotCommand.Build());
-        root.AddCommand(AssertCommand.Build());
-        root.AddCommand(KeyCommand.Build());
-        root.AddCommand(HotkeyCommand.Build());
-        root.AddCommand(HoverCommand.Build());
-        root.AddCommand(WindowCommand.Build());
-        root.AddCommand(FocusCommand.Build());
+        root.SetAction(pr => new HelpAction().Invoke(pr));
+        root.Add(CliSession.JsonOption);
+        root.Add(CliSession.PidOption);
+        root.Add(CliSession.VerboseOption);
+        root.Add(LaunchCommand.Build());
+        root.Add(ConfigureCommand.Build());
+        root.Add(FindCommand.Build());
+        root.Add(TreeCommand.Build());
+        root.Add(ClickCommand.Build());
+        root.Add(TypeCommand.Build());
+        root.Add(ScreenshotCommand.Build());
+        root.Add(AssertCommand.Build());
+        root.Add(KeyCommand.Build());
+        root.Add(HotkeyCommand.Build());
+        root.Add(HoverCommand.Build());
+        root.Add(WindowCommand.Build());
+        root.Add(FocusCommand.Build());
         return root;
     }
 }

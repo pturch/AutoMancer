@@ -13,10 +13,10 @@ internal static class FocusCommand
 
         var command = new Command("focus", "Find an element and give it keyboard focus.");
         locatorOpts.AddTo(command);
-        command.SetHandler(ctx => CliSession.RunAsync(ctx, async (pid, ct) =>
+        command.SetAction((pr, token) => CliSession.RunAsync(pr, token, async (pid, ct) =>
         {
             // Step 1: read the locator options and parse them before touching the app.
-            var target = locatorOpts.Parse(ctx.ParseResult)!;
+            var target = locatorOpts.Parse(pr)!;
 
             // Step 2: attach and set focus.
             await using var app = await CliSession.AttachAsync(pid, ct);

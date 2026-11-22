@@ -10,16 +10,16 @@ internal static class LaunchCommand
     // Builds the 'launch' sub-command with its argument and handler.
     internal static Command Build()
     {
-        var execArg = new Argument<string>("executable", "Path to the executable to launch.");
-        var argsOpt = new Option<string?>("--args", "Command-line arguments to pass to the executable.");
+        var execArg = new Argument<string>("executable") { Description = "Path to the executable to launch." };
+        var argsOpt = new Option<string?>("--args") { Description = "Command-line arguments to pass to the executable." };
         var command = new Command("launch", "Launch an application and make it the current target.");
-        command.AddArgument(execArg);
-        command.AddOption(argsOpt);
-        command.SetHandler(ctx => CliSession.RunAsync(ctx, async ct =>
+        command.Add(execArg);
+        command.Add(argsOpt);
+        command.SetAction((pr, token) => CliSession.RunAsync(pr, token, async ct =>
         {
             // Step 1: read the options and start the app with the saved settings.
-            var exe       = ctx.ParseResult.GetValueForArgument(execArg);
-            var arguments = ctx.ParseResult.GetValueForOption(argsOpt);
+            var exe       = pr.GetRequiredValue(execArg);
+            var arguments = pr.GetValue(argsOpt);
             if (string.IsNullOrWhiteSpace(exe))
                 throw new ArgumentException("launch needs the path or name of an executable.");
             var app       = await App.LaunchAsync(exe, CliState.Load().Settings.ToAppOptions(arguments: arguments, verbose: CliSession.Verbose), ct: ct);

@@ -12,7 +12,7 @@ public sealed class CliSessionTests
     private static Command Probe(Func<CancellationToken, Task<CliResult>> body)
     {
         var command = new Command("probe");
-        command.SetHandler(ctx => CliSession.RunAsync(ctx, body));
+        command.SetAction((pr, token) => CliSession.RunAsync(pr, token, body));
         return command;
     }
 
@@ -78,6 +78,26 @@ public sealed class CliSessionTests
         Assert.Contains("window --state normal", stderr);
         Assert.Contains("window --state normal", json);
         Assert.Empty(stdout);
+    }
+
+    // The token the host hands the action (cancelled on Ctrl-C) is the one the command body sees, and a cancellation surfaces as the normal error exit.
+    [Fact]
+    public async Task CancellationToken_ReachesBody_AndCancellationIsAnError()
+    {
+        using var cts = new CancellationTokenSource();
+        var seen = CancellationToken.None;
+        var parseResult = new Command("probe").Parse([]);
+
+        var exitCode = await CliSession.RunAsync(parseResult, cts.Token, async ct =>
+        {
+            seen = ct;
+            await cts.CancelAsync();
+            ct.ThrowIfCancellationRequested();
+            return new CliResult("unreachable");
+        });
+
+        Assert.Equal(cts.Token, seen);
+        Assert.Equal(CliExitCode.Error, exitCode);
     }
 
     // Supplies one exception per mapping row.

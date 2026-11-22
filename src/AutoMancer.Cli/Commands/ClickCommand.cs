@@ -12,19 +12,19 @@ internal static class ClickCommand
     internal static Command Build()
     {
         var locatorOpts = new LocatorOptions(required: true);
-        var doubleOpt   = new Option<bool>("--double", "Send a double-click instead of a single click.");
-        var rightOpt    = new Option<bool>("--right",  "Send a right-click instead of a left click.");
+        var doubleOpt   = new Option<bool>("--double") { Description = "Send a double-click instead of a single click." };
+        var rightOpt    = new Option<bool>("--right") { Description = "Send a right-click instead of a left click." };
 
         var command = new Command("click", "Find an element and click it.");
         locatorOpts.AddTo(command);
-        command.AddOption(doubleOpt);
-        command.AddOption(rightOpt);
-        command.SetHandler(ctx => CliSession.RunAsync(ctx, async (pid, ct) =>
+        command.Add(doubleOpt);
+        command.Add(rightOpt);
+        command.SetAction((pr, token) => CliSession.RunAsync(pr, token, async (pid, ct) =>
         {
             // Step 1: read the options and parse the locator before touching the app.
-            var isDouble = ctx.ParseResult.GetValueForOption(doubleOpt);
-            var isRight  = ctx.ParseResult.GetValueForOption(rightOpt);
-            var target  = locatorOpts.Parse(ctx.ParseResult)!;
+            var isDouble = pr.GetValue(doubleOpt);
+            var isRight  = pr.GetValue(rightOpt);
+            var target  = locatorOpts.Parse(pr)!;
 
             // Step 2: attach and send a double-click, or a single left or right click.
             await using var app = await CliSession.AttachAsync(pid, ct);

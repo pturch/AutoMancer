@@ -81,6 +81,7 @@ Asserting against an element you already resolved yourself doesn't retry. It che
 | `ToHaveCountAsync(int, timeoutMs?, pollIntervalMs?)` | locator only | Exactly that many elements match; waits for a list still populating, which `FindAllAsync` alone doesn't |
 | `ToBeUnobscuredAsync(timeoutMs?, pollIntervalMs?)` / `ToBeObscuredAsync(...)` | locator only | A click at the element's center would / wouldn't reach it, via `App.IsUnobscuredAsync`; polls, since an overlay fading in or out can briefly report the old state |
 | `ToHaveValueAsync(string, timeoutMs?, pollIntervalMs?)` | locator only | The element's live value (not its `Name`) equals exactly. This is the one that reads what's actually typed into an editor. |
+| `ToMatchScreenshotAsync(path, maxDifferenceRatio?, timeoutMs?, pollIntervalMs?)` | app / locator | The window's (or element's) pixels match a stored baseline PNG within the ratio (default 1%). A missing baseline is recorded and the assertion fails so you review it. Same display scale only; see [Visual Stability and Baselines](README.md#visual-stability-and-baselines) for keeping captures stable |
 
 The locator-based, retrying assertions and the element-based, one-shot ones live in separate helper classes internally, but you call both the same way, through the `Expect` you saw above. Either kind throws on failure, and the message names what was expected alongside what was actually found.
 
@@ -97,6 +98,35 @@ internal static class TestSetup
 ```
 
 It's a process-wide switch, not a per-class setting, so setting it once covers every test class. Screenshots land in the configured directory, `%TEMP%` by default.
+
+That switch covers `Expect` assertions. A find that fails through `App` directly (`FindAsync`, or an action that locates its element) throws `ElementNotFoundError` instead, and has its own switch: `AppOptions.AnnotateFailureScreenshots`. When it's on, the error saves a screenshot of the window to `%TEMP%` with a red box around the closest match (or around the whole window when nothing is close), and its message and `ScreenshotPath` carry the file's path. See `FailureShapeDemoTests` in [`samples/ConsumerNotepadTests`](samples/ConsumerNotepadTests).
+
+## Checking from the command line
+
+AutoMancer can work without C# through the command line interface:
+
+```bash
+automancer launch notepad.exe
+automancer type "Hello" --by control --value Document
+automancer assert --by control --value Document --check enabled --check "text=Hello" --timeout 3000 \
+  || { echo "Notepad did not show the text"; exit 1; }
+```
+
+The available checks in the `assert` command line up with the library's assertions:
+
+| Library assertion | `automancer assert` |
+|---|---|
+| `ToHaveNameAsync("Save")` | `--check "name=Save"` |
+| `ToHaveTextAsync` / `ToContainTextAsync("Sav")` | `--check "name~Sav"` |
+| `ToBeVisibleAsync()` | `--check visible` |
+| `ToBeEnabledAsync()` | `--check enabled` |
+| `ToHaveCountAsync(3)` | `--check count=3` |
+| `ToBeUnobscuredAsync()` / `ToBeObscuredAsync()` | `--check unobscured` / `--check "!unobscured"` |
+| `ToHaveValueAsync("abc")` | `--check "text=abc"` |
+| `App.WaitForVisualStableAsync()` | `--check stable` |
+| `ToMatchScreenshotAsync(path)` | `screenshot --out actual.png`, then `assert --expected path --actual actual.png` |
+
+The [CLI README](src/AutoMancer.Cli/README.md#assert) explains every command, the exit codes, and the `--json` output for tools that parse the result.
 
 ## A complete worked example
 

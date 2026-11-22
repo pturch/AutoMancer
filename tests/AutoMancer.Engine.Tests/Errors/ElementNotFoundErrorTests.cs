@@ -38,4 +38,22 @@ public sealed class ElementNotFoundErrorTests
         Assert.Same(closestMatch, ex.ClosestMatch);
         Assert.Contains($"Did you mean \"Sve\" (confidence: {0.8:P0})?", ex.Message);
     }
+
+    [Fact]
+    public void Message_WithScreenshotPath_AppendsItAndExposesIt()
+    {
+        var ex = new ElementNotFoundError(TestLocator, ["uia3"], 1000, screenshotPath: @"C:\Temp\shot.png");
+
+        Assert.Equal(@"C:\Temp\shot.png", ex.ScreenshotPath);
+        Assert.EndsWith(@"(screenshot: C:\Temp\shot.png)", ex.Message);
+    }
+
+    [Fact]
+    public void Message_WithoutScreenshotPath_OmitsClause()
+    {
+        var ex = new ElementNotFoundError(TestLocator, ["uia3"], 1000);
+
+        Assert.Null(ex.ScreenshotPath);
+        Assert.DoesNotContain("screenshot", ex.Message);
+    }
 }

@@ -87,4 +87,15 @@ public sealed class ClosestMatchFinderTests
         Assert.NotNull(result);
         Assert.Equal("Submit", result.ElementName);
     }
+
+    [Fact]
+    public void Match_CarriesTheSnapshotsBoundingRect()
+    {
+        var rect = new Rect(10, 20, 30, 40);
+        var snapshot = new ElementSnapshot("id", "Submit", null, null, null, rect, Array.Empty<ElementSnapshot>());
+
+        var result = ClosestMatchFinder.Find(Locator.ByName("Submt"), [snapshot]);
+
+        Assert.Equal(rect, result!.BoundingRect);
+    }
 }

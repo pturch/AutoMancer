@@ -10,7 +10,7 @@
 
 **Architecture:** Every task in this plan touches only `AutoMancer.Engine` (and, for Stage 2.2's `Expect()` extension, `AutoMancer.Testing`) — no `AutoMancer.Daemon` project exists yet, so nothing here is reachable over HTTP. `ElementHandle` stays opaque throughout (only `Id`/`NativeHandle` public) — Phase 3's daemon element registry depends on that contract holding. Where a new capability wraps a UIA pattern the engine doesn't already touch (`TogglePattern`, `GridPattern`, `RangeValuePattern`, …), it follows the existing `IElementOperator`-optional, no-op-when-unsupported shape `ScrollAction`/`SetFocusAction` already established in Phase 1, rather than inventing a new dispatch convention. "Unsupported" means the element lacks the pattern, or Win32 has no equivalent — never "not a UIA3 handle": every UIA action covers both UIA3 and UIA2 handles, and Win32 hwnds too where user32 has a real counterpart (`ScrollAction`/`SetFocusAction` originally returned early for anything not UIA3, so a UIA2-resolved handle silently didn't scroll or focus; fixed alongside Task 2.2.5, with `SetFocusAction` also covering Win32 hwnds via `AttachThreadInput` + `SetFocus`. Scrolling into view stays a Win32 no-op: user32 has no general "scroll this child window into view", and list rows — what you'd scroll to — aren't windows the Win32 provider can find).
 
-**Prior art:** `WaitConditions` (Stage 2.2) mirrors Selenium's `ExpectedConditions` — a starter vocabulary instead of every caller hand-rolling predicates. Stage 2.6's `WaitForIdleAsync`/visual-regression batches are general-purpose and apply to any app; the OCR/template-matching Visual Provider is unscheduled Future Work.
+**Prior art:** `WaitConditions` (Stage 2.2) mirrors Selenium's `ExpectedConditions` — a starter vocabulary instead of every caller hand-rolling predicates. Stage 2.6's `WaitForVisualStableAsync`/visual-regression batches are general-purpose and apply to any app; the OCR/template-matching Visual Provider is unscheduled Future Work.
 
 **Tech Stack:** C# latest / .NET 10 Windows (`net10.0-windows10.0.22621.0`), `Interop.UIAutomationClient` (UIA3 COM — already referenced; this phase adds `IUIAutomationRegistrar` for custom-property GUID resolution and `TogglePattern`/`ExpandCollapsePattern`/`SelectionItemPattern`/`SelectionPattern`/`GridPattern`/`TablePattern`/`RangeValuePattern` usage), `Windows.Media.Ocr.OcrEngine` (on-device OCR via the existing `windows10.x` TFM suffix — no extra package, per CLAUDE.md), `OpenCvSharp4.Windows` (new — template matching), `System.Windows.Clipboard` (already available via `UseWPF`, no new dependency — see Task 2.8.1), raw Win32 P/Invoke additions to `NativeMethods.cs` (`GetGuiResources`, `GetMenu`/`GetSubMenu`/`GetMenuItemInfo`/`TrackPopupMenuEx`).
 
@@ -54,11 +54,6 @@ src/AutoMancer.Engine/
 
 src/AutoMancer.Testing/
 
-
-examples/
-├── notepad/
-├── winforms-calculator/
-└── xunit-test-adapter/
 
 tests/AutoMancer.Engine.Tests/
 ├── Core/SpatialMatcherTests.cs, WaitConditionsTests.cs, ScopedFindTests.cs, FindByScrollingTests.cs, ...
@@ -739,7 +734,7 @@ dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
 
 ### Task 2.3.4: Integration test for context menu fallback
 
-**What (original plan):** Verifies the UIA path is tried first and the native fallback only engages when UIA finds nothing, against an app with a legacy/native context menu (a plain Win32 app without a UIA-exposed menu is the target — Notepad's WinUI3 menus are UIA-visible, so this needs a different test app, e.g. one of the Stage 2.7 example apps or a minimal native test harness).
+**What (original plan):** Verifies the UIA path is tried first and the native fallback only engages when UIA finds nothing, against an app with a legacy/native context menu (a plain Win32 app without a UIA-exposed menu is the target — Notepad's WinUI3 menus are UIA-visible, so this needs a different test app, e.g. a minimal native test harness).
 
 **Revised plan (proposed after 2.3.1–2.3.3; for review before starting).** Coverage is meant to be as wide as possible: every menu kind seen during 2.3.1–2.3.3, every trigger, both paths and every error case. Two findings change the original plan:
 - **No app was found whose `#32768` menu UIA3 can't see.** Detection now always goes through UIA3 first, so a provider chain can't force the native path either. The native path is therefore tested by building a native-path `ContextMenu` directly around a real `#32768` popup, through its internal constructor. That tests the native machinery fully. It can't test the "UIA3 found nothing, so fall back" decision end-to-end, because nothing triggers it.
@@ -776,7 +771,7 @@ dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
 - `tests/AutoMancer.Engine.Tests/Integration/ContextMenu/` (the four files above plus fixtures)
 - Additions to the Notepad and Calculator integration suites
 
-As built (after Stage 2.9, so the tests target `Popup`; where the plan says `ContextMenu`/`GetItemsAsync`/`ClickItemAsync`, read `Popup`/`FindAllAsync(MenuItem)`/`ClickAsync` or `ClickContextMenuItemAsync`):
+As built (after Tasks 2.3.5–2.3.12, so the tests target `Popup`; where the plan says `ContextMenu`/`GetItemsAsync`/`ClickItemAsync`, read `Popup`/`FindAllAsync(MenuItem)`/`ClickAsync` or `ClickContextMenuItemAsync`):
 - **Test apps** as planned, but **kept outside the repo**, in `%TEMP%\AutoMancer.TestApps\ContextMenuHost` and `\WpfMenuHost`, not in `tests/TestApps` or the solution. The shared `TestAppFixture` base builds an app there with `dotnet build` if its exe is missing, and fails with the build output if the sources aren't there. Two additions: clicking either app's status label resets it to "ready", so a status assertion can't pass on an earlier test's pick; and the WPF window opens at a fixed spot clear of the WinForms one, since both run at once. The fixture ends on a synthesized click before killing the app.
 - **Engine bug found and fixed: the baseline was taken before the target's window was foregrounded.** With another app in front, the first Shift+F10 on the WinForms app was "detected" as the window's title-bar `System` MenuBar: activating the window made its `System` MenuItem read as on screen, so it looked new. `PopupAction.OpenAsync` now foregrounds the target's window before snapshotting; the trigger foregrounded it anyway, just after the snapshot.
 - **What UIA3 reports for the native menu:** names without mnemonics or the tab-separated shortcut, `&&` kept as-is, and the owner-drawn item listed with an empty name. The native path skips that item (its HMENU entry has no text), so its list is UIA3's minus the empty name. Everything else matches exactly.
@@ -796,7 +791,247 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration&(Fully
 
 Passed: the 35 tests above, twice in a row, and the full engine integration suite (133/133).
 
-**Done when:** every case above passes. In particular, `app.ClickContextMenuItemAsync(target, itemName)` clicks items through UIA3 on native, WinForms, WPF and WinUI3 menus, and a native-path `ContextMenu` lists and clicks items through the `HMENU` alone. Stage 2.3 complete.
+**Done when:** every case above passes. In particular, `app.ClickContextMenuItemAsync(target, itemName)` clicks items through UIA3 on native, WinForms, WPF and WinUI3 menus, and a native-path `ContextMenu` lists and clicks items through the `HMENU` alone. Task 2.3.4 complete; Stage 2.3 finishes with Tasks 2.3.5–2.3.12 below.
+
+
+> **Stage 2.3, continued (Tasks 2.3.5–2.3.12).** This was planned as a separate Stage 2.9 that ran in the middle of Stage 2.3, before Task 2.3.4, so 2.3.4's tests target the final `Popup`-based shape. It was folded into Stage 2.3 as these tasks (old 2.9.N is now 2.3.N+4), matching roadmap-spec.md's Stage 2.3. In short: searches stay scoped to one window; real windows are reached through explicit *window views*; popups are reached through the interaction that opened them, with `ContextMenu` as the first case. A find never falls back to popups automatically, which would bring back "which 'Undo'?" ambiguity. Planning decisions so far:
+> - no automatic popup fallback;
+> - the API is named `WaitForWindowAsync`;
+> - `FindDialogAsync` was removed outright once window views covered every dialog tried (Task 2.3.8); the repo is too early for `[Obsolete]` shims;
+> - the popup pattern is generalized now, not left context-menu-only.
+
+**Starting facts (checked in code during Stage 2.3):**
+- **Every search starts from one window.** `Uia3Provider`/`Uia2Provider` start every search from `session.RootWindowHandle`, and `Win32Provider` only enumerates that window's *child* windows. Snapshots, XPath and path locators start there too.
+- **Owned windows happen to be reachable.** UIA nests a window under its owner, which is why a WPF window created with `Owner = main` and a WinForms `ContextMenuStrip` dropdown were findable from the main window. Unowned top-level windows aren't: Notepad's popup-window menu, `#32768` menus, unowned dialogs, second main windows.
+- **Per-element machinery already copes with other windows.** Foregrounding (`EnsureForeground` uses the element's own top-level window), the actionability gate, `GetCenter`, `IsShowing`, `IsUnobscured`, stale detection and scoped UIA finds all work for an element in another window once you hold it. Only `EnsureWindowNotMinimized` (checks the root) and `Win32Provider.ValidScopeHandle` (requires the session's process) assume the root.
+- **`FindDialogAsync` has a dispose bug.** It returns a separate `App` around the same process, and `App.DisposeAsync` calls `KillAppBestEffort()`, so disposing the dialog `App` kills the application.
+
+### Task 2.3.5: Disposing a dialog `App` must not kill the app
+
+**What:** An `App` from `FindDialogAsync` doesn't own its process. Its `DisposeAsync` releases what it holds (held input, the event-log artifact) but never kills the process; only the `App` that launched or attached to the app does.
+
+**Creates:**
+- `src/AutoMancer.Engine/App.cs`: an "owns the process" flag set by the launch/attach factories and cleared for `FindDialogAsync`; `DisposeAsync`/`KillAsync` honor it (`KillAsync` on a non-owning `App` is decided here: throw, or kill on explicit request)
+- `tests/AutoMancer.Engine.Tests/`: a unit test that disposing a non-owning `App` leaves the process alone
+
+**Done when:** a test that disposes a dialog `App` leaves Notepad running.
+
+As built: `App` gains a private `_ownsProcess` flag, set by an optional `ownsProcess` constructor argument (default `true`).
+- **Which `App`s don't own their process:**
+  - `FindDialogAsync` passes `false`.
+  - **`WithOptions` does too.** Same bug, found while fixing this one: it also builds an `App` around the *shared* session, so disposing it killed the app and disposed the session the original `App` was still using.
+  - `app.Force` views keep their existing early return.
+- **What dispose does for a non-owning `App`:** it releases its own held input and stops there. No kill, no Event Log artifact, no session dispose.
+- **Explicit kills are unchanged:** `Kill()`/`KillAsync()` on any `App` still kill, since that's a deliberate request rather than cleanup.
+- **Tests:** `App.CreateForTesting` takes `ownsProcess`. Two `AppTests` cover a non-owning `App` leaving a live process running, and a `WithOptions` view leaving the process to its owner, whose own dispose still kills it.
+- **Live check:** opened Notepad's Open dialog, disposed the dialog `App` with `await using`; Notepad stayed running, and the main `App` still found its Document.
+- **No existing test changes needed:** none of the existing integration tests disposed their dialog `App`s, consistent with people working around this.
+
+- [x] **Implement, build and test**
+
+### Task 2.3.6: Window views — `App.WaitForWindowAsync`
+
+**What:** `App.WaitForWindowAsync(WindowMatchOptions match, CancellationToken ct = default)` polls for a visible top-level window of the app's processes matching `match` (`TitleContains`, `ClassName`, `RequireNewWindow`; `ExpectedPid` defaults to the app's process). It returns an `App` *view* rooted at that window. The view:
+- shares the session's process, `AppOptions`, logger, held-key/held-button trackers and `Force` handling, built like `app.Force`'s `forcedFrom` view;
+- has a no-op `DisposeAsync`;
+- has an `AppSession` view with the same process and a different `RootWindowHandle`. Every provider already reads `session.RootWindowHandle`, so finds, waits, snapshots, XPath and `Expect` inside the view are scoped to that window with no provider changes.
+
+**Open questions for implementation:**
+- The timeout error: `ElementNotFoundError` with a window locator via the resolver's polling, or a new window-not-found error.
+- Whether a view of a view and `view.Force` both just compose.
+- Whether `RequireNewWindow` needs a baseline taken at the call (e.g. "the dialog this click is about to open").
+
+**Creates:** `App.WaitForWindowAsync`; an `AppSession` view constructor; unit tests with a fake session.
+
+**Done when:** a unit test proves a view searches its own root and disposing it leaves the process alone. The live check is Task 2.3.12.
+
+As built:
+- **Views are one mechanism.** `App`'s private constructor takes `viewOf` (and `force`) in place of `forcedFrom`. A view shares its parent's held-input trackers, has `_isView` set (so `DisposeAsync` is a no-op), and never owns the process. `app.Force` and window views are both built this way.
+- **The view's session:** `AppSession.WithRootWindow(hwnd)` returns the same session (same process and `SessionId`) with a different `RootWindowHandle`. No provider changed.
+- **The wait goes through the resolver.** `WaitForWindowAsync` polls `PollOutsideChainAsync`, wrapping candidate windows through `Win32Provider`. A timeout raises `ElementNotFoundError` with `tried: window` and a `Name=`/`ClassName=` locator built from the criteria. That settles the first open question.
+- **Matching reuses the launch-time rules.** `AppSession.WindowSatisfiesCriteria` (now internal) runs over the visible top-level windows of `ExpectedPid` (default: this app's process).
+- **`RequireNewWindow` means "not this `App`'s own root window".** The first version excluded windows already open when `WaitForWindowAsync` was called. That's wrong for the natural flow (click, *then* wait): the dialog already exists by the time the wait starts, and was excluded. The message-box check in Task 2.3.8 caught it.
+- **Views compose:** `view.Force` and `view.WithOptions(...)` work (the latter used live with a `win32` chain inside the Open dialog). A view of a view would compose the same way, though no test does that yet.
+- **Not unit-tested:** a view needs a real top-level window of the target process, so the "searches its own root" and "dispose leaves the process" checks were done live (Task 2.3.8 below) rather than as unit tests.
+
+### Task 2.3.7: Per-element window checks
+
+**What:**
+- `EnsureWindowNotMinimized` checks the target element's own top-level window (or the view's root), not the session root, so acting on an element held from another window works.
+- `Win32Provider` records the owning process of each window handle when it finds one. `ValidScopeHandle` raises stale when that owner *changes* (window destroyed, handle reused), instead of requiring the session's process, so a scope in a helper process's window is accepted.
+
+**Done when:** unit tests cover both; the existing integration suites still pass.
+
+As built:
+- **`Win32Provider` records the owner.** `WrapWindowHandle` now sets each handle's `ProcessId` from `GetWindowThreadProcessId`. `ValidScopeHandle` raises stale when the window's current owner differs from the recorded one, falling back to the session's process for a handle that didn't record one, as before. Two new `ScopeResolutionTests` cover it: a window still owned by its recorded process in another process is accepted, and a recorded owner that no longer matches is stale. The existing tests (no recorded owner, so session-process rule) pass unchanged.
+- **`EnsureWindowNotMinimized` is unchanged, on purpose.** Every `App` method that calls it finds its element through the `App`'s own root, which for a view *is* the view's window. A handle from another window is only acted on through the static actions (`ClickAction.ExecuteAsync(handle)`) or a `Popup`, and neither calls it. So the root check never misfires in practice.
+
+### Task 2.3.8: Dialogs, and `FindDialogAsync`'s fate
+
+**What:** Drive three dialog kinds through window views and note anything extra they need:
+- a classic common dialog (Notepad's Save As: `#32770`, an owned top-level window);
+- a message box;
+- an in-window XAML `ContentDialog`. That one has no new window at all, so it should already work from the main `App`.
+
+Points to check: modality (the owner is disabled while the dialog is up), foregrounding, and whether UIA already nests the owned dialog under its owner.
+
+Then decide:
+- **Deprecate:** `FindDialogAsync` becomes `[Obsolete]`, pointing to `WaitForWindowAsync`, if views cover dialogs as they are.
+- **Keep as a thin wrapper:** if dialogs need something views don't do. Record what it is.
+
+**Done when:** the decision and its evidence are recorded here.
+
+As built, and the decision:
+
+**Notepad's Open dialog** (`#32770`, owned top-level window, same process) worked through a view end to end:
+- the view's root is the dialog, and its snapshot root reads `#32770 'Open'`;
+- `FindAsync` by HelpText worked, and a `win32`-chain `WithOptions` sibling found the dialog's `Edit`;
+- `TypeAsync` / `GetValueAsync` round-tripped, and `PressKeyAsync(Escape)` closed the dialog;
+- disposing the view left Notepad running, and the main `App` kept working.
+
+The main `App` could *also* see into the dialog, since UIA nests owned windows under their owner. A view is still what keeps finds scoped to the dialog.
+
+**A WinForms message box** (`#32770`, title "MenuHost message", opened from a menu command) worked through a view with `RequireNewWindow` (needed because the main window's title, "MenuHost", is a substring): the view read the message text and clicked OK, and the app stayed alive.
+
+**An in-window XAML `ContentDialog`** has no window of its own, so the main `App` already drives it (the existing occlusion tests do).
+
+None needed anything views don't do. Modality and foregrounding just worked, since the view's actions foreground the dialog (its root).
+
+**Decision:** both `App.FindDialogAsync` overloads were removed outright, not marked `[Obsolete]`: the repo is too early to carry deprecation shims. `AppSession.FindDialogAsync` (its only implementation) and its private `FindWindow` helper went with them, along with the three `AppSessionTests` argument-validation tests. Every caller migrated: three Notepad integration tests, two Paint helpers, the Paint save test, and the VS Code sample's Save As.
+- **The optional "Replace?" confirmation** in `PaintArtTestBase` relied on `FindDialogAsync` returning `null` on timeout. It now waits through a short-timeout `WithOptions` view and catches `ElementNotFoundError`.
+- **`WINDOWS_TESTING.md`'s "Native dialogs" section** now documents window views.
+
+Verified: the full engine integration suite (99/99), the Notepad sample project (54/54), and the VS Code sample's `HelloWorldScriptDemoTests`.
+
+### Task 2.3.9: The general popup pattern — `Popup`
+
+**What:** Generalize Stage 2.3's detection into `PopupAction`:
+- **Baseline:** what's showing in the target's window, and the visible top-level windows of the target's processes.
+- **Trigger, then a detection pass:** a new showing element in the window, or a new top-level window that a *recognizer* accepts. Every pass goes through the resolver's polling, keeping its wait errors.
+- **Recognizers are small predicates over a candidate:** a menu has `MenuItem`s; a dropdown has a `List` or `ListItem`s; a flyout or tooltip is any new showing surface.
+
+**The public `Popup` handle:**
+- created by `App.OpenPopupAsync(Locator target, PopupTrigger trigger = …, …)`; the recognizer parameter shape is decided here;
+- offers `FindAsync`/`FindAllAsync(Locator)` scoped to the popup, through its own provider like `ContextMenu`'s items;
+- acts on elements through the normal actions (or `Popup`-level shortcuts, decided here);
+- has `CloseAsync` (Escape; a no-op when already closed) and `WaitUntilClosedAsync`;
+- raises `StaleElementError` once the popup has closed.
+
+**`PopupTrigger`** generalizes `ContextMenuTrigger`: right-click, left-click, Shift+F10, hover (tooltips), Alt+Down (combo dropdowns). `ContextMenuTrigger` isn't shipped yet, so renaming or aliasing it is free.
+
+**Done when:** engine builds and unit tests pass. Live checks are in Tasks 2.3.10 and 2.3.11.
+
+As built:
+- **`ContextMenuAction` became `PopupAction`** (`Actions/PopupAction.cs`). The recognizer is a single optional **`Locator? expect`**: *the popup is the new surface that is, or contains, an element matching `expect`*. That settles the open question.
+- **Why not presets:** the first version had a `PopupKind` enum (`Any`/`Menu`/`List`/`ToolTip`) with per-kind rules (an in-window control type, a required item type, "native allowed"). A review replaced it before anything depended on it, because those rules were just a fixed set of `expect` values, and the native path was a menu-only special case. "Menu" is no longer a concept detection knows about. `ContextMenu` is `expect: ControlType "MenuItem"` plus item helpers, and anything an app exposes through UIA (or `Win32Provider`) can be named directly (`ByAutomationId("CalendarView")`, `ByName("Rename")`, `ByControlType("DataItem")`).
+- **One pipeline, two steps, the same question in both:**
+  1. **In-window:** new, showing matches of `expect` inside the target's window (not on screen in the before-snapshot, then re-checked live). The popup is the match's **parent**, asked of the provider that found it through the new `IElementProvider.FindParentAsync`: a `MenuItem`'s menu, a `ListItem`'s list. This is a heuristic; an item nested under a group would make the group the popup.
+  2. **New top-level windows:** a window counts if UIA3 sees that it *is* (`MatchesItself`, on the handle's own `ControlType`/`Name`/`AutomationId`/`ClassName`) or *contains* an `expect` match. Failing UIA3, it counts if **`Win32Provider`** finds `expect` under it. That's how a UIA-invisible native `#32768` menu is reached: `Win32Provider` already returns its `HMENU` items for `ControlType "MenuItem"`. The native path is a provider fallback, not a menu special case.
+- **Parent lookup is a provider capability.** `IElementProvider` gained `FindParentAsync(ElementHandle element, AppSession session, CancellationToken ct = default)`, returning null at the top of the provider's tree or for another provider's handle, per the never-throw rule:
+  - `Uia3Provider` and `Uia2Provider`: the control-view parent;
+  - `Win32Provider`: the parent window via `GetAncestor(GA_PARENT)` (new `NativeMethods.GetParentWindow`), or, for a native menu item, its `#32768` popup.
+
+  It replaced a UIA3-only `TryGetParent` helper, so every piece of popup detection is now a general capability: a provider's scoped search, its parent lookup, `IsShowing`, window enumeration, the resolver's wait. The four hand-written test fake providers return null. `Providers/FindParentTests.cs` covers the null cases for all three providers and the native-item-to-popup case.
+
+  **Not yet exercised live:** the in-window step's use of the parent. Every popup in the test apps, including the WinForms `ContextMenuStrip` (which the earlier control-type-based version caught in-window), is now found by the window step, because its window also contains the `MenuItem`s. Task 2.3.11 needs a popup that lives entirely inside the app's window. If no real app needs the in-window step, it should be reconsidered.
+- **Without `expect`:**
+  - the in-window step looks for newly showing elements of a small built-in list of popup-shaped control types (`Menu`, `List`, `ToolTip`, `Window`), and the popup is the element itself;
+  - the window step takes the first new, showing window that isn't a `SysShadow` drop shadow.
+  - That built-in list is the only one left, and only as the default's guess.
+- **`PopupTrigger` replaced `ContextMenuTrigger`:** `RightClick`, `LeftClick`, `ShiftF10`, `Hover` (`HoverAction`) and `AltDown` (focus, then Alt+Down).
+- **`Popup` (`Core/Popup.cs`) is the public handle:**
+  - `FindAsync` (waits through the resolver), `FindAllAsync` (one pass) and `ClickAsync` (the retry loop formerly in `ContextMenu`), all searching only through the surface's own `Provider`;
+  - `IsOpenAsync`, `CloseAsync` (Escape, a no-op when already closed) and `WaitUntilClosedAsync`;
+  - a closed popup raises `StaleElementError` ("The {label} has closed; open it again from its target.");
+  - its internal `ReadAsync`/`WaitForAsync`/`ClickAsync(search, filter, reportAs)` are what `ContextMenu` reuses.
+- **`App.OpenPopupAsync(target, trigger = LeftClick, expect = null)`** and `OpenContextMenuAsync` (`expect: ContextMenu.Items`) share one private `OpenPopupCoreAsync`, labelled "popup" or "context menu" for errors and logs. No popup raises `ElementNotFoundError (tried: popup detection)`.
+- **Known limit:** a tooltip ignores Escape (it closes when the pointer leaves), so `CloseAsync` can't close one. The documented pattern is to hover elsewhere, then `WaitUntilClosedAsync`.
+- **Live** (WPF test app): a "⋯" button's menu opened by `LeftClick` with no `expect`, with `expect: ControlType "MenuItem"` and with `expect: Name "Bravo"`, each with find, click (delivered its command) and close. A label's tooltip opened by `Hover`, with `expect: ControlType "ToolTip"` and with no `expect`, each with its text read and a wait for it to close. The no-popup timeout reads `ElementNotFoundError (tried: popup detection)`. `Win32Provider` was confirmed to list the native menu's three items under a `#32768`, which is what the fallback asks. Detection itself still went through UIA3 there, since UIA3 can see that menu; the fallback route needs a menu UIA3 can't see, and none has been found yet.
+
+**Follow-up: `Popup` became a view of `App`.** A review found `Popup` growing into a second copy of `App`'s API (only finds and click were there, with no hover, type, scroll, waits or `Expect`). The difference is only where searches start, so a popup is now a view the same way a window view is:
+- **The root lives in the session, not the resolver.** `AppSession.WithRootElement(surface, label)` sets `RootElement`, and every provider searches from it (`Uia3Provider`/`Uia2Provider` through `TryGetRoot`, `Win32Provider` by handing it to its scoped search, which reads a `#32768`'s items). `RootWindowHandle` stays the app's window. A first version put an ambient `Scope` on `ElementResolver` instead; it was reverted because it brought back the runtime scoped/unscoped branch Task 2.1.7 had designed out, and left the resolver with search state.
+- **`Popup : App`.** It keeps only `IsOpenAsync`, `CloseAsync` and `WaitUntilClosedAsync`; everything else is inherited, including `Force`, which keeps the root because it reuses the session.
+- **A popup view searches through its root's provider alone**, so a `#32768` surface works even when `win32` isn't in the configured chain.
+- **"Has closed":** providers call `AppSession.ThrowIfRootClosed()` before searching from the root, raising the same `StaleElementError` as before. `WaitUntilGoneAsync` treats it as gone, and the stale-scope retry doesn't retry it.
+- **Inside a popup view:** raw input doesn't foreground the app's window (that would dismiss the popup); `CloseWindowAsync`, `MoveWindowAsync`, `ResizeWindowAsync` and `SetWindowStateAsync` throw, pointing at `CloseAsync`. A window view opened from a popup drops the popup root.
+- **Behaviour that follows from the root:** the closest-match hint, Spatial locators, snapshots and XPath/path locators all work from the popup's tree; a path's first segment must match the surface. Errors name the bare provider (`uia3`), not `uia3 context menu`; the label stays in the "has closed" message.
+- **Not yet exercised live:** the `Uia2Provider` and `Win32Provider` root paths (Notepad's menu covers `Uia3Provider`), raw-input menu navigation, and submenus opened from a popup.
+
+### Task 2.3.10: `ContextMenu` on `Popup`
+
+**What:** `ContextMenu` becomes a specialization of `Popup`: `expect: ControlType "MenuItem"`, `MenuItem` listing and naming, and the native `#32768` path through `Win32Provider`. Its public API is unchanged. Regression: the Notepad `ContextMenuDemoTests` sample plus the Stage 2.3 live checks (the native, WinForms and WPF test apps, and the native path driven directly). Task 2.3.4's integration tests come after this stage and target the final shape.
+
+**Done when:** the `ContextMenuDemoTests` sample and the Stage 2.3 live checks pass unchanged.
+
+As built:
+- **`ContextMenu` is now a thin wrapper over a `Popup`** opened with `expect: ContextMenu.Items` (`ControlType "MenuItem"`) and labelled "context menu":
+  - `GetItemsAsync` reads `MenuItem`s;
+  - `ClickItemAsync` clicks by exact name over the `MenuItem` list (not a `ByName` search, because a WPF `MenuItem`'s child `Text` has the same name and `Win32Provider`'s `Name` match is a substring);
+  - `CloseAsync` delegates.
+- **Public surface unchanged except the trigger:** `OpenContextMenuAsync` and `ClickContextMenuItemAsync` take `PopupTrigger` instead of `ContextMenuTrigger` (renamed, not yet shipped). Error messages keep `tried: uia3 context menu` / `win32 context menu`.
+- **Regression:** the native, WinForms and WPF test apps through the public API (list, missing item, click, close no-op, stale after close, shortcut), the native path driven directly through a `Win32Provider`-wrapped `#32768` inside a `Popup`, and the Notepad sample project (54/54, including `ContextMenuDemoTests`).
+
+**Follow-up: `ContextMenu` collapsed into `Popup`.** A later review removed the wrapper, following Playwright's model of one scoped-locator handle with no menu-specific type:
+- `ContextMenu` and `ContextMenuItem` are gone. `OpenContextMenuAsync` now returns the `Popup` itself: `OpenPopupAsync` with `expect: ControlType "MenuItem"`, a right-click by default, and the "context menu" label.
+- Listing items is `popup.FindAllAsync(Locator.ByControlType("MenuItem"))`, which returns full `ElementHandle`s (`Name`, `IsEnabled` and the rest) instead of snapshot records.
+- `ClickContextMenuItemAsync` keeps the exact-name match, now inline through `Popup`'s internal `ClickAsync(search, filter, reportAs)` (since Task 2.3.9's view follow-up, `App`'s private `ClickFirstWhereAsync`). A plain `popup.ClickAsync(Locator.ByName(...))` still has `Win32Provider`'s substring `Name` match on a native `#32768`.
+
+Stage 2.3's notes above predate this stage. Where they say `ContextMenuAction`/`ContextMenuTrigger`, read `PopupAction`/`PopupTrigger`; where they say `ContextMenu`, read `Popup`.
+
+### Task 2.3.11: More popup kinds
+
+**What:** Through the generic `Popup` handle, on the Task 2.3.4 test apps plus a `ComboBox` added to them:
+- a WinForms/WPF `ComboBox` dropdown (Alt+Down, and a click on the arrow): select an item and assert the combo's value;
+- a tooltip (hover): read its text, then wait for it to close;
+- a flyout from a "⋯" button (left-click): act on an element inside it.
+
+**Done when:** all three pass live.
+
+As built (`Integration/ContextMenu/PopupKindTests.cs`, on the out-of-repo test apps, which gained a fruit ComboBox and a label with a tooltip each, plus a WPF Filter button opening a flyout with a TextBox and an Apply button):
+- **ComboBox dropdowns,** by Alt+Down and by a click, on both apps, with `expect: ListItem`. Both apps write the selection to their status label, which is what the tests check: a WPF ComboBox exposes no value through UIA (no `ValuePattern`, empty Name). The WPF dropdown is its own `Popup` window, and a clicked item is selected. The WinForms dropdown is its `ComboLBox` list window, but **UIA Invoke on its items reports success and does nothing**. `ClickAction` prefers Invoke, so the click is a silent no-op. Decided: no engine change; the test picks the item with the keyboard (first letter, then Enter), and `WINDOWS_TESTING.md` documents it.
+- **Tooltips,** by hover, on both apps, with and without `expect: ToolTip`: the text is read from the popup's snapshot, then the pointer moves to the status label and `WaitUntilClosedAsync` sees it close.
+- **The flyout** (WPF `Popup`, `expect: Name "Apply"`): text typed into its TextBox and a click on Apply reach the app, and the flyout closes.
+- **Engine fix: detection now tries new windows first, and the in-window step rejects a surface that is the target or one of its ancestors.** The in-window step was wrong both times it fired live. The WPF ComboBox's items are nested in UIA under the ComboBox, so the "popup" was the ComboBox itself, which never closes. The WinForms tooltip is nested under the app window, so the "popup" was the whole main window. Running the window step first wasn't enough on its own: on a WPF ComboBox's first opening, its items appear in UIA before its window shows, so the in-window step still won that race. A popup never contains what opened it, so a parent that is the target or its ancestor now means "not a popup surface; keep polling". The walk compares Ids through the target's provider, so it only rejects when the target came from UIA3, like the candidates.
+- **The in-window step is still not exercised live:** every popup in the test apps, Notepad and Calculator has its own window. The step stays, as the fallback for a popup with no window of its own (decided over removing it).
+
+### Task 2.3.12: Window views live, plus samples
+
+**What:** Integration tests:
+- Notepad's Save As (or the dialog Task 2.3.8 settles on), driven through a window view;
+- an element held from that dialog, clicked from the main `App` (Task 2.3.7);
+- disposing a view leaves Notepad running (Task 2.3.5);
+- a secondary window on a test app.
+
+Plus `samples/ConsumerNotepadTests` demos for a window view and a popup, alongside the existing `ContextMenuDemoTests`.
+
+**Done when:** all pass; Stage 2.3 complete.
+
+As built:
+- **`Integration/Notepad/WindowViewIntegrationTests.cs`**, on the Open dialog (Task 2.3.8's choice over Save As):
+  - a view rooted at the dialog: its snapshot root is the `#32770`, Notepad's Document is out of its reach, typing into the file-name box round-trips, and Escape through the view closes the dialog;
+  - a Cancel button found through the view and clicked with the static `ClickAction.ExecuteAsync` closes the dialog, and the main `App` carries on;
+  - disposing a view leaves Notepad running and the main `App` working.
+- **`Integration/ContextMenu/SecondaryWindowViewTests.cs`:** the test app's secondary window, picked out by `RequireNewWindow` (both titles contain "MenuHost"). The view can't see the main window's controls, and a context menu opened through it delivers its command.
+- **Samples:** `WindowViewDemoTests` (the Open dialog through a view, and `await using` a view leaving Notepad running) and `PopupDemoTests` (Notepad's File menu through `OpenPopupAsync`), both listed in the sample README with `ContextMenuDemoTests`.
+- **A latent sample bug fixed:** `WindowCloseDemoTests` closes "its own" Notepad, but Notepad is single-instance, so that closed the window the shared `NotepadFixture` drives. It had only ever run last. `WindowViewDemoTests` sorts after it and failed with `WindowActivationError`. It now has its own non-parallel collection, which xunit never runs alongside the shared one.
+- **Engine: a "stable" check before synthesized pointer input.** The WPF ComboBox test was occasionally flaky in full-suite runs: on a dropdown's first opening, its items slide about 25px into place over about 50ms, and a click in that window missed the item and closed the dropdown without selecting. As in Playwright, `ElementInputHelpers.GetCenter` (behind every synthesized click, hover, double-click, drag start and scroll) now reads the element's bounds twice, one frame (16ms) apart, and throws `ElementNotInteractableError` ("still moving") if they differ. The resolver's actionability wait retries that like any other not-interactable failure; `app.Force` skips it. Native-pattern clicks don't go through `GetCenter`, so they don't pay for it. `IsUnobscuredAsync` reports a still-moving element as not unobscured.
+- **Verified:** the full engine integration suite (146/146), the Notepad sample (58/58) and the VS Code sample (4/4) after the stable check, and the popup tests three runs in a row.
+
+**Follow-up: wider popup coverage.** Added after Task 2.3.12 to close the gaps a coverage review listed:
+- **Test apps:** a WinForms message box, driven through a window view (`TestAppWindowViewTests`, alongside the secondary window). Submenus in both apps, each opened as a popup from inside the menu popup: the WPF one by a click, the native one by a hover, since UIA Invoke on a native submenu parent reports success without opening anything (the same silent no-op as the WinForms combo's items).
+- **WinUI3, beyond menus:**
+  - Notepad's Settings tooltip;
+  - Calculator's unit ComboBox dropdown (a `Xaml_WindowedPopupClass` window) and its date picker's calendar flyout. Calculator relaunches in its last mode, so those tests switch back to Standard, and they wait for the navigation pane to close before clicking, since it takes clicks while sliding shut;
+  - Paint's Rotate dropdown, and its "Resize and skew" dialog: an in-window XAML dialog with no window of its own, **the first live exercise of the in-window detection step**.
+- **Electron (VS Code sample, `PopupDemoTests`):** the editor context menu, the title-bar File menu, the command center's quick pick and an activity-bar hover. All are drawn inside VS Code's window, so all are found through the in-window step.
+- **Engine fixes:**
+  - **`IsInVisibleWindow` checks the top-level window.** WinUI3 hosts content under a zero-size `InputSiteWindowClass` child that is never visible, so every element of Paint's dialog read as hidden and the in-window step never saw it. The check exists for a hidden WinForms `ContextMenuStrip` dropdown, which is itself a top-level window, so checking the top-level window keeps that case.
+  - **The in-window step takes a popup-shaped match as the popup itself.** With `expect: ToolTip`, a VS Code hover's parent was a workbench container that also holds the hovered button, so the 2.3.11 ancestor check rejected it. A match of one of the popup-shaped control types (`Menu`, `List`, `ToolTip`, `Window`) is now the popup, as a window that matches `expect` itself is in the window step; anything else still steps up to its parent.
+- **Findings, documented in `WINDOWS_TESTING.md` rather than fixed:**
+  - **VS Code's title-bar menus misreport their items.** Chromium reports every item after the first as `IsOffscreen=true` while they're on screen. That was checked with raw UIA reads at +0s, +1s and +3s, and after hovering and arrowing through the menu. The editor context menu and the quick pick report correctly. Decided: the tests go through `Force`, and a submenu from those menus is a known limit, since detection skips offscreen candidates.
+  - **VS Code drops a click sent in a menu's first moments,** about one run in three, via UIA Invoke or a real mouse click alike. Nothing in UI Automation (focus included) changes when it starts accepting clicks, so the sample waits 300ms before clicking inside a fresh menu.
+  - **Paint's "Edit colors" dialog reports an endless list.** It first looked like a Paint freeze, but a step-by-step UIA walk found the cause: its "Custom colors" grid reports hundreds of thousands of "Empty" items (over 308,000 in 150s, without reaching the end), each answered instantly. Any search that must get past the grid times out with `0x80131505` and keeps Paint busy serving it, including a `FindAsync` for Cancel (after the grid in tree order) and popup detection's whole-window searches. A search that stops before the grid is instant, which is why it can't be reproduced by hand. Earlier runs that seemed to separate opening by Invoke from opening by mouse were an artifact: the mouse clicks had missed the button, so the dialog never opened. The engine part is only that a detection pass doesn't check the deadline between its UIA calls, which is why `OpenPopupAsync` took 176s to give up there. `PaintEditColorsDemoTests` (Notepad sample, in its own collection, launching its own Paint) opens the dialog, checks it through the color spectrum (before the grid) and closes it with Escape: 3 of 3 runs, about 1s each.
+- **Still flaky:** the VS Code quick-pick test, about one run in five. When it fails, the click on "Open Quick Access" is dropped; it's the first action in a freshly prepared VS Code. The Calculator unit-combo test failed once in a full-suite run and never in isolation.
 
 ---
 
@@ -894,18 +1129,19 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration&FullyQ
 
 ---
 
-## Stage 2.6 — Idle Wait and Visual Regression
+## Stage 2.6 — Visual Stability Wait and Visual Regression
 
-> **Two general-purpose capabilities, useful against any app, UIA-accessible or not:** `WaitForIdleAsync` and visual regression. The Visual Provider (OCR and template-matching locator fallback) used to share this stage and now lives in "Future Work: Visual Provider" at the end of this document. See roadmap-spec.md's Stage 2.6.
+> **Two general-purpose capabilities, useful against any app, UIA-accessible or not:** `WaitForVisualStableAsync` and visual regression. The Visual Provider (OCR and template-matching locator fallback) used to share this stage and now lives in "Future Work: Visual Provider" at the end of this document. See roadmap-spec.md's Stage 2.6.
 
 ---
 
-### Task 2.6.1: `App.WaitForIdleAsync()`
+### Task 2.6.1: `App.WaitForVisualStableAsync()`
 
-**What:** Diffs consecutive `ScreenshotAsync()` captures at a short interval until two frames match within a pixel-difference threshold, or a timeout is hit. Replaces the ad-hoc `Task.Delay(300) // flyout animation` waits already scattered through the Phase 1 integration test suite with a real settledness check — likely able to reuse the pixel-compare plumbing Task 2.6.3 builds for template matching rather than needing a separate diff implementation, assuming that plumbing ends up general enough once 2.6.3 actually lands.
+**What:** Diffs consecutive `TakeScreenshotAsync()` captures at a short interval until two frames match within a pixel-difference threshold, or a timeout is hit. Replaces the ad-hoc `Task.Delay(300) // flyout animation` waits already scattered through the Phase 1 integration test suite with a real settledness check — shares `PixelDiff.DifferenceRatio` (the fraction of differing pixels between two PNGs) with Task 2.6.2.
 
 **Creates:**
-- `src/AutoMancer.Engine/App.cs` — `WaitForIdleAsync(TimeSpan? pollInterval = null, TimeSpan? timeout = null, CancellationToken ct = default)`
+- `src/AutoMancer.Engine/Diagnostics/PixelDiff.cs` — `DifferenceRatio(byte[] pngA, byte[] pngB)`; 1.0 when the dimensions differ
+- `src/AutoMancer.Engine/App.cs` — `WaitForVisualStableAsync(Locator? region = null, TimeSpan? pollInterval = null, TimeSpan? timeout = null, double maxDifferenceRatio = 0.001, CancellationToken ct = default)`; polls every 100ms, times out after 5s with `TimeoutException`. With `region`, each poll crops to that element's current rectangle (via `TakeScreenshotAsync(Locator)`), so activity elsewhere in the window can't keep it waiting
 
 - [ ] **Implement and build**
 
@@ -913,21 +1149,22 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration&FullyQ
 dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
 ```
 
-**Done when:** `app.WaitForIdleAsync()` resolves once consecutive screenshots stop changing. As a follow-up cleanup (not required for this task's own "done"), the scattered `Task.Delay(300)` animation waits in the existing integration suite are good candidates to replace with this.
+**Done when:** `app.WaitForVisualStableAsync()` resolves once consecutive screenshots stop changing. The scattered `Task.Delay` animation waits this was meant to replace were already gone by the time it landed (the no-fixed-delays pass), so there was no cleanup to do.
 
 ---
 
 ### Task 2.6.2: Visual regression snapshot assertion
 
-**What:** Captures the current window/element region and pixel-diffs it against a stored baseline PNG, failing past a configurable difference threshold. Likely shares its pixel-compare code with Task 2.6.1.
+**What:** Captures the current window or element region and pixel-diffs it against a stored baseline PNG, failing past a configurable difference threshold. Shares `PixelDiff` with Task 2.6.1.
 
-**`DpiHelper.PhysicalToLogical` is not directly reusable here — check its actual signature before assuming otherwise.** `ScreenshotAsync()` captures physical pixels, and the same logical window is a different physical *pixel size* at 100% vs. 150% DPI, so a naive pixel-diff spuriously fails whenever the baseline and the live capture were recorded at different scale factors. But `DpiHelper.PhysicalToLogical(double physicalX, double physicalY, int dpi, Rect windowRect)` converts a single *coordinate pair*, not a bitmap — there's nothing to "call it on" an image. What's actually needed is a bitmap **resize** using the DPI scale ratio (`dpi / 96.0` — the same ratio `DpiHelper` already computes internally as `BaseDpi`-relative `scale`, just not exposed as a standalone factor): resize whichever of the baseline/live capture was taken at the non-reference DPI down (or up) to match the other's pixel dimensions before diffing. Add a small `DpiHelper.GetScale(int dpi) => dpi / 96.0` (or inline the ratio directly in `VisualRegression`) rather than trying to route this through `PhysicalToLogical`.
+**Baselines are same-DPI only.** `TakeScreenshotAsync()` captures physical pixels, so the same window is a different pixel size at 100% vs. 150% scaling. Rescaling a capture to the baseline's size was built and measured live (Notepad at 125% vs 100%): a Document region differed by about 1.5% and the whole window by about 23%, because text and chrome are rasterised separately at each scale, so it couldn't give a dependable threshold and was removed. `ScreenshotAction` still records the window's DPI in each PNG's metadata, and `VisualRegression` throws when the baseline's and the capture's DPIs differ, telling the user to re-record at this scale or run at the baseline's. `DpiHelper` was not involved.
 
 **Creates:**
-- `src/AutoMancer.Engine/Dpi/DpiHelper.cs` — optionally add `GetScale(int dpi)`, exposing the `dpi / 96.0` ratio the other methods already compute internally, for `VisualRegression`'s bitmap-resize step to reuse
-- `src/AutoMancer.Engine/Diagnostics/VisualRegression.cs` — `CompareToBaseline(byte[] currentPng, string baselinePath, double maxDifferenceRatio = 0.01)` → pass/fail + diff ratio; resizes whichever capture was taken at a different DPI than the other before diffing
-- `src/AutoMancer.Testing/LocatorExpect.cs` (or `ElementExpect.cs`) — `ToMatchBaselineAsync(string baselinePath)` assertion, following the existing `ExpectFailedError` message pattern
-- `tests/AutoMancer.Engine.Tests/Diagnostics/VisualRegressionTests.cs` — identical images compare equal; a shifted/recolored image exceeds the threshold; a 150%-captured image resized to match a 100%-recorded baseline's dimensions compares equal for identical content
+- `src/AutoMancer.Engine/Actions/ScreenshotAction.cs` — captures the window's visible frame (not Windows 11's invisible resize border or its 1px blended edge, which show whatever is behind the window and made the stability wait time out whenever that changed); records the window's DPI in the PNG metadata; `CaptureRegionAsync` crops a capture to an element's rectangle
+- `src/AutoMancer.Engine/App.cs` — `TakeScreenshotAsync(Locator)`: the located element's pixels only; `TakeScreenshotAsync(string savePath)` and `TakeScreenshotAsync(Locator, string savePath)` write the PNG to a file, creating missing folders; `CompareScreenshotAsync(string baselinePath, double maxDifferenceRatio = 0.01)` and `CompareScreenshotAsync(Locator, string baselinePath, ...)` capture live and compare against the saved PNG → `VisualComparison(Passed, DifferenceRatio)`, throwing `BaselineDpiMismatchError` when their DPIs differ (`ExpectScreenshot` reports it as an `ExpectFailedError`). `ScreenshotAsync` was renamed `TakeScreenshotAsync` with no shim
+- `src/AutoMancer.Engine/Diagnostics/VisualRegression.cs` — internal `CompareToBaseline(byte[] currentPng, string baselinePath, double maxDifferenceRatio = 0.01)`, the comparison `CompareScreenshotAsync` calls; `VisualComparison` is the public result record
+- `src/AutoMancer.Testing/AppExpect.cs` (`Expect(app).ToMatchScreenshotAsync(...)`, whole window) and `LocatorExpect.cs` (`Expect(app, locator).ToMatchScreenshotAsync(...)`, one element), both through `ExpectScreenshot`; they retry until a match or timeout, throw `ExpectFailedError`, and on a missing baseline record the current capture and fail so it gets reviewed
+- `tests/AutoMancer.Engine.Tests/Diagnostics/VisualRegressionTests.cs` — identical images compare equal; a shifted/recolored image exceeds the threshold; a capture at a different DPI is refused with a message naming both
 
 - [ ] **Write tests, run (expect FAIL), implement, run (expect PASS)**
 
@@ -939,76 +1176,50 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "VisualRegressionTests"
 
 ---
 
-## Stage 2.7 — Engine Hardening and Examples
+## Stage 2.7 — Engine Hardening
 
 ### Task 2.7.1: Annotated error screenshots
 
 **What:** On `ElementNotFoundError`, capture a screenshot and draw a red overlay around the search area / closest-match bounding rect via GDI+, save to `%TEMP%`. A new `AppOptions`/`ElementProviderOptions` flag (off by default) turns this on. The engine sibling of Stage 1.9's on-failure diagnostics, for direct `App` consumers rather than `Expect()` — same idea (annotate and save on failure), different trigger point (thrown exception vs. `Expect()`'s own retry loop).
 
-**Creates:**
-- `src/AutoMancer.Engine/Core/ElementProviderOptions.cs` — add `AnnotateFailureScreenshots` bool, default `false`
-- `src/AutoMancer.Engine/Core/ElementResolver.cs` — on throwing `ElementNotFoundError` with the flag set, capture + annotate + save, folding the path into the exception (mirroring `ExpectFailedError`'s existing screenshot-path-in-message convention)
+**What the box surrounds.** The closest match's rect when `ClosestMatchFinder` found one; otherwise (no match, or its rect is empty or off the window) a border around the whole captured window, standing in for the search area. A scoped find does not highlight its scope. Only finds through the provider chain annotate — the spatial path and the lookups outside the chain (popups, window views) throw their own `ElementNotFoundError`s with no screenshot.
 
-- [ ] **Implement and build**
+**Creates:**
+- `src/AutoMancer.Engine/AppOptions.cs` and `Core/ElementProviderOptions.cs` — `AnnotateFailureScreenshots` bool, default `false`; `App` copies the first into the second when it builds its resolver, so a daemon pass-through (batch 3.6.1) only sets the `AppOptions` flag
+- `src/AutoMancer.Engine/Actions/ScreenshotAction.cs` — internal `CaptureAnnotatedAsync(windowHandle, highlight)`: captures the window and draws a 3px red GDI+ rectangle (`System.Drawing`, which `UseWPF` already brings in)
+- `src/AutoMancer.Engine/Diagnostics/ClosestMatchFinder.cs` — `ClosestMatch` gains an optional `BoundingRect`, taken from the matched snapshot
+- `src/AutoMancer.Engine/Errors/ElementNotFoundError.cs` — `ScreenshotPath` property; the path is appended to the message as `(screenshot: <path>)`, mirroring `ExpectFailedError`'s screenshot-path-in-message convention
+- `src/AutoMancer.Engine/Core/ElementResolver.cs` — before throwing `ElementNotFoundError` from the provider-chain poll with the flag set, saves `automancer-notfound-<timestamp>.png` to `%TEMP%`; a capture or save failure is logged as a warning and the error still throws, without a path
+- `tests/AutoMancer.Engine.Tests/Errors/ElementNotFoundErrorTests.cs` and `Diagnostics/ClosestMatchFinderTests.cs` — the message clause and the carried rect
+- `tests/AutoMancer.Engine.Tests/Integration/Notepad/AnnotatedFailureScreenshotIntegrationTests.cs` — a failed find leaves a real PNG, with the flag off it leaves none, and a near-miss name puts red pixels on the closest match's edge and not at its center
+
+- [x] **Write tests, implement, run**
 
 ```bash
-dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
+dotnet test tests/AutoMancer.Engine.Tests/ --filter "AnnotatedFailureScreenshot|ElementNotFoundErrorTests|ClosestMatchFinderTests"
 ```
 
-**Done when:** A failed find under the debug flag leaves an annotated PNG in `%TEMP%`.
+**Done when:** A failed find under the debug flag leaves an annotated PNG in `%TEMP%`. Met: verified live against Notepad.
 
 ---
 
-### Task 2.7.2: DPI compat matrix
+### Task 2.7.2: DPI compat matrix — dropped
 
-**What:** Runs the Notepad integration test suite at 100%, 125%, and 150% DPI, asserting identical logical coordinates across all three. This is a test-execution exercise, not new production code — it validates `DpiHelper`'s conversion logic (already present in Phase 1, unwired into the hot path per its own design note) actually holds across the three most common Windows scaling factors.
-
-**Creates:**
-- Nothing new in `src/` — this task is a verification pass. If it finds a genuine DPI-dependent coordinate bug, fix it in the offending action/provider and note the fix here.
-
-- [ ] **Run the suite at each DPI setting** (Windows Settings → Display → Scale, or `SystemParametersInfo`/registry-driven automation if scripting this)
-
-```bash
-dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration"
-```
-
-**Done when:** The Notepad integration suite passes at 100%, 125%, and 150% DPI with identical logical coordinates.
+**Dropped.** The original plan ran the Notepad integration suite at 100%, 125% and 150% and asserted identical logical coordinates. The engine's one load-bearing DPI piece is `DpiAwareness` (per-monitor v2, so UIA rects and `SendInput` use physical pixels), which every live test already exercises. `DpiHelper`'s logical coordinates have no consumer — no action, locator or SDK surface calls it outside its own unit tests — so a matrix would validate code nothing uses. `DpiHelper` stays, tested by `DpiHelperTests`. The task number is kept so references to 2.7.3 and 2.7.4 stay stable.
 
 ---
 
-### Task 2.7.3: Windows 10/11 compat
+### Task 2.7.3: Windows 10/11 compat — dropped
 
-**What:** Runs the full `AutoMancer.Engine.Tests` integration suite on both Windows 10 and Windows 11; fixes any behavioral differences found (most likely candidates: WinUI3 Notepad's tree shape, which already has version-drift caveats noted in the Phase 1 test suite, and any Win32-provider fallback timing).
-
-**Creates:**
-- Nothing new in `src/` unless a genuine OS-version bug is found — same shape as Task 2.7.2.
-
-- [ ] **Run the full integration suite on both OS versions**
-
-```bash
-dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration"
-```
-
-**Done when:** The full `AutoMancer.Engine.Tests` integration suite passes on both Windows 10 and 11.
+**Dropped.** The plan was to run the full integration suite on both Windows 10 and 11 and fix any differences. It produces no code unless it finds a bug, and it needs a Windows 10 machine the project doesn't have. The suite passes on Windows 11 (173 of 173 at the close of this stage); **Windows 10 is unverified**, and the README's "Windows 10/11" prerequisite is stated, not tested. The number is kept so references stay stable.
 
 ---
 
-### Task 2.7.4: Example projects
+### Task 2.7.4: Example projects — dropped
 
-**What:** Three runnable example projects demonstrating the engine's public surface for new C# consumers — `examples/notepad/` (the README's Calculator-style walkthrough, expanded), `examples/winforms-calculator/` (a classic Win32/WinForms app, exercising the UIA2 fallback path), `examples/xunit-test-adapter/` (a minimal `AutoMancer.Testing.XUnit` walkthrough, complementing `samples/ConsumerNotepadTests`).
+**Dropped.** The plan was three example projects: a console Notepad walkthrough, a WinForms calculator for the UIA2 fallback, and a minimal xunit walkthrough. `samples/ConsumerNotepadTests` and `samples/ConsumerVsCodeTests` already cover the Notepad and xunit ground, so the examples would repeat them. The WinForms app would have been a new app built only to be an example; native-menu fallback coverage lives in the engine's own test apps. The number is kept so references stay stable.
 
-**Creates:**
-- `examples/notepad/`, `examples/winforms-calculator/`, `examples/xunit-test-adapter/` — each a minimal runnable console or test project with its own short README
-
-- [ ] **Build and run each example**
-
-```bash
-dotnet build examples/notepad/
-dotnet build examples/winforms-calculator/
-dotnet build examples/xunit-test-adapter/
-```
-
-**Done when:** All three example projects build and run. Stage 2.7 complete — DPI/OS compat confidence, annotated failure diagnostics, and working examples. This stage is entirely engine-side; exposing the debug-screenshot flag over HTTP is Phase 3's job (daemon-spec.md Task 3.2.5/`automancer:debugScreenshots`).
+**Stage 2.7 complete** — annotated failure diagnostics (Task 2.7.1) are the stage's one deliverable; 2.7.2 to 2.7.4 were dropped. This stage is entirely engine-side; exposing the debug-screenshot flag over HTTP is Phase 3's job (daemon-spec.md Task 3.2.5/`automancer:debugScreenshots`).
 
 ---
 
@@ -1121,7 +1332,7 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "GridActionTests"
 **What:** Unit tests for each action's no-op/unsupported-pattern path (mirroring `ScrollActionTests`/`SetFocusActionTests` — largely already covered per-task in Tasks 34–37, this task is the integration-level closeout). Integration tests: toggle a checkbox, select/multi-select a list, read a `ListView`/`DataGrid`-style control's row and column counts and fetch a specific cell, clipboard round-trip.
 
 **Creates:**
-- `tests/AutoMancer.Engine.Tests/Integration/ExtendedPatternIntegrationTests.cs` — toggle, select/multi-select, grid row/column/cell, clipboard round-trip, all against a live test app with the relevant controls (a `ListView` and a checkbox are enough for most of this; `DataGrid`-pattern coverage may need a WinForms/WPF example app if Notepad has nothing suitable — Task 2.7.4's `examples/winforms-calculator/` or a dedicated fixture app can double as the test target)
+- `tests/AutoMancer.Engine.Tests/Integration/ExtendedPatternIntegrationTests.cs` — toggle, select/multi-select, grid row/column/cell, clipboard round-trip, all against a live test app with the relevant controls (a `ListView` and a checkbox are enough for most of this; `DataGrid`-pattern coverage may need a WinForms/WPF example app if Notepad has nothing suitable — a dedicated fixture app can be the test target)
 
 - [ ] **Run integration tests**
 
@@ -1165,250 +1376,49 @@ dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
 dotnet test tests/AutoMancer.Engine.Tests/ --filter "FullyQualifiedName~RangeValue"
 ```
 
-**Done when:** `app.SetRangeValueAsync(locator, value)`/`GetRangeValueAsync(locator)` round-trip a live slider/progress bar's value. **Phase 2 complete.** The daemon's `PatternEndpoints`/`ClipboardEndpoints` (daemon-spec.md Task 3.2.6) and the SDKs' `ComboBox`/`DataGrid` controls (sdks-spec.md Task 3.3.4/3.4.4) can now delegate to real `App` methods instead of reaching around the engine.
+**Done when:** `app.SetRangeValueAsync(locator, value)`/`GetRangeValueAsync(locator)` round-trip a live slider/progress bar's value. The window-level `AppExpect` assertions follow in Tasks 2.8.9–2.8.10.
 
 ---
 
-## Stage 2.9 — Windows and Popups
+### Task 2.8.9: `AppExpect` window-level assertions
 
-> **Runs now, in the middle of Stage 2.3, before Task 2.3.4**, despite its number (stages are append-only within a phase), so 2.3.4's tests target the final `Popup`-based shape. See roadmap-spec.md's Stage 2.9 for the framing. In short: searches stay scoped to one window; real windows are reached through explicit *window views*; popups are reached through the interaction that opened them, with Stage 2.3's `ContextMenu` as the first case. A find never falls back to popups automatically, which would bring back "which 'Undo'?" ambiguity. Planning decisions so far:
-> - no automatic popup fallback;
-> - the API is named `WaitForWindowAsync`;
-> - `FindDialogAsync` was removed outright once window views covered every dialog tried (Task 2.9.4); the repo is too early for `[Obsolete]` shims;
-> - the popup pattern is generalized now, not left context-menu-only.
+**What:** `AppExpect` (today only `ToMatchScreenshotAsync`, Stage 2.6) gets retry-asserting checks on the app window as a whole. Each follows `ToMatchScreenshotAsync`'s shape: optional `timeoutMs`/`pollIntervalMs` defaulting to `App.ImplicitWaitMs`/`PollIntervalMs`, polling through `ExpectPolling`, throwing `ExpectFailedError` with `ExpectDiagnostics` attached. Element-level checks stay on `LocatorExpect`. Methods:
+- **State and geometry:** `ToHaveTitleAsync(string | Regex)`, `ToBeMinimizedAsync()`, `ToBeMaximizedAsync()`, `ToBeForegroundAsync()`, `ToHaveBoundsAsync(Rect expected, int tolerancePx = 2)` (tolerance for DPI rounding).
+- **Process and windows:** `ToBeRunningAsync()`, `ToHaveExitedAsync()` (useful after a Close/Exit action), `ToBeRespondingAsync()`, `ToHaveWindowCountAsync(int)`, `ToHaveDialogAsync(WindowMatchOptions)` and `ToHaveNoDialogAsync()`. The dialog pair reuses Stage 2.3's window-view matching rather than adding a second matcher.
+- **Stability and resources:** `ToBeVisuallyStableAsync()` over Stage 2.6's stability check; `ToHaveMemoryBelowAsync(long bytes)` and `ToHaveHandleCountBelowAsync(int)` over one Stage 2.4 resource sample, for leak-style checks at the end of a test.
 
-**Starting facts (checked in code during Stage 2.3):**
-- **Every search starts from one window.** `Uia3Provider`/`Uia2Provider` start every search from `session.RootWindowHandle`, and `Win32Provider` only enumerates that window's *child* windows. Snapshots, XPath and path locators start there too.
-- **Owned windows happen to be reachable.** UIA nests a window under its owner, which is why a WPF window created with `Owner = main` and a WinForms `ContextMenuStrip` dropdown were findable from the main window. Unowned top-level windows aren't: Notepad's popup-window menu, `#32768` menus, unowned dialogs, second main windows.
-- **Per-element machinery already copes with other windows.** Foregrounding (`EnsureForeground` uses the element's own top-level window), the actionability gate, `GetCenter`, `IsShowing`, `IsUnobscured`, stale detection and scoped UIA finds all work for an element in another window once you hold it. Only `EnsureWindowNotMinimized` (checks the root) and `Win32Provider.ValidScopeHandle` (requires the session's process) assume the root.
-- **`FindDialogAsync` has a dispose bug.** It returns a separate `App` around the same process, and `App.DisposeAsync` calls `KillAppBestEffort()`, so disposing the dialog `App` kills the application.
-
-### Task 2.9.1: Disposing a dialog `App` must not kill the app
-
-**What:** An `App` from `FindDialogAsync` doesn't own its process. Its `DisposeAsync` releases what it holds (held input, the event-log artifact) but never kills the process; only the `App` that launched or attached to the app does.
+`ToHaveNoErrorsLoggedAsync` (asserting on the engine's own log) was considered and left out: nothing needs it yet.
 
 **Creates:**
-- `src/AutoMancer.Engine/App.cs`: an "owns the process" flag set by the launch/attach factories and cleared for `FindDialogAsync`; `DisposeAsync`/`KillAsync` honor it (`KillAsync` on a non-owning `App` is decided here: throw, or kill on explicit request)
-- `tests/AutoMancer.Engine.Tests/`: a unit test that disposing a non-owning `App` leaves the process alone
+- `src/AutoMancer.Testing/AppExpect.cs` — the methods above
 
-**Done when:** a test that disposes a dialog `App` leaves Notepad running.
+- [ ] **Implement and build**
 
-As built: `App` gains a private `_ownsProcess` flag, set by an optional `ownsProcess` constructor argument (default `true`).
-- **Which `App`s don't own their process:**
-  - `FindDialogAsync` passes `false`.
-  - **`WithOptions` does too.** Same bug, found while fixing this one: it also builds an `App` around the *shared* session, so disposing it killed the app and disposed the session the original `App` was still using.
-  - `app.Force` views keep their existing early return.
-- **What dispose does for a non-owning `App`:** it releases its own held input and stops there. No kill, no Event Log artifact, no session dispose.
-- **Explicit kills are unchanged:** `Kill()`/`KillAsync()` on any `App` still kill, since that's a deliberate request rather than cleanup.
-- **Tests:** `App.CreateForTesting` takes `ownsProcess`. Two `AppTests` cover a non-owning `App` leaving a live process running, and a `WithOptions` view leaving the process to its owner, whose own dispose still kills it.
-- **Live check:** opened Notepad's Open dialog, disposed the dialog `App` with `await using`; Notepad stayed running, and the main `App` still found its Document.
-- **No existing test changes needed:** none of the existing integration tests disposed their dialog `App`s, consistent with people working around this.
+```bash
+dotnet build src/AutoMancer.Testing/AutoMancer.Testing.csproj
+```
 
-- [x] **Implement, build and test**
+**Done when:** Testing project builds with 0 errors.
 
-### Task 2.9.2: Window views — `App.WaitForWindowAsync`
+---
 
-**What:** `App.WaitForWindowAsync(WindowMatchOptions match, CancellationToken ct = default)` polls for a visible top-level window of the app's processes matching `match` (`TitleContains`, `ClassName`, `RequireNewWindow`; `ExpectedPid` defaults to the app's process). It returns an `App` *view* rooted at that window. The view:
-- shares the session's process, `AppOptions`, logger, held-key/held-button trackers and `Force` handling, built like `app.Force`'s `forcedFrom` view;
-- has a no-op `DisposeAsync`;
-- has an `AppSession` view with the same process and a different `RootWindowHandle`. Every provider already reads `session.RootWindowHandle`, so finds, waits, snapshots, XPath and `Expect` inside the view are scoped to that window with no provider changes.
+### Task 2.8.10: Unit and integration tests for `AppExpect`
 
-**Open questions for implementation:**
-- The timeout error: `ElementNotFoundError` with a window locator via the resolver's polling, or a new window-not-found error.
-- Whether a view of a view and `view.Force` both just compose.
-- Whether `RequireNewWindow` needs a baseline taken at the call (e.g. "the dialog this click is about to open").
+**What:** Unit tests through the `TestingAdapter` fake-provider seam (`App.CreateForTesting`): each assertion passes when the condition holds, retries until it does, and times out with `ExpectFailedError`. Integration tests against live Notepad, deliberately placed at the end of Stage 2.8 so they also exercise the new pattern and clipboard actions as setup and teardown: title after a document change, minimize/maximize through `WindowAction`, bounds, `ToHaveDialogAsync`/`ToHaveNoDialogAsync` around the Open dialog opened through a window view, `ToHaveWindowCountAsync`, `ToBeRespondingAsync`, `ToBeVisuallyStableAsync`, the resource assertions against a loose bound, and `ToHaveExitedAsync` after closing. Add a `samples/ConsumerNotepadTests` demo alongside `VisualRegressionDemoTests`.
 
-**Creates:** `App.WaitForWindowAsync`; an `AppSession` view constructor; unit tests with a fake session.
+**Creates:**
+- `tests/AutoMancer.Engine.Tests/TestingAdapter/AppExpectTests.cs`
+- `tests/AutoMancer.Engine.Tests/Integration/Notepad/AppExpectIntegrationTests.cs`
+- `samples/ConsumerNotepadTests/AppExpectDemoTests.cs`
 
-**Done when:** a unit test proves a view searches its own root and disposing it leaves the process alone. The live check is Task 2.9.8.
+- [ ] **Write tests, run (expect FAIL), implement, run (expect PASS)**
 
-As built:
-- **Views are one mechanism.** `App`'s private constructor takes `viewOf` (and `force`) in place of `forcedFrom`. A view shares its parent's held-input trackers, has `_isView` set (so `DisposeAsync` is a no-op), and never owns the process. `app.Force` and window views are both built this way.
-- **The view's session:** `AppSession.WithRootWindow(hwnd)` returns the same session (same process and `SessionId`) with a different `RootWindowHandle`. No provider changed.
-- **The wait goes through the resolver.** `WaitForWindowAsync` polls `PollOutsideChainAsync`, wrapping candidate windows through `Win32Provider`. A timeout raises `ElementNotFoundError` with `tried: window` and a `Name=`/`ClassName=` locator built from the criteria. That settles the first open question.
-- **Matching reuses the launch-time rules.** `AppSession.WindowSatisfiesCriteria` (now internal) runs over the visible top-level windows of `ExpectedPid` (default: this app's process).
-- **`RequireNewWindow` means "not this `App`'s own root window".** The first version excluded windows already open when `WaitForWindowAsync` was called. That's wrong for the natural flow (click, *then* wait): the dialog already exists by the time the wait starts, and was excluded. The message-box check in Task 2.9.4 caught it.
-- **Views compose:** `view.Force` and `view.WithOptions(...)` work (the latter used live with a `win32` chain inside the Open dialog). A view of a view would compose the same way, though no test does that yet.
-- **Not unit-tested:** a view needs a real top-level window of the target process, so the "searches its own root" and "dispose leaves the process" checks were done live (Task 2.9.4 below) rather than as unit tests.
+```bash
+dotnet test tests/AutoMancer.Engine.Tests/ --filter "FullyQualifiedName~AppExpect&Category!=Integration"
+dotnet test tests/AutoMancer.Engine.Tests/ --filter "FullyQualifiedName~AppExpect&Category=Integration"
+```
 
-### Task 2.9.3: Per-element window checks
-
-**What:**
-- `EnsureWindowNotMinimized` checks the target element's own top-level window (or the view's root), not the session root, so acting on an element held from another window works.
-- `Win32Provider` records the owning process of each window handle when it finds one. `ValidScopeHandle` raises stale when that owner *changes* (window destroyed, handle reused), instead of requiring the session's process, so a scope in a helper process's window is accepted.
-
-**Done when:** unit tests cover both; the existing integration suites still pass.
-
-As built:
-- **`Win32Provider` records the owner.** `WrapWindowHandle` now sets each handle's `ProcessId` from `GetWindowThreadProcessId`. `ValidScopeHandle` raises stale when the window's current owner differs from the recorded one, falling back to the session's process for a handle that didn't record one, as before. Two new `ScopeResolutionTests` cover it: a window still owned by its recorded process in another process is accepted, and a recorded owner that no longer matches is stale. The existing tests (no recorded owner, so session-process rule) pass unchanged.
-- **`EnsureWindowNotMinimized` is unchanged, on purpose.** Every `App` method that calls it finds its element through the `App`'s own root, which for a view *is* the view's window. A handle from another window is only acted on through the static actions (`ClickAction.ExecuteAsync(handle)`) or a `Popup`, and neither calls it. So the root check never misfires in practice.
-
-### Task 2.9.4: Dialogs, and `FindDialogAsync`'s fate
-
-**What:** Drive three dialog kinds through window views and note anything extra they need:
-- a classic common dialog (Notepad's Save As: `#32770`, an owned top-level window);
-- a message box;
-- an in-window XAML `ContentDialog`. That one has no new window at all, so it should already work from the main `App`.
-
-Points to check: modality (the owner is disabled while the dialog is up), foregrounding, and whether UIA already nests the owned dialog under its owner.
-
-Then decide:
-- **Deprecate:** `FindDialogAsync` becomes `[Obsolete]`, pointing to `WaitForWindowAsync`, if views cover dialogs as they are.
-- **Keep as a thin wrapper:** if dialogs need something views don't do. Record what it is.
-
-**Done when:** the decision and its evidence are recorded here.
-
-As built, and the decision:
-
-**Notepad's Open dialog** (`#32770`, owned top-level window, same process) worked through a view end to end:
-- the view's root is the dialog, and its snapshot root reads `#32770 'Open'`;
-- `FindAsync` by HelpText worked, and a `win32`-chain `WithOptions` sibling found the dialog's `Edit`;
-- `TypeAsync` / `GetValueAsync` round-tripped, and `PressKeyAsync(Escape)` closed the dialog;
-- disposing the view left Notepad running, and the main `App` kept working.
-
-The main `App` could *also* see into the dialog, since UIA nests owned windows under their owner. A view is still what keeps finds scoped to the dialog.
-
-**A WinForms message box** (`#32770`, title "MenuHost message", opened from a menu command) worked through a view with `RequireNewWindow` (needed because the main window's title, "MenuHost", is a substring): the view read the message text and clicked OK, and the app stayed alive.
-
-**An in-window XAML `ContentDialog`** has no window of its own, so the main `App` already drives it (the existing occlusion tests do).
-
-None needed anything views don't do. Modality and foregrounding just worked, since the view's actions foreground the dialog (its root).
-
-**Decision:** both `App.FindDialogAsync` overloads were removed outright, not marked `[Obsolete]`: the repo is too early to carry deprecation shims. `AppSession.FindDialogAsync` (its only implementation) and its private `FindWindow` helper went with them, along with the three `AppSessionTests` argument-validation tests. Every caller migrated: three Notepad integration tests, two Paint helpers, the Paint save test, and the VS Code sample's Save As.
-- **The optional "Replace?" confirmation** in `PaintArtTestBase` relied on `FindDialogAsync` returning `null` on timeout. It now waits through a short-timeout `WithOptions` view and catches `ElementNotFoundError`.
-- **`WINDOWS_TESTING.md`'s "Native dialogs" section** now documents window views.
-
-Verified: the full engine integration suite (99/99), the Notepad sample project (54/54), and the VS Code sample's `HelloWorldScriptDemoTests`.
-
-### Task 2.9.5: The general popup pattern — `Popup`
-
-**What:** Generalize Stage 2.3's detection into `PopupAction`:
-- **Baseline:** what's showing in the target's window, and the visible top-level windows of the target's processes.
-- **Trigger, then a detection pass:** a new showing element in the window, or a new top-level window that a *recognizer* accepts. Every pass goes through the resolver's polling, keeping its wait errors.
-- **Recognizers are small predicates over a candidate:** a menu has `MenuItem`s; a dropdown has a `List` or `ListItem`s; a flyout or tooltip is any new showing surface.
-
-**The public `Popup` handle:**
-- created by `App.OpenPopupAsync(Locator target, PopupTrigger trigger = …, …)`; the recognizer parameter shape is decided here;
-- offers `FindAsync`/`FindAllAsync(Locator)` scoped to the popup, through its own provider like `ContextMenu`'s items;
-- acts on elements through the normal actions (or `Popup`-level shortcuts, decided here);
-- has `CloseAsync` (Escape; a no-op when already closed) and `WaitUntilClosedAsync`;
-- raises `StaleElementError` once the popup has closed.
-
-**`PopupTrigger`** generalizes `ContextMenuTrigger`: right-click, left-click, Shift+F10, hover (tooltips), Alt+Down (combo dropdowns). `ContextMenuTrigger` isn't shipped yet, so renaming or aliasing it is free.
-
-**Done when:** engine builds and unit tests pass. Live checks are in Tasks 2.9.6 and 2.9.7.
-
-As built:
-- **`ContextMenuAction` became `PopupAction`** (`Actions/PopupAction.cs`). The recognizer is a single optional **`Locator? expect`**: *the popup is the new surface that is, or contains, an element matching `expect`*. That settles the open question.
-- **Why not presets:** the first version had a `PopupKind` enum (`Any`/`Menu`/`List`/`ToolTip`) with per-kind rules (an in-window control type, a required item type, "native allowed"). A review replaced it before anything depended on it, because those rules were just a fixed set of `expect` values, and the native path was a menu-only special case. "Menu" is no longer a concept detection knows about. `ContextMenu` is `expect: ControlType "MenuItem"` plus item helpers, and anything an app exposes through UIA (or `Win32Provider`) can be named directly (`ByAutomationId("CalendarView")`, `ByName("Rename")`, `ByControlType("DataItem")`).
-- **One pipeline, two steps, the same question in both:**
-  1. **In-window:** new, showing matches of `expect` inside the target's window (not on screen in the before-snapshot, then re-checked live). The popup is the match's **parent**, asked of the provider that found it through the new `IElementProvider.FindParentAsync`: a `MenuItem`'s menu, a `ListItem`'s list. This is a heuristic; an item nested under a group would make the group the popup.
-  2. **New top-level windows:** a window counts if UIA3 sees that it *is* (`MatchesItself`, on the handle's own `ControlType`/`Name`/`AutomationId`/`ClassName`) or *contains* an `expect` match. Failing UIA3, it counts if **`Win32Provider`** finds `expect` under it. That's how a UIA-invisible native `#32768` menu is reached: `Win32Provider` already returns its `HMENU` items for `ControlType "MenuItem"`. The native path is a provider fallback, not a menu special case.
-- **Parent lookup is a provider capability.** `IElementProvider` gained `FindParentAsync(ElementHandle element, AppSession session, CancellationToken ct = default)`, returning null at the top of the provider's tree or for another provider's handle, per the never-throw rule:
-  - `Uia3Provider` and `Uia2Provider`: the control-view parent;
-  - `Win32Provider`: the parent window via `GetAncestor(GA_PARENT)` (new `NativeMethods.GetParentWindow`), or, for a native menu item, its `#32768` popup.
-
-  It replaced a UIA3-only `TryGetParent` helper, so every piece of popup detection is now a general capability: a provider's scoped search, its parent lookup, `IsShowing`, window enumeration, the resolver's wait. The four hand-written test fake providers return null. `Providers/FindParentTests.cs` covers the null cases for all three providers and the native-item-to-popup case.
-
-  **Not yet exercised live:** the in-window step's use of the parent. Every popup in the test apps, including the WinForms `ContextMenuStrip` (which the earlier control-type-based version caught in-window), is now found by the window step, because its window also contains the `MenuItem`s. Task 2.9.7 needs a popup that lives entirely inside the app's window. If no real app needs the in-window step, it should be reconsidered.
-- **Without `expect`:**
-  - the in-window step looks for newly showing elements of a small built-in list of popup-shaped control types (`Menu`, `List`, `ToolTip`, `Window`), and the popup is the element itself;
-  - the window step takes the first new, showing window that isn't a `SysShadow` drop shadow.
-  - That built-in list is the only one left, and only as the default's guess.
-- **`PopupTrigger` replaced `ContextMenuTrigger`:** `RightClick`, `LeftClick`, `ShiftF10`, `Hover` (`HoverAction`) and `AltDown` (focus, then Alt+Down).
-- **`Popup` (`Core/Popup.cs`) is the public handle:**
-  - `FindAsync` (waits through the resolver), `FindAllAsync` (one pass) and `ClickAsync` (the retry loop formerly in `ContextMenu`), all searching only through the surface's own `Provider`;
-  - `IsOpenAsync`, `CloseAsync` (Escape, a no-op when already closed) and `WaitUntilClosedAsync`;
-  - a closed popup raises `StaleElementError` ("The {label} has closed; open it again from its target.");
-  - its internal `ReadAsync`/`WaitForAsync`/`ClickAsync(search, filter, reportAs)` are what `ContextMenu` reuses.
-- **`App.OpenPopupAsync(target, trigger = LeftClick, expect = null)`** and `OpenContextMenuAsync` (`expect: ContextMenu.Items`) share one private `OpenPopupCoreAsync`, labelled "popup" or "context menu" for errors and logs. No popup raises `ElementNotFoundError (tried: popup detection)`.
-- **Known limit:** a tooltip ignores Escape (it closes when the pointer leaves), so `CloseAsync` can't close one. The documented pattern is to hover elsewhere, then `WaitUntilClosedAsync`.
-- **Live** (WPF test app): a "⋯" button's menu opened by `LeftClick` with no `expect`, with `expect: ControlType "MenuItem"` and with `expect: Name "Bravo"`, each with find, click (delivered its command) and close. A label's tooltip opened by `Hover`, with `expect: ControlType "ToolTip"` and with no `expect`, each with its text read and a wait for it to close. The no-popup timeout reads `ElementNotFoundError (tried: popup detection)`. `Win32Provider` was confirmed to list the native menu's three items under a `#32768`, which is what the fallback asks. Detection itself still went through UIA3 there, since UIA3 can see that menu; the fallback route needs a menu UIA3 can't see, and none has been found yet.
-
-**Follow-up: `Popup` became a view of `App`.** A review found `Popup` growing into a second copy of `App`'s API (only finds and click were there, with no hover, type, scroll, waits or `Expect`). The difference is only where searches start, so a popup is now a view the same way a window view is:
-- **The root lives in the session, not the resolver.** `AppSession.WithRootElement(surface, label)` sets `RootElement`, and every provider searches from it (`Uia3Provider`/`Uia2Provider` through `TryGetRoot`, `Win32Provider` by handing it to its scoped search, which reads a `#32768`'s items). `RootWindowHandle` stays the app's window. A first version put an ambient `Scope` on `ElementResolver` instead; it was reverted because it brought back the runtime scoped/unscoped branch Task 2.1.7 had designed out, and left the resolver with search state.
-- **`Popup : App`.** It keeps only `IsOpenAsync`, `CloseAsync` and `WaitUntilClosedAsync`; everything else is inherited, including `Force`, which keeps the root because it reuses the session.
-- **A popup view searches through its root's provider alone**, so a `#32768` surface works even when `win32` isn't in the configured chain.
-- **"Has closed":** providers call `AppSession.ThrowIfRootClosed()` before searching from the root, raising the same `StaleElementError` as before. `WaitUntilGoneAsync` treats it as gone, and the stale-scope retry doesn't retry it.
-- **Inside a popup view:** raw input doesn't foreground the app's window (that would dismiss the popup); `CloseWindowAsync`, `MoveWindowAsync`, `ResizeWindowAsync` and `SetWindowStateAsync` throw, pointing at `CloseAsync`. A window view opened from a popup drops the popup root.
-- **Behaviour that follows from the root:** the closest-match hint, Spatial locators, snapshots and XPath/path locators all work from the popup's tree; a path's first segment must match the surface. Errors name the bare provider (`uia3`), not `uia3 context menu`; the label stays in the "has closed" message.
-- **Not yet exercised live:** the `Uia2Provider` and `Win32Provider` root paths (Notepad's menu covers `Uia3Provider`), raw-input menu navigation, and submenus opened from a popup.
-
-### Task 2.9.6: `ContextMenu` on `Popup`
-
-**What:** `ContextMenu` becomes a specialization of `Popup`: `expect: ControlType "MenuItem"`, `MenuItem` listing and naming, and the native `#32768` path through `Win32Provider`. Its public API is unchanged. Regression: the Notepad `ContextMenuDemoTests` sample plus the Stage 2.3 live checks (the native, WinForms and WPF test apps, and the native path driven directly). Task 2.3.4's integration tests come after this stage and target the final shape.
-
-**Done when:** the `ContextMenuDemoTests` sample and the Stage 2.3 live checks pass unchanged.
-
-As built:
-- **`ContextMenu` is now a thin wrapper over a `Popup`** opened with `expect: ContextMenu.Items` (`ControlType "MenuItem"`) and labelled "context menu":
-  - `GetItemsAsync` reads `MenuItem`s;
-  - `ClickItemAsync` clicks by exact name over the `MenuItem` list (not a `ByName` search, because a WPF `MenuItem`'s child `Text` has the same name and `Win32Provider`'s `Name` match is a substring);
-  - `CloseAsync` delegates.
-- **Public surface unchanged except the trigger:** `OpenContextMenuAsync` and `ClickContextMenuItemAsync` take `PopupTrigger` instead of `ContextMenuTrigger` (renamed, not yet shipped). Error messages keep `tried: uia3 context menu` / `win32 context menu`.
-- **Regression:** the native, WinForms and WPF test apps through the public API (list, missing item, click, close no-op, stale after close, shortcut), the native path driven directly through a `Win32Provider`-wrapped `#32768` inside a `Popup`, and the Notepad sample project (54/54, including `ContextMenuDemoTests`).
-
-**Follow-up: `ContextMenu` collapsed into `Popup`.** A later review removed the wrapper, following Playwright's model of one scoped-locator handle with no menu-specific type:
-- `ContextMenu` and `ContextMenuItem` are gone. `OpenContextMenuAsync` now returns the `Popup` itself: `OpenPopupAsync` with `expect: ControlType "MenuItem"`, a right-click by default, and the "context menu" label.
-- Listing items is `popup.FindAllAsync(Locator.ByControlType("MenuItem"))`, which returns full `ElementHandle`s (`Name`, `IsEnabled` and the rest) instead of snapshot records.
-- `ClickContextMenuItemAsync` keeps the exact-name match, now inline through `Popup`'s internal `ClickAsync(search, filter, reportAs)` (since Task 2.9.5's view follow-up, `App`'s private `ClickFirstWhereAsync`). A plain `popup.ClickAsync(Locator.ByName(...))` still has `Win32Provider`'s substring `Name` match on a native `#32768`.
-
-Stage 2.3's notes above predate this stage. Where they say `ContextMenuAction`/`ContextMenuTrigger`, read `PopupAction`/`PopupTrigger`; where they say `ContextMenu`, read `Popup`.
-
-### Task 2.9.7: More popup kinds
-
-**What:** Through the generic `Popup` handle, on the Task 2.3.4 test apps plus a `ComboBox` added to them:
-- a WinForms/WPF `ComboBox` dropdown (Alt+Down, and a click on the arrow): select an item and assert the combo's value;
-- a tooltip (hover): read its text, then wait for it to close;
-- a flyout from a "⋯" button (left-click): act on an element inside it.
-
-**Done when:** all three pass live.
-
-As built (`Integration/ContextMenu/PopupKindTests.cs`, on the out-of-repo test apps, which gained a fruit ComboBox and a label with a tooltip each, plus a WPF Filter button opening a flyout with a TextBox and an Apply button):
-- **ComboBox dropdowns,** by Alt+Down and by a click, on both apps, with `expect: ListItem`. Both apps write the selection to their status label, which is what the tests check: a WPF ComboBox exposes no value through UIA (no `ValuePattern`, empty Name). The WPF dropdown is its own `Popup` window, and a clicked item is selected. The WinForms dropdown is its `ComboLBox` list window, but **UIA Invoke on its items reports success and does nothing**. `ClickAction` prefers Invoke, so the click is a silent no-op. Decided: no engine change; the test picks the item with the keyboard (first letter, then Enter), and `WINDOWS_TESTING.md` documents it.
-- **Tooltips,** by hover, on both apps, with and without `expect: ToolTip`: the text is read from the popup's snapshot, then the pointer moves to the status label and `WaitUntilClosedAsync` sees it close.
-- **The flyout** (WPF `Popup`, `expect: Name "Apply"`): text typed into its TextBox and a click on Apply reach the app, and the flyout closes.
-- **Engine fix: detection now tries new windows first, and the in-window step rejects a surface that is the target or one of its ancestors.** The in-window step was wrong both times it fired live. The WPF ComboBox's items are nested in UIA under the ComboBox, so the "popup" was the ComboBox itself, which never closes. The WinForms tooltip is nested under the app window, so the "popup" was the whole main window. Running the window step first wasn't enough on its own: on a WPF ComboBox's first opening, its items appear in UIA before its window shows, so the in-window step still won that race. A popup never contains what opened it, so a parent that is the target or its ancestor now means "not a popup surface; keep polling". The walk compares Ids through the target's provider, so it only rejects when the target came from UIA3, like the candidates.
-- **The in-window step is still not exercised live:** every popup in the test apps, Notepad and Calculator has its own window. The step stays, as the fallback for a popup with no window of its own (decided over removing it).
-
-### Task 2.9.8: Window views live, plus samples
-
-**What:** Integration tests:
-- Notepad's Save As (or the dialog Task 2.9.4 settles on), driven through a window view;
-- an element held from that dialog, clicked from the main `App` (Task 2.9.3);
-- disposing a view leaves Notepad running (Task 2.9.1);
-- a secondary window on a test app.
-
-Plus `samples/ConsumerNotepadTests` demos for a window view and a popup, alongside the existing `ContextMenuDemoTests`.
-
-**Done when:** all pass; Stage 2.9 complete.
-
-As built:
-- **`Integration/Notepad/WindowViewIntegrationTests.cs`**, on the Open dialog (Task 2.9.4's choice over Save As):
-  - a view rooted at the dialog: its snapshot root is the `#32770`, Notepad's Document is out of its reach, typing into the file-name box round-trips, and Escape through the view closes the dialog;
-  - a Cancel button found through the view and clicked with the static `ClickAction.ExecuteAsync` closes the dialog, and the main `App` carries on;
-  - disposing a view leaves Notepad running and the main `App` working.
-- **`Integration/ContextMenu/SecondaryWindowViewTests.cs`:** the test app's secondary window, picked out by `RequireNewWindow` (both titles contain "MenuHost"). The view can't see the main window's controls, and a context menu opened through it delivers its command.
-- **Samples:** `WindowViewDemoTests` (the Open dialog through a view, and `await using` a view leaving Notepad running) and `PopupDemoTests` (Notepad's File menu through `OpenPopupAsync`), both listed in the sample README with `ContextMenuDemoTests`.
-- **A latent sample bug fixed:** `WindowCloseDemoTests` closes "its own" Notepad, but Notepad is single-instance, so that closed the window the shared `NotepadFixture` drives. It had only ever run last. `WindowViewDemoTests` sorts after it and failed with `WindowActivationError`. It now has its own non-parallel collection, which xunit never runs alongside the shared one.
-- **Engine: a "stable" check before synthesized pointer input.** The WPF ComboBox test was occasionally flaky in full-suite runs: on a dropdown's first opening, its items slide about 25px into place over about 50ms, and a click in that window missed the item and closed the dropdown without selecting. As in Playwright, `ElementInputHelpers.GetCenter` (behind every synthesized click, hover, double-click, drag start and scroll) now reads the element's bounds twice, one frame (16ms) apart, and throws `ElementNotInteractableError` ("still moving") if they differ. The resolver's actionability wait retries that like any other not-interactable failure; `app.Force` skips it. Native-pattern clicks don't go through `GetCenter`, so they don't pay for it. `IsUnobscuredAsync` reports a still-moving element as not unobscured.
-- **Verified:** the full engine integration suite (146/146), the Notepad sample (58/58) and the VS Code sample (4/4) after the stable check, and the popup tests three runs in a row.
-
-**Follow-up: wider popup coverage.** Added after Stage 2.9 to close the gaps a coverage review listed:
-- **Test apps:** a WinForms message box, driven through a window view (`TestAppWindowViewTests`, alongside the secondary window). Submenus in both apps, each opened as a popup from inside the menu popup: the WPF one by a click, the native one by a hover, since UIA Invoke on a native submenu parent reports success without opening anything (the same silent no-op as the WinForms combo's items).
-- **WinUI3, beyond menus:**
-  - Notepad's Settings tooltip;
-  - Calculator's unit ComboBox dropdown (a `Xaml_WindowedPopupClass` window) and its date picker's calendar flyout. Calculator relaunches in its last mode, so those tests switch back to Standard, and they wait for the navigation pane to close before clicking, since it takes clicks while sliding shut;
-  - Paint's Rotate dropdown, and its "Resize and skew" dialog: an in-window XAML dialog with no window of its own, **the first live exercise of the in-window detection step**.
-- **Electron (VS Code sample, `PopupDemoTests`):** the editor context menu, the title-bar File menu, the command center's quick pick and an activity-bar hover. All are drawn inside VS Code's window, so all are found through the in-window step.
-- **Engine fixes:**
-  - **`IsInVisibleWindow` checks the top-level window.** WinUI3 hosts content under a zero-size `InputSiteWindowClass` child that is never visible, so every element of Paint's dialog read as hidden and the in-window step never saw it. The check exists for a hidden WinForms `ContextMenuStrip` dropdown, which is itself a top-level window, so checking the top-level window keeps that case.
-  - **The in-window step takes a popup-shaped match as the popup itself.** With `expect: ToolTip`, a VS Code hover's parent was a workbench container that also holds the hovered button, so the 2.9.7 ancestor check rejected it. A match of one of the popup-shaped control types (`Menu`, `List`, `ToolTip`, `Window`) is now the popup, as a window that matches `expect` itself is in the window step; anything else still steps up to its parent.
-- **Findings, documented in `WINDOWS_TESTING.md` rather than fixed:**
-  - **VS Code's title-bar menus misreport their items.** Chromium reports every item after the first as `IsOffscreen=true` while they're on screen. That was checked with raw UIA reads at +0s, +1s and +3s, and after hovering and arrowing through the menu. The editor context menu and the quick pick report correctly. Decided: the tests go through `Force`, and a submenu from those menus is a known limit, since detection skips offscreen candidates.
-  - **VS Code drops a click sent in a menu's first moments,** about one run in three, via UIA Invoke or a real mouse click alike. Nothing in UI Automation (focus included) changes when it starts accepting clicks, so the sample waits 300ms before clicking inside a fresh menu.
-  - **Paint's "Edit colors" dialog reports an endless list.** It first looked like a Paint freeze, but a step-by-step UIA walk found the cause: its "Custom colors" grid reports hundreds of thousands of "Empty" items (over 308,000 in 150s, without reaching the end), each answered instantly. Any search that must get past the grid times out with `0x80131505` and keeps Paint busy serving it, including a `FindAsync` for Cancel (after the grid in tree order) and popup detection's whole-window searches. A search that stops before the grid is instant, which is why it can't be reproduced by hand. Earlier runs that seemed to separate opening by Invoke from opening by mouse were an artifact: the mouse clicks had missed the button, so the dialog never opened. The engine part is only that a detection pass doesn't check the deadline between its UIA calls, which is why `OpenPopupAsync` took 176s to give up there. `PaintEditColorsDemoTests` (Notepad sample, in its own collection, launching its own Paint) opens the dialog, checks it through the color spectrum (before the grid) and closes it with Escape: 3 of 3 runs, about 1s each.
-- **Still flaky:** the VS Code quick-pick test, about one run in five. When it fails, the click on "Open Quick Access" is dropped; it's the first action in a freshly prepared VS Code. The Calculator unit-combo test failed once in a full-suite run and never in isolation.
+**Done when:** every `AppExpect` assertion passes against a live Notepad and fails with `ExpectFailedError` on a wrong expectation. **Phase 2 complete.** The daemon's `PatternEndpoints`/`ClipboardEndpoints` (daemon-spec.md Task 3.2.6) and the SDKs' `ComboBox`/`DataGrid` controls (sdks-spec.md Task 3.3.4/3.4.4) can now delegate to real `App` methods instead of reaching around the engine.
 
 ---
 
@@ -1518,11 +1528,11 @@ Mirrors roadmap-spec.md's per-phase checklist; see there for the authoritative, 
 - [x] Task 2.1.9 — scoped find disambiguates identically-matched elements, and virtualized-list find locates unrealized items
 - [x] Task 2.2.6 — `Expect()` and `WaitForAsync` share a wait-condition vocabulary
 - [ ] Task 2.3.4 — native context menu fallback works when UIA can't see the popup
+- [ ] Task 2.3.12 — window views drive a dialog without a separate `App`, and popups of several kinds open, act and close through one `Popup` handle (runs before Task 2.3.4)
 - [x] Task 2.4.2 — resource watch returns a plausible sample series against a live app
 - [ ] Task 2.5.2 — a suggested locator resolves back to the same live element
-- [ ] Task 2.6.2 — visual regression assertion fails on a drifted baseline
-- [ ] Task 2.7.2–2.7.3 — DPI and Windows 10/11 compat confirmed
-- [ ] Task 2.7.4 — all three example projects build and run
+- [x] Task 2.6.2 — visual regression assertion fails on a drifted baseline
+- [x] Task 2.7.1 — a failed find under the debug-screenshot flag leaves an annotated PNG in `%TEMP%`
 - [ ] Task 2.8.6 — toggle/select/grid/clipboard all verified against a live app
 - [ ] Task 2.8.8 — a slider/progress bar's value round-trips through `RangeValueAction`
-- [ ] Task 2.9.8 — window views drive a dialog without a separate `App`, and popups of several kinds open, act and close through one `Popup` handle (runs before Task 2.3.4)
+- [ ] Task 2.8.10 — `Expect(app)` window-level assertions (title, state, bounds, process, dialogs, visual stability, resources) verified against a live app

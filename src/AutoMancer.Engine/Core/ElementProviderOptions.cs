@@ -11,6 +11,9 @@ public sealed class ElementProviderOptions
     // Mirrors AppOptions.ReresolveOnStale for the resolver's own Locator-scope paths: true re-resolves a scope that goes stale mid-call, false lets StaleElementError propagate.
     public bool ReresolveOnStale { get; init; } = true;
 
+    // Mirrors AppOptions.AnnotateFailureScreenshots: true saves a window screenshot with a red overlay to %TEMP% when ElementNotFoundError is thrown from a provider-chain find.
+    public bool AnnotateFailureScreenshots { get; init; } = false;
+
     // Preconfigured defaults suitable for most automation scenarios.
     public static ElementProviderOptions Default { get; } = new();
 }

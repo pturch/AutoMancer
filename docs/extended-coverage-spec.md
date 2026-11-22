@@ -55,11 +55,6 @@ src/AutoMancer.Engine/
 src/AutoMancer.Testing/
 
 
-examples/
-├── notepad/
-├── winforms-calculator/
-└── xunit-test-adapter/
-
 tests/AutoMancer.Engine.Tests/
 ├── Core/SpatialMatcherTests.cs, WaitConditionsTests.cs, ScopedFindTests.cs, FindByScrollingTests.cs, ...
 ├── Actions/ClipboardActionTests.cs, ToggleActionTests.cs, RangeValueActionTests.cs, ...
@@ -739,7 +734,7 @@ dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
 
 ### Task 2.3.4: Integration test for context menu fallback
 
-**What (original plan):** Verifies the UIA path is tried first and the native fallback only engages when UIA finds nothing, against an app with a legacy/native context menu (a plain Win32 app without a UIA-exposed menu is the target — Notepad's WinUI3 menus are UIA-visible, so this needs a different test app, e.g. one of the Stage 2.7 example apps or a minimal native test harness).
+**What (original plan):** Verifies the UIA path is tried first and the native fallback only engages when UIA finds nothing, against an app with a legacy/native context menu (a plain Win32 app without a UIA-exposed menu is the target — Notepad's WinUI3 menus are UIA-visible, so this needs a different test app, e.g. a minimal native test harness).
 
 **Revised plan (proposed after 2.3.1–2.3.3; for review before starting).** Coverage is meant to be as wide as possible: every menu kind seen during 2.3.1–2.3.3, every trigger, both paths and every error case. Two findings change the original plan:
 - **No app was found whose `#32768` menu UIA3 can't see.** Detection now always goes through UIA3 first, so a provider chain can't force the native path either. The native path is therefore tested by building a native-path `ContextMenu` directly around a real `#32768` popup, through its internal constructor. That tests the native machinery fully. It can't test the "UIA3 found nothing, so fall back" decision end-to-end, because nothing triggers it.
@@ -1181,76 +1176,50 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "VisualRegressionTests"
 
 ---
 
-## Stage 2.7 — Engine Hardening and Examples
+## Stage 2.7 — Engine Hardening
 
 ### Task 2.7.1: Annotated error screenshots
 
 **What:** On `ElementNotFoundError`, capture a screenshot and draw a red overlay around the search area / closest-match bounding rect via GDI+, save to `%TEMP%`. A new `AppOptions`/`ElementProviderOptions` flag (off by default) turns this on. The engine sibling of Stage 1.9's on-failure diagnostics, for direct `App` consumers rather than `Expect()` — same idea (annotate and save on failure), different trigger point (thrown exception vs. `Expect()`'s own retry loop).
 
-**Creates:**
-- `src/AutoMancer.Engine/Core/ElementProviderOptions.cs` — add `AnnotateFailureScreenshots` bool, default `false`
-- `src/AutoMancer.Engine/Core/ElementResolver.cs` — on throwing `ElementNotFoundError` with the flag set, capture + annotate + save, folding the path into the exception (mirroring `ExpectFailedError`'s existing screenshot-path-in-message convention)
+**What the box surrounds.** The closest match's rect when `ClosestMatchFinder` found one; otherwise (no match, or its rect is empty or off the window) a border around the whole captured window, standing in for the search area. A scoped find does not highlight its scope. Only finds through the provider chain annotate — the spatial path and the lookups outside the chain (popups, window views) throw their own `ElementNotFoundError`s with no screenshot.
 
-- [ ] **Implement and build**
+**Creates:**
+- `src/AutoMancer.Engine/AppOptions.cs` and `Core/ElementProviderOptions.cs` — `AnnotateFailureScreenshots` bool, default `false`; `App` copies the first into the second when it builds its resolver, so a daemon pass-through (batch 3.6.1) only sets the `AppOptions` flag
+- `src/AutoMancer.Engine/Actions/ScreenshotAction.cs` — internal `CaptureAnnotatedAsync(windowHandle, highlight)`: captures the window and draws a 3px red GDI+ rectangle (`System.Drawing`, which `UseWPF` already brings in)
+- `src/AutoMancer.Engine/Diagnostics/ClosestMatchFinder.cs` — `ClosestMatch` gains an optional `BoundingRect`, taken from the matched snapshot
+- `src/AutoMancer.Engine/Errors/ElementNotFoundError.cs` — `ScreenshotPath` property; the path is appended to the message as `(screenshot: <path>)`, mirroring `ExpectFailedError`'s screenshot-path-in-message convention
+- `src/AutoMancer.Engine/Core/ElementResolver.cs` — before throwing `ElementNotFoundError` from the provider-chain poll with the flag set, saves `automancer-notfound-<timestamp>.png` to `%TEMP%`; a capture or save failure is logged as a warning and the error still throws, without a path
+- `tests/AutoMancer.Engine.Tests/Errors/ElementNotFoundErrorTests.cs` and `Diagnostics/ClosestMatchFinderTests.cs` — the message clause and the carried rect
+- `tests/AutoMancer.Engine.Tests/Integration/Notepad/AnnotatedFailureScreenshotIntegrationTests.cs` — a failed find leaves a real PNG, with the flag off it leaves none, and a near-miss name puts red pixels on the closest match's edge and not at its center
+
+- [x] **Write tests, implement, run**
 
 ```bash
-dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
+dotnet test tests/AutoMancer.Engine.Tests/ --filter "AnnotatedFailureScreenshot|ElementNotFoundErrorTests|ClosestMatchFinderTests"
 ```
 
-**Done when:** A failed find under the debug flag leaves an annotated PNG in `%TEMP%`.
+**Done when:** A failed find under the debug flag leaves an annotated PNG in `%TEMP%`. Met: verified live against Notepad.
 
 ---
 
-### Task 2.7.2: DPI compat matrix
+### Task 2.7.2: DPI compat matrix — dropped
 
-**What:** Runs the Notepad integration test suite at 100%, 125%, and 150% DPI, asserting identical logical coordinates across all three. This is a test-execution exercise, not new production code — it validates `DpiHelper`'s conversion logic (already present in Phase 1, unwired into the hot path per its own design note) actually holds across the three most common Windows scaling factors.
-
-**Creates:**
-- Nothing new in `src/` — this task is a verification pass. If it finds a genuine DPI-dependent coordinate bug, fix it in the offending action/provider and note the fix here.
-
-- [ ] **Run the suite at each DPI setting** (Windows Settings → Display → Scale, or `SystemParametersInfo`/registry-driven automation if scripting this)
-
-```bash
-dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration"
-```
-
-**Done when:** The Notepad integration suite passes at 100%, 125%, and 150% DPI with identical logical coordinates.
+**Dropped.** The original plan ran the Notepad integration suite at 100%, 125% and 150% and asserted identical logical coordinates. The engine's one load-bearing DPI piece is `DpiAwareness` (per-monitor v2, so UIA rects and `SendInput` use physical pixels), which every live test already exercises. `DpiHelper`'s logical coordinates have no consumer — no action, locator or SDK surface calls it outside its own unit tests — so a matrix would validate code nothing uses. `DpiHelper` stays, tested by `DpiHelperTests`. The task number is kept so references to 2.7.3 and 2.7.4 stay stable.
 
 ---
 
-### Task 2.7.3: Windows 10/11 compat
+### Task 2.7.3: Windows 10/11 compat — dropped
 
-**What:** Runs the full `AutoMancer.Engine.Tests` integration suite on both Windows 10 and Windows 11; fixes any behavioral differences found (most likely candidates: WinUI3 Notepad's tree shape, which already has version-drift caveats noted in the Phase 1 test suite, and any Win32-provider fallback timing).
-
-**Creates:**
-- Nothing new in `src/` unless a genuine OS-version bug is found — same shape as Task 2.7.2.
-
-- [ ] **Run the full integration suite on both OS versions**
-
-```bash
-dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration"
-```
-
-**Done when:** The full `AutoMancer.Engine.Tests` integration suite passes on both Windows 10 and 11.
+**Dropped.** The plan was to run the full integration suite on both Windows 10 and 11 and fix any differences. It produces no code unless it finds a bug, and it needs a Windows 10 machine the project doesn't have. The suite passes on Windows 11 (173 of 173 at the close of this stage); **Windows 10 is unverified**, and the README's "Windows 10/11" prerequisite is stated, not tested. The number is kept so references stay stable.
 
 ---
 
-### Task 2.7.4: Example projects
+### Task 2.7.4: Example projects — dropped
 
-**What:** Three runnable example projects demonstrating the engine's public surface for new C# consumers — `examples/notepad/` (the README's Calculator-style walkthrough, expanded), `examples/winforms-calculator/` (a classic Win32/WinForms app, exercising the UIA2 fallback path), `examples/xunit-test-adapter/` (a minimal `AutoMancer.Testing.XUnit` walkthrough, complementing `samples/ConsumerNotepadTests`).
+**Dropped.** The plan was three example projects: a console Notepad walkthrough, a WinForms calculator for the UIA2 fallback, and a minimal xunit walkthrough. `samples/ConsumerNotepadTests` and `samples/ConsumerVsCodeTests` already cover the Notepad and xunit ground, so the examples would repeat them. The WinForms app would have been a new app built only to be an example; native-menu fallback coverage lives in the engine's own test apps. The number is kept so references stay stable.
 
-**Creates:**
-- `examples/notepad/`, `examples/winforms-calculator/`, `examples/xunit-test-adapter/` — each a minimal runnable console or test project with its own short README
-
-- [ ] **Build and run each example**
-
-```bash
-dotnet build examples/notepad/
-dotnet build examples/winforms-calculator/
-dotnet build examples/xunit-test-adapter/
-```
-
-**Done when:** All three example projects build and run. Stage 2.7 complete — DPI/OS compat confidence, annotated failure diagnostics, and working examples. This stage is entirely engine-side; exposing the debug-screenshot flag over HTTP is Phase 3's job (daemon-spec.md Task 3.2.5/`automancer:debugScreenshots`).
+**Stage 2.7 complete** — annotated failure diagnostics (Task 2.7.1) are the stage's one deliverable; 2.7.2 to 2.7.4 were dropped. This stage is entirely engine-side; exposing the debug-screenshot flag over HTTP is Phase 3's job (daemon-spec.md Task 3.2.5/`automancer:debugScreenshots`).
 
 ---
 
@@ -1363,7 +1332,7 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "GridActionTests"
 **What:** Unit tests for each action's no-op/unsupported-pattern path (mirroring `ScrollActionTests`/`SetFocusActionTests` — largely already covered per-task in Tasks 34–37, this task is the integration-level closeout). Integration tests: toggle a checkbox, select/multi-select a list, read a `ListView`/`DataGrid`-style control's row and column counts and fetch a specific cell, clipboard round-trip.
 
 **Creates:**
-- `tests/AutoMancer.Engine.Tests/Integration/ExtendedPatternIntegrationTests.cs` — toggle, select/multi-select, grid row/column/cell, clipboard round-trip, all against a live test app with the relevant controls (a `ListView` and a checkbox are enough for most of this; `DataGrid`-pattern coverage may need a WinForms/WPF example app if Notepad has nothing suitable — Task 2.7.4's `examples/winforms-calculator/` or a dedicated fixture app can double as the test target)
+- `tests/AutoMancer.Engine.Tests/Integration/ExtendedPatternIntegrationTests.cs` — toggle, select/multi-select, grid row/column/cell, clipboard round-trip, all against a live test app with the relevant controls (a `ListView` and a checkbox are enough for most of this; `DataGrid`-pattern coverage may need a WinForms/WPF example app if Notepad has nothing suitable — a dedicated fixture app can be the test target)
 
 - [ ] **Run integration tests**
 
@@ -1563,8 +1532,7 @@ Mirrors roadmap-spec.md's per-phase checklist; see there for the authoritative, 
 - [x] Task 2.4.2 — resource watch returns a plausible sample series against a live app
 - [ ] Task 2.5.2 — a suggested locator resolves back to the same live element
 - [x] Task 2.6.2 — visual regression assertion fails on a drifted baseline
-- [ ] Task 2.7.2–2.7.3 — DPI and Windows 10/11 compat confirmed
-- [ ] Task 2.7.4 — all three example projects build and run
+- [x] Task 2.7.1 — a failed find under the debug-screenshot flag leaves an annotated PNG in `%TEMP%`
 - [ ] Task 2.8.6 — toggle/select/grid/clipboard all verified against a live app
 - [ ] Task 2.8.8 — a slider/progress bar's value round-trips through `RangeValueAction`
 - [ ] Task 2.8.10 — `Expect(app)` window-level assertions (title, state, bounds, process, dialogs, visual stability, resources) verified against a live app

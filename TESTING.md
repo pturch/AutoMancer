@@ -99,6 +99,8 @@ internal static class TestSetup
 
 It's a process-wide switch, not a per-class setting, so setting it once covers every test class. Screenshots land in the configured directory, `%TEMP%` by default.
 
+That switch covers `Expect` assertions. A find that fails through `App` directly (`FindAsync`, or an action that locates its element) throws `ElementNotFoundError` instead, and has its own switch: `AppOptions.AnnotateFailureScreenshots`. When it's on, the error saves a screenshot of the window to `%TEMP%` with a red box around the closest match (or around the whole window when nothing is close), and its message and `ScreenshotPath` carry the file's path. See `FailureShapeDemoTests` in [`samples/ConsumerNotepadTests`](samples/ConsumerNotepadTests).
+
 ## Checking from the command line
 
 AutoMancer can work without C# through the command line interface:

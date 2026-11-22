@@ -1,5 +1,7 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
+using AutoMancer.Engine;
 using AutoMancer.Engine.Core;
+using AutoMancer.Engine.Errors;
 using AutoMancer.Testing;
 using AutoMancer.Testing.XUnit;
 
@@ -40,6 +42,20 @@ public sealed class FailureShapeDemoTests(NotepadFixture fixture) : AutoMancerTe
         Assert.Contains("this text will never appear", ex.Message);
         Assert.Contains("elapsed", ex.Message);
         Assert.Contains("Screenshot:", ex.Message);
+    }
+
+    // A failed find through App itself, not Expect: with AppOptions.AnnotateFailureScreenshots on, ElementNotFoundError carries a "Did you mean?" hint and the path of a window screenshot with a red box on the closest match.
+    [Fact]
+    public async Task AppFind_NearMissName_ThrowsWithHintAndAnnotatedScreenshot()
+    {
+        var app = App.WithOptions(new AppOptions { ImplicitWaitMs = 500, AnnotateFailureScreenshots = true });
+
+        var ex = await Assert.ThrowsAsync<ElementNotFoundError>(() => app.FindAsync(Locator.ByName("Fle")));
+
+        Assert.Contains("Did you mean \"File\"", ex.Message);
+        Assert.Contains("screenshot:", ex.Message);
+        Assert.True(File.Exists(ex.ScreenshotPath), $"expected an annotated screenshot at {ex.ScreenshotPath}");
+        File.Delete(ex.ScreenshotPath!);
     }
 
     // LocatorExpect timeout where the element is never found at all — the thrown message says so explicitly rather than describing a mismatched value.

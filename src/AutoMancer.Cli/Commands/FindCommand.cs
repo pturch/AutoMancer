@@ -15,14 +15,14 @@ internal static class FindCommand
 
         var command = new Command("find", "Find the first element matching a locator and print its properties.");
         locatorOpts.AddTo(command);
-        command.SetHandler(ctx => CliSession.RunAsync(ctx, async (pid, ct) =>
+        command.SetAction((pr, token) => CliSession.RunAsync(pr, token, async (pid, ct) =>
         {
             // Step 1: read the locator options and parse them before touching the app.
-            var by         = ctx.ParseResult.GetValueForOption(locatorOpts.By)!;
-            var value      = ctx.ParseResult.GetValueForOption(locatorOpts.Value)!;
-            var scopeBy    = ctx.ParseResult.GetValueForOption(locatorOpts.Scope.By);
-            var scopeValue = ctx.ParseResult.GetValueForOption(locatorOpts.Scope.Value);
-            var target     = locatorOpts.Parse(ctx.ParseResult)!;
+            var by         = pr.GetValue(locatorOpts.By)!;
+            var value      = pr.GetValue(locatorOpts.Value)!;
+            var scopeBy    = pr.GetValue(locatorOpts.Scope.By);
+            var scopeValue = pr.GetValue(locatorOpts.Scope.Value);
+            var target     = locatorOpts.Parse(pr)!;
 
             // Step 2: attach and find the first matching element, inside the scope when one was given.
             await using var app = await CliSession.AttachAsync(pid, ct);

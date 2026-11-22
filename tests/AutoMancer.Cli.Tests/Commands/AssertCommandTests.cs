@@ -178,7 +178,7 @@ public sealed class AssertCommandTests
             new("clickable", true, false, false, "enabled=True visible=True unobscured=False"),
         };
         var command = new Command("probe");
-        command.SetHandler(ctx => CliSession.RunAsync(ctx, _ => throw new AssertionFailedException(checks)));
+        command.SetAction((pr, token) => CliSession.RunAsync(pr, token, _ => throw new AssertionFailedException(checks)));
 
         var (stdout, _, exitCode) = await CliTestHelper.RunAsync(command, "--json");
 

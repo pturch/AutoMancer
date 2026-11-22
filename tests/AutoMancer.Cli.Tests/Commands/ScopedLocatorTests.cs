@@ -80,7 +80,7 @@ public sealed class ScopedLocatorTests
         var command = new Command("probe");
         opts.AddTo(command);
 
-        var parsed = command.Parse("--by", "id", "--value", "OK", "--within-by", "name", "--within-value", "Settings");
+        var parsed = command.Parse(["--by", "id", "--value", "OK", "--within-by", "name", "--within-value", "Settings"]);
         var scoped = opts.Parse(parsed)!;
 
         Assert.Equal(LocatorStrategy.AutomationId, scoped.Target.Strategy);
@@ -100,8 +100,8 @@ public sealed class ScopedLocatorTests
         var optionalCommand = new Command("probe2");
         optional.AddTo(optionalCommand);
 
-        var scoped = required.Parse(requiredCommand.Parse("--by", "name", "--value", "x"))!;
-        var none = optional.Parse(optionalCommand.Parse());
+        var scoped = required.Parse(requiredCommand.Parse(["--by", "name", "--value", "x"]))!;
+        var none = optional.Parse(optionalCommand.Parse([]));
 
         Assert.Null(scoped.Scope);
         Assert.Null(none);
@@ -142,8 +142,8 @@ public sealed class ScopedLocatorTests
         var command = new Command("probe");
         opts.AddTo(command);
 
-        var unscoped = opts.Parse(command.Parse("--by", by, "--value", "x"))!;
-        var xpathScope = opts.Parse(command.Parse("--by", "name", "--value", "x", "--within-by", by, "--within-value", "y"))!;
+        var unscoped = opts.Parse(command.Parse(["--by", by, "--value", "x"]))!;
+        var xpathScope = opts.Parse(command.Parse(["--by", "name", "--value", "x", "--within-by", by, "--within-value", "y"]))!;
 
         Assert.Null(unscoped.Scope);
         Assert.NotNull(xpathScope.Scope);

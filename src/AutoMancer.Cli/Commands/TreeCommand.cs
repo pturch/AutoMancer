@@ -11,22 +11,22 @@ internal static class TreeCommand
     // Builds the 'tree' sub-command with its argument and handler.
     internal static Command Build()
     {
-        var depthOpt   = new Option<int?>("--depth", "Show at most this many levels below each root (0 = roots only); applied after --interactive-only.");
-        var interactiveOpt = new Option<bool>("--interactive-only", "Keep only controls a user can act on (buttons, edits, list items, ...); their children move up to the nearest kept ancestor.");
+        var depthOpt   = new Option<int?>("--depth") { Description = "Show at most this many levels below each root (0 = roots only); applied after --interactive-only." };
+        var interactiveOpt = new Option<bool>("--interactive-only") { Description = "Keep only controls a user can act on (buttons, edits, list items, ...); their children move up to the nearest kept ancestor." };
         var scopeOpts  = new ScopeOptions();
 
         var command = new Command("tree", "Snapshot the element tree and print it.");
-        command.AddOption(depthOpt);
-        command.AddOption(interactiveOpt);
+        command.Add(depthOpt);
+        command.Add(interactiveOpt);
         scopeOpts.AddTo(command);
-        command.SetHandler(ctx => CliSession.RunAsync(ctx, async (pid, ct) =>
+        command.SetAction((pr, token) => CliSession.RunAsync(pr, token, async (pid, ct) =>
         {
             // Step 1: read and validate the filter options before touching the app.
-            var depth       = ctx.ParseResult.GetValueForOption(depthOpt);
-            var interactive = ctx.ParseResult.GetValueForOption(interactiveOpt);
+            var depth       = pr.GetValue(depthOpt);
+            var interactive = pr.GetValue(interactiveOpt);
             if (depth < 0)
                 throw new ArgumentException("--depth must be 0 or greater.");
-            var scope = scopeOpts.Parse(ctx.ParseResult);
+            var scope = scopeOpts.Parse(pr);
 
             // Step 2: attach and take the full snapshot; every filter below only trims this result.
             await using var app = await CliSession.AttachAsync(pid, ct);

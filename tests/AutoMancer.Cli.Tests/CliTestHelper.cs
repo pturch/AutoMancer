@@ -18,7 +18,7 @@ internal static class CliTestHelper
         Console.SetError(stderr);
         try
         {
-            var exitCode = await CliSession.BuildParser(CliApp.BuildRoot()).InvokeAsync(args);
+            var exitCode = await CliSession.InvokeAsync(CliApp.BuildRoot(), args);
             return (stdout.ToString(), stderr.ToString(), exitCode);
         }
         finally
@@ -49,11 +49,11 @@ internal static class CliTestHelper
         try
         {
             var root = new RootCommand();
-            root.AddGlobalOption(CliSession.JsonOption);
-            root.AddGlobalOption(CliSession.PidOption);
-            root.AddGlobalOption(CliSession.VerboseOption);
-            root.AddCommand(command);
-            var exitCode = await CliSession.BuildParser(root).InvokeAsync([command.Name, .. args]);
+            root.Add(CliSession.JsonOption);
+            root.Add(CliSession.PidOption);
+            root.Add(CliSession.VerboseOption);
+            root.Add(command);
+            var exitCode = await CliSession.InvokeAsync(root, [command.Name, .. args]);
             return (stdout.ToString(), stderr.ToString(), exitCode);
         }
         finally

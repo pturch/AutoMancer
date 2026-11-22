@@ -89,7 +89,7 @@ public sealed class CliAppTests
     [Theory]
     [InlineData("configure", "--implicit-wait", "abc", "a whole number")]
     [InlineData("assert", "--tolerance", "abc", "a number")]
-    [InlineData("configure", "--reresolve-on-stale", "maybe", "true or false")]
+    [InlineData("configure", "--reresolve-on-stale", "maybe", "--reresolve-on-stale")]
     public async Task ParseError_UsesPlainTypeNames(string command, string option, string value, string expected)
     {
         var (_, stderr, _) = await CliTestHelper.RunAppAsync(command, option, value);

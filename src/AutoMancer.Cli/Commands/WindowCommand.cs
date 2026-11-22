@@ -12,24 +12,24 @@ internal static class WindowCommand
     // Builds the 'window' sub-command: at most one action, and with none it just reports the window.
     internal static Command Build()
     {
-        var moveOpt   = new Option<string?>("--move", "Move the window's top-left corner to x,y in screen pixels (negative values are fine, like --move -1200,40).") { ArgumentHelpName = "x,y" };
-        var resizeOpt = new Option<string?>("--resize", "Resize the window to width,height in pixels.") { ArgumentHelpName = "w,h" };
-        var stateOpt  = new Option<string?>("--state", "Set the window state: normal, max, or min.") { ArgumentHelpName = "normal|max|min" };
-        var closeOpt  = new Option<bool>("--close", "Close the window (like clicking its X). If the app then exits, it stops being the current target.");
-        var killOpt   = new Option<bool>("--kill", "Terminate the app's process immediately and wait for it to exit. It stops being the current target.");
+        var moveOpt   = new Option<string?>("--move") { Description = "Move the window's top-left corner to x,y in screen pixels (negative values are fine, like --move -1200,40).", HelpName = "x,y" };
+        var resizeOpt = new Option<string?>("--resize") { Description = "Resize the window to width,height in pixels.", HelpName = "w,h" };
+        var stateOpt  = new Option<string?>("--state") { Description = "Set the window state: normal, max, or min.", HelpName = "normal|max|min" };
+        var closeOpt  = new Option<bool>("--close") { Description = "Close the window (like clicking its X). If the app then exits, it stops being the current target." };
+        var killOpt   = new Option<bool>("--kill") { Description = "Terminate the app's process immediately and wait for it to exit. It stops being the current target." };
 
         var command = new Command("window", "Show the window's position and size, or move, resize, minimize/maximize, close, or kill it (one action per call).");
         foreach (var o in new Option[] { moveOpt, resizeOpt, stateOpt, closeOpt, killOpt })
-            command.AddOption(o);
-        command.SetHandler(ctx => CliSession.RunAsync(ctx, async (pid, ct) =>
+            command.Add(o);
+        command.SetAction((pr, token) => CliSession.RunAsync(pr, token, async (pid, ct) =>
         {
             // Step 1: read and validate the options before touching the app; at most one action is allowed.
-            var r      = ctx.ParseResult;
-            var move   = r.GetValueForOption(moveOpt);
-            var resize = r.GetValueForOption(resizeOpt);
-            var state  = r.GetValueForOption(stateOpt);
-            var close  = r.GetValueForOption(closeOpt);
-            var kill   = r.GetValueForOption(killOpt);
+            var r      = pr;
+            var move   = r.GetValue(moveOpt);
+            var resize = r.GetValue(resizeOpt);
+            var state  = r.GetValue(stateOpt);
+            var close  = r.GetValue(closeOpt);
+            var kill   = r.GetValue(killOpt);
             if (new[] { move is not null, resize is not null, state is not null, close, kill }.Count(x => x) > 1)
                 throw new ArgumentException("Use one of --move, --resize, --state, --close, or --kill per call.");
             var movePoint = move is null ? default : ParsePair(move, "--move", allowNegative: true);

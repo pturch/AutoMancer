@@ -14,33 +14,33 @@ internal static class ConfigureCommand
     // Builds the 'configure' sub-command: attach/clear the target, save or reset settings, and show the result.
     internal static Command Build()
     {
-        var showOpt        = new Option<bool>("--show", "Show the current target and settings (this is also what happens with no options).");
-        var attachOpt      = new Option<string?>("--attach", "Attach to a running app and make it the current target: a number is a PID, otherwise a process name (notepad or notepad.exe), otherwise part of a window title. Several matches is an error that lists them.") { ArgumentHelpName = "pid-or-title" };
-        var clearOpt       = new Option<bool>("--clear", "Forget the current target.");
-        var resetOpt       = new Option<bool>("--reset", "Reset all saved settings to the engine defaults.");
-        var implicitOpt    = new Option<int?>("--implicit-wait", "How long, in ms, a find waits for an element to appear (default 5000).") { ArgumentHelpName = "ms" };
-        var pollOpt        = new Option<int?>("--poll-interval", "How often, in ms, the engine re-checks while waiting (default 500).") { ArgumentHelpName = "ms" };
-        var actionOpt      = new Option<int?>("--action-delay", "Pause, in ms, after each action so the UI can settle (default 150).") { ArgumentHelpName = "ms" };
-        var foregroundOpt  = new Option<int?>("--foreground-timeout", "How long, in ms, to retry bringing a window to the front (default 3000).") { ArgumentHelpName = "ms" };
-        var reresolveOpt   = new Option<bool?>("--reresolve-on-stale", "Re-find an element that went stale mid-action: true or false (default true).") { Arity = ArgumentArity.ExactlyOne, ArgumentHelpName = "true|false" };
-        var providersOpt   = new Option<string?>("--provider-chain", "Comma-separated element providers to try, in order, from uia3, uia2, win32 (default uia3,uia2,win32).") { ArgumentHelpName = "list" };
+        var showOpt        = new Option<bool>("--show") { Description = "Show the current target and settings (this is also what happens with no options)." };
+        var attachOpt      = new Option<string?>("--attach") { Description = "Attach to a running app and make it the current target: a number is a PID, otherwise a process name (notepad or notepad.exe), otherwise part of a window title. Several matches is an error that lists them.", HelpName = "pid-or-title" };
+        var clearOpt       = new Option<bool>("--clear") { Description = "Forget the current target." };
+        var resetOpt       = new Option<bool>("--reset") { Description = "Reset all saved settings to the engine defaults." };
+        var implicitOpt    = new Option<int?>("--implicit-wait") { Description = "How long, in ms, a find waits for an element to appear (default 5000).", HelpName = "ms" };
+        var pollOpt        = new Option<int?>("--poll-interval") { Description = "How often, in ms, the engine re-checks while waiting (default 500).", HelpName = "ms" };
+        var actionOpt      = new Option<int?>("--action-delay") { Description = "Pause, in ms, after each action so the UI can settle (default 150).", HelpName = "ms" };
+        var foregroundOpt  = new Option<int?>("--foreground-timeout") { Description = "How long, in ms, to retry bringing a window to the front (default 3000).", HelpName = "ms" };
+        var reresolveOpt   = new Option<bool?>("--reresolve-on-stale") { Description = "Re-find an element that went stale mid-action: true or false (default true).", Arity = ArgumentArity.ExactlyOne, HelpName = "true|false" };
+        var providersOpt   = new Option<string?>("--provider-chain") { Description = "Comma-separated element providers to try, in order, from uia3, uia2, win32 (default uia3,uia2,win32).", HelpName = "list" };
 
         var command = new Command("configure", "Show or change the current target app and the saved engine settings.");
         foreach (var o in new Option[] { showOpt, attachOpt, clearOpt, resetOpt, implicitOpt, pollOpt, actionOpt, foregroundOpt, reresolveOpt, providersOpt })
-            command.AddOption(o);
-        command.SetHandler(ctx => CliSession.RunAsync(ctx, async ct =>
+            command.Add(o);
+        command.SetAction((pr, token) => CliSession.RunAsync(pr, token, async ct =>
         {
             // Step 1: read and validate everything before changing any state.
-            var r        = ctx.ParseResult;
-            var attach   = r.GetValueForOption(attachOpt);
-            var clear    = r.GetValueForOption(clearOpt);
-            var reset    = r.GetValueForOption(resetOpt);
-            var implicitWait = r.GetValueForOption(implicitOpt);
-            var poll         = r.GetValueForOption(pollOpt);
-            var action       = r.GetValueForOption(actionOpt);
-            var foreground   = r.GetValueForOption(foregroundOpt);
-            var reresolve    = r.GetValueForOption(reresolveOpt);
-            var providers    = r.GetValueForOption(providersOpt)?.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+            var r        = pr;
+            var attach   = r.GetValue(attachOpt);
+            var clear    = r.GetValue(clearOpt);
+            var reset    = r.GetValue(resetOpt);
+            var implicitWait = r.GetValue(implicitOpt);
+            var poll         = r.GetValue(pollOpt);
+            var action       = r.GetValue(actionOpt);
+            var foreground   = r.GetValue(foregroundOpt);
+            var reresolve    = r.GetValue(reresolveOpt);
+            var providers    = r.GetValue(providersOpt)?.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
 
             if (attach is not null && clear)
                 throw new ArgumentException("--attach and --clear can't be used together.");

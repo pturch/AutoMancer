@@ -25,19 +25,19 @@ internal sealed record ScopedLocator(Locator Target, Locator? Scope)
 // The --within-by/--within-value pair: an optional parent element to search inside.
 internal sealed class ScopeOptions
 {
-    public Option<string?> By { get; } = new("--within-by", "Search only inside the element matching this strategy: name, id, class, control, path, runtime, xpath (requires --within-value).");
-    public Option<string?> Value { get; } = new("--within-value", "Value to match against --within-by.");
+    public Option<string?> By { get; } = new("--within-by") { Description = "Search only inside the element matching this strategy: name, id, class, control, path, runtime, xpath (requires --within-value)." };
+    public Option<string?> Value { get; } = new("--within-value") { Description = "Value to match against --within-by." };
 
     // Adds both options to the command.
     public void AddTo(Command command)
     {
-        command.AddOption(By);
-        command.AddOption(Value);
+        command.Add(By);
+        command.Add(Value);
     }
 
     // Parses the pair: null when neither is given; ArgumentException when only one is, or the strategy is unknown.
     public Locator? Parse(ParseResult result)
-        => FindCommand.ParseOptionalLocator(result.GetValueForOption(By), result.GetValueForOption(Value), "--within-by", "--within-value");
+        => FindCommand.ParseOptionalLocator(result.GetValue(By), result.GetValue(Value), "--within-by", "--within-value");
 }
 
 // The --by/--value pair (required or optional) together with the scope pair, parsed into one ScopedLocator.
@@ -50,22 +50,22 @@ internal sealed class LocatorOptions
     // Creates the options; byHelp overrides the --by description for commands where the locator means something specific.
     public LocatorOptions(bool required, string? byHelp = null)
     {
-        By = new("--by", byHelp ?? "Locator strategy: name, id, class, control, path, runtime, xpath.") { IsRequired = required };
-        Value = new("--value", "Value to match against the chosen strategy.") { IsRequired = required };
+        By = new("--by") { Description = byHelp ?? "Locator strategy: name, id, class, control, path, runtime, xpath.", Required = required };
+        Value = new("--value") { Description = "Value to match against the chosen strategy.", Required = required };
     }
 
     // Adds all four options to the command.
     public void AddTo(Command command)
     {
-        command.AddOption(By);
-        command.AddOption(Value);
+        command.Add(By);
+        command.Add(Value);
         Scope.AddTo(command);
     }
 
     // Parses the locator and scope; null when no locator was given (only possible when the options are optional), ArgumentException for a lone half of a pair, a scope without a locator, or an xpath/path locator with a scope.
     public ScopedLocator? Parse(ParseResult result)
     {
-        var target = FindCommand.ParseOptionalLocator(result.GetValueForOption(By), result.GetValueForOption(Value));
+        var target = FindCommand.ParseOptionalLocator(result.GetValue(By), result.GetValue(Value));
         var scope = Scope.Parse(result);
         if (scope is not null && target is null)
             throw new ArgumentException("--within-by and --within-value need --by and --value: they say where to look, not what to find.");

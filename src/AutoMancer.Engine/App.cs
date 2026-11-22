@@ -89,6 +89,7 @@ public class App : IAsyncDisposable
                 ImplicitWaitMs = options.ImplicitWaitMs,
                 PollIntervalMs = options.PollIntervalMs,
                 ReresolveOnStale = options.ReresolveOnStale,
+                AnnotateFailureScreenshots = options.AnnotateFailureScreenshots,
             },
             logger: options.Logger,
             foregroundActivationTimeoutMs: options.ForegroundActivationTimeoutMs)

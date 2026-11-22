@@ -49,6 +49,26 @@ public static class ScreenshotAction
         return Crop(png, region);
     }
 
+    // Captures windowHandle and draws a red GDI+ rectangle around highlight (screen coordinates), or around the whole capture when highlight is null or lies outside the window.
+    internal static async Task<byte[]> CaptureAnnotatedAsync(IntPtr windowHandle, Rect? highlight, CancellationToken ct = default)
+    {
+        var png = await CaptureAsync(windowHandle, ct);
+        var window = VisibleBounds(windowHandle);
+        using var input = new MemoryStream(png);
+        using var image = new System.Drawing.Bitmap(input);
+        var region = highlight is { } rect ? RegionInWindow(rect, window.Left, window.Top, window.Right, window.Bottom) : null;
+        using (var graphics = System.Drawing.Graphics.FromImage(image))
+        using (var pen = new System.Drawing.Pen(System.Drawing.Color.Red, 3))
+        {
+            // Pen straddles its path, so inset the whole-capture fallback to keep the border fully visible.
+            var box = region is { } r ? new System.Drawing.Rectangle(r.X, r.Y, r.Width, r.Height) : new System.Drawing.Rectangle(1, 1, image.Width - 3, image.Height - 3);
+            graphics.DrawRectangle(pen, box);
+        }
+        using var output = new MemoryStream();
+        image.Save(output, System.Drawing.Imaging.ImageFormat.Png);
+        return output.ToArray();
+    }
+
     // The window's visible frame in screen coordinates, minus its 1px edge; GetWindowRect also includes Windows 11's invisible resize border, and the edge pixel is semi-transparent, so both blend in whatever is behind the window and change with it.
     internal static NativeMethods.RECT VisibleBounds(IntPtr windowHandle)
     {

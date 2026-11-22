@@ -1,5 +1,6 @@
 // Copyright (c) AutoMancer Contributors. Licensed under the Apache License, Version 2.0.
 using System.Diagnostics;
+using System.IO;
 using AutoMancer.Engine.Diagnostics;
 using AutoMancer.Engine.Errors;
 
@@ -132,7 +133,25 @@ public sealed class ElementResolver
 
         var tree = await TrySnapshotAsync(session, ct).ConfigureAwait(false);
         var closestMatch = tree is null ? null : ClosestMatchFinder.Find(locator, tree);
-        throw new ElementNotFoundError(locator, attempted.ToArray(), (int)stopwatch.ElapsedMilliseconds, closestMatch);
+        var screenshotPath = _options.AnnotateFailureScreenshots ? await TrySaveAnnotatedScreenshotAsync(session, closestMatch?.BoundingRect, ct).ConfigureAwait(false) : null;
+        throw new ElementNotFoundError(locator, attempted.ToArray(), (int)stopwatch.ElapsedMilliseconds, closestMatch, screenshotPath);
+    }
+
+    // Saves an annotated window screenshot to %TEMP% and returns its path; null (logged) on any failure, so a diagnostics problem never masks the ElementNotFoundError being thrown.
+    private async Task<string?> TrySaveAnnotatedScreenshotAsync(AppSession session, Rect? highlight, CancellationToken ct)
+    {
+        try
+        {
+            var png = await Actions.ScreenshotAction.CaptureAnnotatedAsync(session.RootWindowHandle, highlight, ct).ConfigureAwait(false);
+            var path = Path.Combine(Path.GetTempPath(), $"automancer-notfound-{DateTime.Now:yyyyMMdd-HHmmss-fff}.png");
+            await File.WriteAllBytesAsync(path, png, ct).ConfigureAwait(false);
+            return path;
+        }
+        catch (Exception ex)
+        {
+            _logger?.Warn("Could not save annotated failure screenshot", new { error = ex.Message });
+            return null;
+        }
     }
 
     // Polls the provider chain until a match is found anywhere in the session, or ImplicitWaitMs elapses; throws ElementNotFoundError with a closest-match hint on timeout.

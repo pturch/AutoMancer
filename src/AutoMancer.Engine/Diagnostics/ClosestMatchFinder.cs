@@ -4,7 +4,7 @@ using AutoMancer.Engine.Core;
 namespace AutoMancer.Engine.Diagnostics;
 
 // Produced by ClosestMatchFinder and attached to ElementNotFoundError when a near-match exists.
-public sealed record ClosestMatch(string ElementName, double Confidence);
+public sealed record ClosestMatch(string ElementName, double Confidence, Rect? BoundingRect = null);
 
 // Finds the closest-named element in a snapshot tree when an exact locator match fails, powering "Did you mean?" hints.
 public static class ClosestMatchFinder
@@ -23,7 +23,7 @@ public static class ClosestMatchFinder
             double confidence = Similarity(locator.Value, snapshot.Name);
 
             if (confidence >= MinConfidence && (best is null || confidence > best.Confidence))
-                best = new ClosestMatch(snapshot.Name, confidence);
+                best = new ClosestMatch(snapshot.Name, confidence, snapshot.BoundingRect);
         }
 
         return best;

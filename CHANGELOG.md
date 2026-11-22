@@ -30,6 +30,12 @@ All notable changes to AutoMancer are documented here, described by what you'll 
 - **Running several commands at once could fail, or wipe the saved settings and target.** The file the CLI keeps between commands is now safe to use from overlapping commands.
 - **A few inputs were mishandled instead of rejected.** An empty `--value` matched some arbitrary element, a `--tolerance` of NaN passed validation, trailing spaces in a check value were silently trimmed so the check could never match, and an empty `launch` or `configure --attach` argument was acted on. All of them are now handled.
 
+### Stage 2.7 — Failure Screenshots
+
+#### Added
+
+- **A screenshot of what the engine was looking at when a find fails** — set `AnnotateFailureScreenshots` in `AppOptions` and a find that can't succeed saves a picture of the window to your temp folder, with a red box around the closest match (or around the whole window when nothing is close). The error message ends with the file's path, and `ElementNotFoundError.ScreenshotPath` holds it. Off by default. It covers finds through the normal lookup chain, not spatial finds or lookups inside a popup or second window.
+
 ### Stage 2.3 — Context Menus, Popups and Windows
 
 #### Added

@@ -67,8 +67,8 @@ This project ships in three distinct phases. **Phase 1** is a self-contained C# 
 ║       │       + Regression              Stable, pixel    ║
 ║       │                                 baseline         ║
 ║       │                                                  ║
-║   Stage 2.7: Engine Hardening ───────► DPI matrix,       ║
-║       │                               Win10/11, examples✓║
+║   Stage 2.7: Engine Hardening ───────► error shots,     ║
+║       │                                                  ║
 ║       │                                                  ║
 ║   Stage 2.8: Interaction Coverage ─► toggle/expand/select,║
 ║                          clipboard, grid cells, range val║
@@ -403,20 +403,20 @@ Batch numbers below match the task numbers 1:1 in `extended-coverage-spec.md` (e
 
 ---
 
-### Stage 2.7 — Engine Hardening and Examples
-> **Unlocks:** Confidence that the engine behaves identically across DPI settings and Windows versions, a failed find leaves behind an annotated screenshot instead of just a stack trace, and new C# consumers have working example projects to start from.
-> **Done when:** The Notepad integration suite passes at 100%, 125%, and 150% DPI with identical logical coordinates, and on both Windows 10 and 11; a failed find under a debug flag leaves an annotated PNG in `%TEMP%`; all three example projects build and run.
+### Stage 2.7 — Engine Hardening
+> **Unlocks:** A failed find leaves behind an annotated screenshot instead of just a stack trace.
+> **Done when:** A failed find under a debug flag leaves an annotated PNG in `%TEMP%`. Done — the stage's other three batches were dropped.
 
 | Batch | Work |
 |---|---|
 | 2.7.1 | Annotated error screenshots — on `ElementNotFoundError`, capture a screenshot and draw a red overlay around the search area / closest-match bounding rect via GDI+, save to `%TEMP%`; a new `AppOptions`/`ElementProviderOptions` flag (off by default) turns this on. The engine sibling of Stage 1.9's on-failure diagnostics, for direct `App` consumers rather than `Expect()` |
-| 2.7.2 | DPI compat matrix — run the Notepad integration test suite at 100%, 125%, and 150% DPI; assert identical logical coordinates across all three |
-| 2.7.3 | Windows 10/11 compat — run the full `AutoMancer.Engine.Tests` integration suite on both OS versions; fix any behavioral differences |
-| 2.7.4 | Example projects — `examples/notepad/`, `examples/winforms-calculator/`, `examples/xunit-test-adapter/` |
+| 2.7.2 | ~~DPI compat matrix~~ — dropped: the engine's only load-bearing DPI piece is `DpiAwareness` (physical-pixel rects, already exercised by every live test), and `DpiHelper`'s logical coordinates have no consumer to validate. Number kept so later references stay stable |
+| 2.7.3 | ~~Windows 10/11 compat~~ — dropped: a verification pass that needs a Windows 10 machine the project doesn't have. The integration suite passes on Windows 11; Windows 10 is unverified. Number kept so later references stay stable |
+| 2.7.4 | ~~Example projects~~ — dropped: `samples/ConsumerNotepadTests` and `samples/ConsumerVsCodeTests` already cover the Notepad and xunit examples, and a WinForms app built only as an example isn't worth it. Number kept so later references stay stable |
 
-**This stage is entirely engine-side**, same as the rest of Phase 2 — none of these four batches touch `AutoMancer.Daemon` or either SDK. Exposing the debug-screenshot flag over HTTP is Phase 3's job (see batch 3.6.1), same split pattern as batch 3.2.8.
+**This stage is entirely engine-side**, same as the rest of Phase 2 — none of the batches touch `AutoMancer.Daemon` or either SDK. Exposing the debug-screenshot flag over HTTP is Phase 3's job (see batch 3.6.1), same split pattern as batch 3.2.8.
 
-**After 2.7.4:** DPI/OS compat and examples are done. Phase 2 continues into one more stage: the UIA pattern coverage the daemon and SDKs already assume exists.
+**After 2.7.1:** Stage 2.7 is done. Phase 2 continues into one more stage: the UIA pattern coverage the daemon and SDKs already assume exists.
 
 ---
 
@@ -610,10 +610,7 @@ Batch numbers below match `sdks-spec.md`'s task numbers 1:1 (batch `3.4.4` is Ta
 - [x] `ResourceMonitor.MeasureAsync()` returns before/after handle and memory readings over a live test run
 - [ ] `app.SuggestLocatorAsync(element)` returns a locator that resolves back to that same element
 - [ ] `app.WaitForVisualStableAsync()` resolves once consecutive screenshots stop changing, and a visual regression assertion fails when rendered output drifts from a stored baseline
-- [ ] The Notepad integration suite passes at 100%, 125%, and 150% DPI with identical logical coordinates
-- [ ] The full `AutoMancer.Engine.Tests` integration suite passes on both Windows 10 and 11
-- [ ] A failed find under the debug-screenshot flag leaves an annotated PNG in `%TEMP%`
-- [ ] All three example projects (`notepad`, `winforms-calculator`, `xunit-test-adapter`) build and run
+- [x] A failed find under the debug-screenshot flag leaves an annotated PNG in `%TEMP%`
 - [ ] `app.ToggleAsync(locator)` flips a checkbox's `Toggle.ToggleState`
 - [ ] `app.SelectAsync(locator)` / `GetSelectedItemsAsync(locator)` round-trip a list selection
 - [ ] `app.GetGridCellAsync(locator, row, col)` returns the element at a table/`DataGrid`-style control's cell
@@ -649,7 +646,7 @@ Batch numbers below match `sdks-spec.md`'s task numbers 1:1 (batch `3.4.4` is Ta
 
 ### Multi-Monitor Positioning
 
-**Idea:** Reposition a window to a specific monitor and read each monitor's bounds/DPI — useful for DPI-matrix-style testing across a multi-monitor rig, the counterpart to Stage 2.7's single-monitor DPI compat matrix.
+**Idea:** Reposition a window to a specific monitor and read each monitor's bounds/DPI — useful for testing across a multi-monitor rig with mixed scaling.
 
 - `MonitorHelper` — enumerates monitors via `EnumDisplayMonitors`; `App.MoveToMonitorAsync(int monitorIndex)` would reposition a window to a specific monitor's work area.
 - **Done when (if picked up):** `MoveToMonitorAsync(index)` relocates a window to a specific monitor, or degrades gracefully — inconclusive, not failed — on single-monitor CI.

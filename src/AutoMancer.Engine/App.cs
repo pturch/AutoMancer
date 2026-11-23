@@ -342,6 +342,14 @@ public class App : IAsyncDisposable
     public async Task TakeScreenshotAsync(Locator locator, string savePath, CancellationToken ct = default)
         => await WriteScreenshotAsync(await TakeScreenshotAsync(locator, ct), savePath, ct);
 
+    // Returns the system clipboard's current text, or an empty string when it holds none.
+    public Task<string> GetClipboardTextAsync(CancellationToken ct = default)
+        => ClipboardAction.GetTextAsync(_logger, ct);
+
+    // Replaces the system clipboard's contents with text.
+    public Task SetClipboardTextAsync(string text, CancellationToken ct = default)
+        => ClipboardAction.SetTextAsync(text, _logger, ct);
+
     // Writes png to savePath, creating any missing directories.
     private static async Task WriteScreenshotAsync(byte[] png, string savePath, CancellationToken ct)
     {
@@ -540,6 +548,103 @@ public class App : IAsyncDisposable
     {
         await FindAndRunAsync(locator, el => ScrollAction.ExecuteAsync(el, ct), ct);
         await SettleAsync(ct);
+    }
+
+    // Finds the element and flips its toggle state (checkbox, switch) via TogglePattern; waits ActionDelayMs afterwards for the UI to settle.
+    public async Task ToggleAsync(Locator locator, CancellationToken ct = default)
+    {
+        await FindAndRunAsync(locator, el => ToggleAction.ExecuteAsync(el, ct), ct);
+        await SettleAsync(ct);
+    }
+
+    // Finds the element and expands it (tree node, combo box, menu) via ExpandCollapsePattern; waits ActionDelayMs afterwards for the UI to settle.
+    public async Task ExpandAsync(Locator locator, CancellationToken ct = default)
+    {
+        await FindAndRunAsync(locator, el => ExpandCollapseAction.ExpandAsync(el, ct), ct);
+        await SettleAsync(ct);
+    }
+
+    // Finds the element and collapses it via ExpandCollapsePattern; waits ActionDelayMs afterwards for the UI to settle.
+    public async Task CollapseAsync(Locator locator, CancellationToken ct = default)
+    {
+        await FindAndRunAsync(locator, el => ExpandCollapseAction.CollapseAsync(el, ct), ct);
+        await SettleAsync(ct);
+    }
+
+    // Finds the item and selects it, clearing any other selection, via SelectionItemPattern; waits ActionDelayMs afterwards for the UI to settle.
+    public async Task SelectAsync(Locator locator, CancellationToken ct = default)
+    {
+        await FindAndRunAsync(locator, el => SelectionAction.SelectAsync(el, ct), ct);
+        await SettleAsync(ct);
+    }
+
+    // Finds the item and adds it to the current selection (multi-select lists); waits ActionDelayMs afterwards for the UI to settle.
+    public async Task AddToSelectionAsync(Locator locator, CancellationToken ct = default)
+    {
+        await FindAndRunAsync(locator, el => SelectionAction.AddToSelectionAsync(el, ct), ct);
+        await SettleAsync(ct);
+    }
+
+    // Finds the item and removes it from the current selection; waits ActionDelayMs afterwards for the UI to settle.
+    public async Task RemoveFromSelectionAsync(Locator locator, CancellationToken ct = default)
+    {
+        await FindAndRunAsync(locator, el => SelectionAction.RemoveFromSelectionAsync(el, ct), ct);
+        await SettleAsync(ct);
+    }
+
+    // Finds the item and reports whether it is currently selected; false if it doesn't support selection.
+    public async Task<bool> IsSelectedAsync(Locator locator, CancellationToken ct = default)
+    {
+        var selected = false;
+        await FindAndRunAsync(locator, async el => selected = await SelectionAction.IsSelectedAsync(el, ct), ct);
+        return selected;
+    }
+
+    // Finds the container (list, combo box) and returns its currently selected items; empty if nothing is selected or it doesn't support selection.
+    public async Task<IReadOnlyList<ElementHandle>> GetSelectedItemsAsync(Locator containerLocator, CancellationToken ct = default)
+    {
+        IReadOnlyList<ElementHandle> items = [];
+        await FindAndRunAsync(containerLocator, async el => items = await SelectionAction.GetSelectedItemsAsync(el, ct), ct);
+        return items;
+    }
+
+    // Finds the grid (DataGrid, ListView, table) and returns its row count; 0 if it exposes no grid pattern.
+    public async Task<int> GetGridRowCountAsync(Locator gridLocator, CancellationToken ct = default)
+    {
+        var count = 0;
+        await FindAndRunAsync(gridLocator, async el => count = await GridAction.GetRowCountAsync(el, ct), ct);
+        return count;
+    }
+
+    // Finds the grid and returns its column count; 0 if it exposes no grid pattern.
+    public async Task<int> GetGridColumnCountAsync(Locator gridLocator, CancellationToken ct = default)
+    {
+        var count = 0;
+        await FindAndRunAsync(gridLocator, async el => count = await GridAction.GetColumnCountAsync(el, ct), ct);
+        return count;
+    }
+
+    // Finds the grid and returns the cell at the zero-based row/column as an ordinary handle; null if the grid exposes no grid pattern or UIA has no element there.
+    public async Task<ElementHandle?> GetGridCellAsync(Locator gridLocator, int row, int column, CancellationToken ct = default)
+    {
+        ElementHandle? cell = null;
+        await FindAndRunAsync(gridLocator, async el => cell = await GridAction.GetCellAsync(el, row, column, ct), ct);
+        return cell;
+    }
+
+    // Finds the slider/progress bar/scrollbar and sets its value directly via RangeValuePattern, instead of dragging along its track; waits ActionDelayMs afterwards for the UI to settle.
+    public async Task SetRangeValueAsync(Locator locator, double value, CancellationToken ct = default)
+    {
+        await FindAndRunAsync(locator, el => RangeValueAction.SetValueAsync(el, value, ct), ct);
+        await SettleAsync(ct);
+    }
+
+    // Finds the control and returns its current value with its minimum and maximum; null if it exposes no RangeValuePattern.
+    public async Task<RangeValueInfo?> GetRangeValueAsync(Locator locator, CancellationToken ct = default)
+    {
+        RangeValueInfo? info = null;
+        await FindAndRunAsync(locator, async el => info = await RangeValueAction.GetValueAsync(el, ct), ct);
+        return info;
     }
 
     // Finds the element and scrolls under it via mouse wheel; deltaY/deltaX are in wheel notches (positive deltaY scrolls up).

@@ -611,11 +611,11 @@ Batch numbers below match `sdks-spec.md`'s task numbers 1:1 (batch `3.4.4` is Ta
 - [ ] `app.SuggestLocatorAsync(element)` returns a locator that resolves back to that same element
 - [ ] `app.WaitForVisualStableAsync()` resolves once consecutive screenshots stop changing, and a visual regression assertion fails when rendered output drifts from a stored baseline
 - [x] A failed find under the debug-screenshot flag leaves an annotated PNG in `%TEMP%`
-- [ ] `app.ToggleAsync(locator)` flips a checkbox's `Toggle.ToggleState`
-- [ ] `app.SelectAsync(locator)` / `GetSelectedItemsAsync(locator)` round-trip a list selection
-- [ ] `app.GetGridCellAsync(locator, row, col)` returns the element at a table/`DataGrid`-style control's cell
-- [ ] `app.SetClipboardTextAsync(...)` / `GetClipboardTextAsync()` round-trip a string through the system clipboard
-- [ ] `app.SetRangeValueAsync(locator, value)` / `GetRangeValueAsync(locator)` round-trip a slider or progress bar's numeric value
+- [x] `app.ToggleAsync(locator)` flips a checkbox's `Toggle.ToggleState`
+- [x] `app.SelectAsync(locator)` / `GetSelectedItemsAsync(locator)` round-trip a list selection
+- [x] `app.GetGridCellAsync(locator, row, col)` returns the element at a table/`DataGrid`-style control's cell
+- [x] `app.SetClipboardTextAsync(...)` / `GetClipboardTextAsync()` round-trip a string through the system clipboard
+- [x] `app.SetRangeValueAsync(locator, value)` / `GetRangeValueAsync(locator)` round-trip a slider or progress bar's numeric value
 
 **Phase 3 complete when (daemon + SDKs shipped — future, deferred work):**
 - [ ] `automancer-session start && automancer-session run pytest tests/integration/notepad_test.py && automancer-session stop` exits 0 on clean Windows 11

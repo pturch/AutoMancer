@@ -1237,13 +1237,13 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "AnnotatedFailureScreenshot|
 - `src/AutoMancer.Engine/Actions/ClipboardAction.cs` — `GetTextAsync()`/`SetTextAsync(string)`, each a `Task.Run` wrapper around `System.Windows.Clipboard.GetText()`/`SetText(text)`
 - `src/AutoMancer.Engine/App.cs` — `GetClipboardTextAsync(CancellationToken ct = default)`, `SetClipboardTextAsync(string text, CancellationToken ct = default)`
 
-- [ ] **Implement and build**
+- [x] **Implement and build**
 
 ```bash
 dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
 ```
 
-**Done when:** Engine builds with 0 errors.
+**Done when:** Engine builds with 0 errors. Met. Deviation from the plan: each call runs on a dedicated STA thread rather than `Task.Run`, since the OLE clipboard needs an STA and thread-pool threads are MTA.
 
 ---
 
@@ -1256,7 +1256,7 @@ dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
 - `src/AutoMancer.Engine/App.cs` — `ToggleAsync(Locator locator, CancellationToken ct = default)`
 - `tests/AutoMancer.Engine.Tests/Actions/ToggleActionTests.cs` — no-op for non-UIA handle, no-op when `TogglePattern` unsupported, invokes `Toggle()` when supported (mirroring `ScrollActionTests`'s three-case shape)
 
-- [ ] **Write tests, run (expect FAIL), implement, run (expect PASS)**
+- [x] **Write tests, run (expect FAIL), implement, run (expect PASS)**
 
 ```bash
 dotnet test tests/AutoMancer.Engine.Tests/ --filter "ToggleActionTests"
@@ -1277,7 +1277,7 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "ToggleActionTests"
 - `src/AutoMancer.Engine/App.cs` — `ExpandAsync(Locator locator, CancellationToken ct = default)`, `CollapseAsync(Locator locator, CancellationToken ct = default)`
 - `tests/AutoMancer.Engine.Tests/Actions/ExpandCollapseActionTests.cs`
 
-- [ ] **Write tests, run (expect FAIL), implement, run (expect PASS)**
+- [x] **Write tests, run (expect FAIL), implement, run (expect PASS)**
 
 ```bash
 dotnet test tests/AutoMancer.Engine.Tests/ --filter "ExpandCollapseActionTests"
@@ -1296,7 +1296,7 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "ExpandCollapseActionTests"
 - `src/AutoMancer.Engine/App.cs` — the five methods above
 - `tests/AutoMancer.Engine.Tests/Actions/SelectionActionTests.cs`
 
-- [ ] **Write tests, run (expect FAIL), implement, run (expect PASS)**
+- [x] **Write tests, run (expect FAIL), implement, run (expect PASS)**
 
 ```bash
 dotnet test tests/AutoMancer.Engine.Tests/ --filter "SelectionActionTests"
@@ -1317,7 +1317,7 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "SelectionActionTests"
 - `src/AutoMancer.Engine/App.cs` — the three methods above
 - `tests/AutoMancer.Engine.Tests/Actions/GridActionTests.cs`
 
-- [ ] **Write tests, run (expect FAIL), implement, run (expect PASS)**
+- [x] **Write tests, run (expect FAIL), implement, run (expect PASS)**
 
 ```bash
 dotnet test tests/AutoMancer.Engine.Tests/ --filter "GridActionTests"
@@ -1334,13 +1334,14 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "GridActionTests"
 **Creates:**
 - `tests/AutoMancer.Engine.Tests/Integration/ExtendedPatternIntegrationTests.cs` — toggle, select/multi-select, grid row/column/cell, clipboard round-trip, all against a live test app with the relevant controls (a `ListView` and a checkbox are enough for most of this; `DataGrid`-pattern coverage may need a WinForms/WPF example app if Notepad has nothing suitable — a dedicated fixture app can be the test target)
 
-- [ ] **Run integration tests**
+- [x] **Run integration tests**
 
 ```bash
 dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration&FullyQualifiedName~ExtendedPattern"
+dotnet test tests/AutoMancer.Engine.Tests/ --filter "FullyQualifiedName~GridHostIntegration"
 ```
 
-**Done when:** All four "Done when" claims at the top of this stage hold against a live app.
+**Done when:** All four "Done when" claims at the top of this stage hold against a live app. Met, split across two files: `ExtendedPatternIntegrationTests` (Notepad: clipboard, menu expand/collapse and toggle) and `GridHost/GridHostIntegrationTests` against `fixtures/GridHost`, a small WPF app (DataGrid, multi-select ListBox, CheckBox, ComboBox) built on demand by `GridHostFixture`. A WinForms ListView was tried first and rejected: its UIA provider returns null from `GridPattern.GetItem`, and its `SelectionItemPattern.Select` doesn't deselect and `RemoveFromSelection` does nothing, confirmed with raw UIA calls that bypass the engine.
 
 ---
 
@@ -1352,7 +1353,7 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "Category=Integration&FullyQ
 - `src/AutoMancer.Engine/Actions/RangeValueAction.cs` — `SetValueAsync(double)`, `GetValueAsync()` → `RangeValueInfo(double Value, double Minimum, double Maximum)`
 - `src/AutoMancer.Engine/App.cs` — `SetRangeValueAsync(Locator, double value, CancellationToken ct = default)`, `GetRangeValueAsync(Locator, CancellationToken ct = default)`
 
-- [ ] **Implement and build**
+- [x] **Implement and build**
 
 ```bash
 dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
@@ -1370,13 +1371,13 @@ dotnet build src/AutoMancer.Engine/AutoMancer.Engine.csproj
 - `tests/AutoMancer.Engine.Tests/Actions/RangeValueActionTests.cs`
 - `tests/AutoMancer.Engine.Tests/Integration/ExtendedPatternIntegrationTests.cs` — add a range-value case alongside Task 2.8.6's toggle/select/grid/clipboard cases
 
-- [ ] **Write tests, run (expect FAIL), implement, run (expect PASS)**
+- [x] **Write tests, run (expect FAIL), implement, run (expect PASS)**
 
 ```bash
 dotnet test tests/AutoMancer.Engine.Tests/ --filter "FullyQualifiedName~RangeValue"
 ```
 
-**Done when:** `app.SetRangeValueAsync(locator, value)`/`GetRangeValueAsync(locator)` round-trip a live slider/progress bar's value. The window-level `AppExpect` assertions follow in Tasks 2.8.9–2.8.10.
+**Done when:** `app.SetRangeValueAsync(locator, value)`/`GetRangeValueAsync(locator)` round-trip a live slider/progress bar's value. Met. The live cases sit in `GridHost/GridHostIntegrationTests` (GridHost gained a `Slider` and a read-only `ProgressBar`) rather than the Notepad-based `ExtendedPatternIntegrationTests`, since Notepad has no range control. A progress bar reads back but rejects `SetRangeValueAsync`. The window-level `AppExpect` assertions follow in Tasks 2.8.9–2.8.10.
 
 ---
 
@@ -1392,13 +1393,13 @@ dotnet test tests/AutoMancer.Engine.Tests/ --filter "FullyQualifiedName~RangeVal
 **Creates:**
 - `src/AutoMancer.Testing/AppExpect.cs` — the methods above
 
-- [ ] **Implement and build**
+- [x] **Implement and build**
 
 ```bash
 dotnet build src/AutoMancer.Testing/AutoMancer.Testing.csproj
 ```
 
-**Done when:** Testing project builds with 0 errors.
+**Done when:** Testing project builds with 0 errors. Met. `AutoMancer.Engine` now grants `InternalsVisibleTo` to `AutoMancer.Testing`, so `AppExpect` reads window title/state, process state and visible windows through `NativeMethods` and `AppSession.WindowSatisfiesCriteria` instead of widening `App`'s public surface. `ToHaveMemoryBelowAsync` checks private bytes. Live verification is Task 2.8.10.
 
 ---
 
@@ -1411,14 +1412,14 @@ dotnet build src/AutoMancer.Testing/AutoMancer.Testing.csproj
 - `tests/AutoMancer.Engine.Tests/Integration/Notepad/AppExpectIntegrationTests.cs`
 - `samples/ConsumerNotepadTests/AppExpectDemoTests.cs`
 
-- [ ] **Write tests, run (expect FAIL), implement, run (expect PASS)**
+- [x] **Write tests, run (expect FAIL), implement, run (expect PASS)**
 
 ```bash
 dotnet test tests/AutoMancer.Engine.Tests/ --filter "FullyQualifiedName~AppExpect&Category!=Integration"
 dotnet test tests/AutoMancer.Engine.Tests/ --filter "FullyQualifiedName~AppExpect&Category=Integration"
 ```
 
-**Done when:** every `AppExpect` assertion passes against a live Notepad and fails with `ExpectFailedError` on a wrong expectation. **Phase 2 complete.** The daemon's `PatternEndpoints`/`ClipboardEndpoints` (daemon-spec.md Task 3.2.6) and the SDKs' `ComboBox`/`DataGrid` controls (sdks-spec.md Task 3.3.4/3.4.4) can now delegate to real `App` methods instead of reaching around the engine.
+**Done when:** every `AppExpect` assertion passes against a live Notepad and fails with `ExpectFailedError` on a wrong expectation. Met: 13 unit tests, 8 Notepad integration tests and 4 demo tests pass. Two deviations: the unit tests run on the test host's own process with a non-window root handle (window reads come back blank/false), so only `ToHaveExitedAsync` is checked for retry and window-dependent checks are covered live; and `ToHaveExitedAsync` after closing runs against a throwaway `fixtures/GridHost` instance in `GridHostIntegrationTests`, since closing the single-instance Notepad would break the shared fixture. **Phase 2 complete.** The daemon's `PatternEndpoints`/`ClipboardEndpoints` (daemon-spec.md Task 3.2.6) and the SDKs' `ComboBox`/`DataGrid` controls (sdks-spec.md Task 3.3.4/3.4.4) can now delegate to real `App` methods instead of reaching around the engine.
 
 ---
 
@@ -1533,6 +1534,6 @@ Mirrors roadmap-spec.md's per-phase checklist; see there for the authoritative, 
 - [ ] Task 2.5.2 — a suggested locator resolves back to the same live element
 - [x] Task 2.6.2 — visual regression assertion fails on a drifted baseline
 - [x] Task 2.7.1 — a failed find under the debug-screenshot flag leaves an annotated PNG in `%TEMP%`
-- [ ] Task 2.8.6 — toggle/select/grid/clipboard all verified against a live app
-- [ ] Task 2.8.8 — a slider/progress bar's value round-trips through `RangeValueAction`
-- [ ] Task 2.8.10 — `Expect(app)` window-level assertions (title, state, bounds, process, dialogs, visual stability, resources) verified against a live app
+- [x] Task 2.8.6 — toggle/select/grid/clipboard all verified against a live app
+- [x] Task 2.8.8 — a slider/progress bar's value round-trips through `RangeValueAction`
+- [x] Task 2.8.10 — `Expect(app)` window-level assertions (title, state, bounds, process, dialogs, visual stability, resources) verified against a live app

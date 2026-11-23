@@ -280,6 +280,41 @@ await app.DragThroughAsync([(100, 100), (150, 140), (200, 180)]);         // cli
 await app.ScrollWheelAsync(Locator.ByControlType("Document"), deltaX: 0, deltaY: -3);
 ```
 
+### Patterns and Clipboard:
+
+Controls like checkboxes, menus, lists, grids and sliders expose UI Automation patterns that do the job directly, with no clicking at pixel positions. Each action does nothing when the element doesn't support its pattern, and the reads come back `false`, empty, `0` or `null`:
+
+```csharp
+await app.ToggleAsync(Locator.ByAutomationId("loggingCheck"));               // flips a checkbox or switch
+await app.ExpandAsync(Locator.ByName("File"));                                // opens a menu, tree node or combo box
+await app.CollapseAsync(Locator.ByName("File"));
+
+var item = Locator.ByName("Beta");
+await app.SelectAsync(item);                                                  // selects it, clearing the rest
+await app.AddToSelectionAsync(Locator.ByName("Delta"));                       // multi-select lists
+bool selected = await app.IsSelectedAsync(item);
+var chosen = await app.GetSelectedItemsAsync(Locator.ByAutomationId("greekList"));   // ordinary ElementHandles
+
+var grid = Locator.ByAutomationId("fruitGrid");
+int rows = await app.GetGridRowCountAsync(grid);
+int columns = await app.GetGridColumnCountAsync(grid);
+ElementHandle? cell = await app.GetGridCellAsync(grid, row: 1, column: 2);    // zero-based; null if the grid has no such cell
+
+await app.SetRangeValueAsync(Locator.ByAutomationId("volumeSlider"), 7);      // sets a slider directly instead of dragging it
+RangeValueInfo? volume = await app.GetRangeValueAsync(Locator.ByAutomationId("volumeSlider"));   // Value, Minimum, Maximum
+
+await app.SetClipboardTextAsync("copied text");                               // the system clipboard, not tied to any element
+string text = await app.GetClipboardTextAsync();
+```
+
+A few things to know:
+- Not every control implements these patterns completely. WPF's do. A WinForms `ListView`'s selection and grid support is partial, so `GetGridCellAsync` returns `null` and deselecting does nothing. If an action seems to be ignored, check the control with the `tree` command before blaming the call.
+- A grid reports `0` rows and columns when it exposes no grid pattern. Under UIA2, a control with only `TablePattern` works too.
+- A progress bar reads back through `GetRangeValueAsync` but is read-only, so `SetRangeValueAsync` on one throws UI Automation's own error.
+- The clipboard calls log only the text's length, since a clipboard often holds something sensitive.
+
+See [`samples/ConsumerNotepadTests/ExtendedPatternDemoTests.cs`](samples/ConsumerNotepadTests/ExtendedPatternDemoTests.cs) for clipboard, expand/collapse and toggle against a live Notepad. Selection, grid and range-value are exercised against a small WPF app in [`fixtures/GridHost`](fixtures/GridHost), by `GridHostIntegrationTests`.
+
 ### Popups, Context Menus and Windows:
 
 An `App` only searches inside the window it's rooted at, so a menu or dialog that opens in a window of its own won't turn up in a plain `FindAsync`. Instead, you can scope to it:
@@ -406,6 +441,20 @@ await Expect(app, Locator.ByControlType("Document")).ToHaveValueAsync("Hello, Au
 var element = await app.FindAsync(Locator.ByControlType("Document"));
 Expect(element).ToBeVisible();
 ```
+
+`Expect(app)` with no locator asserts about the window and process as a whole, with the same retrying behavior:
+
+```csharp
+await Expect(app).ToHaveTitleAsync(new Regex("Notepad"));          // or an exact string
+await Expect(app).ToBeMaximizedAsync();                            // also ToBeMinimizedAsync, ToBeForegroundAsync
+await Expect(app).ToHaveBoundsAsync(new Rect(100, 100, 800, 600), tolerancePx: 4);
+await Expect(app).ToHaveDialogAsync(new WindowMatchOptions { TitleContains = "Open" });   // and ToHaveNoDialogAsync, ToHaveWindowCountAsync
+await Expect(app).ToBeRespondingAsync();                           // also ToBeRunningAsync, ToHaveExitedAsync
+await Expect(app).ToBeVisuallyStableAsync();                       // the window has stopped changing
+await Expect(app).ToHaveMemoryBelowAsync(500L * 1024 * 1024);      // private bytes; also ToHaveHandleCountBelowAsync
+```
+
+Because `SetWindowStateAsync` returns before Windows applies the change, wait with `ToBeMinimizedAsync`/`ToBeMaximizedAsync` instead of acting straight away. See [`samples/ConsumerNotepadTests/AppExpectDemoTests.cs`](samples/ConsumerNotepadTests/AppExpectDemoTests.cs).
 
 `AutoMancer.Testing.XUnit` builds on that for xUnit. It provides an fixture for launch/teardown, plus a base class that exposes `App` and `Expect` to your test classes. When `AutoMancerTestOptions.CaptureScreenshotsOnFailure` is on, a failed validation automatically captures a screenshot and folds the path into the assertion message.
 

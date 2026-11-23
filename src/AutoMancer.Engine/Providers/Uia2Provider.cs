@@ -271,7 +271,7 @@ public sealed class Uia2Provider : IElementProvider, IElementIdentity
     private static readonly Uia2Operator _op = new();
 
     // Wraps a live UIA2 element as an ElementHandle; null only if identity can't be read — a single failed property just leaves that field blank.
-    private ElementHandle? Wrap(AutomationElement element)
+    internal ElementHandle? Wrap(AutomationElement element)
     {
         string id = "", name = "", automationId = "", className = "", controlTypeName = "Unknown";
         Rect rect = default;

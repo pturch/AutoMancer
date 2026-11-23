@@ -405,7 +405,7 @@ public sealed class Uia3Provider : IElementProvider, IElementIdentity
     private static readonly Uia3Operator _op = new();
 
     // Wraps a live UIA3 element as an ElementHandle; null only if identity can't be read — a single failed property just leaves that field blank.
-    private ElementHandle? Wrap(IUIAutomationElement element)
+    internal ElementHandle? Wrap(IUIAutomationElement element)
     {
         string id = "", name = "", automationId = "", className = "", controlTypeName = "Unknown";
         Rect rect = default;

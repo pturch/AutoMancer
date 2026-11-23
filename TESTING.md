@@ -82,6 +82,14 @@ Asserting against an element you already resolved yourself doesn't retry. It che
 | `ToBeUnobscuredAsync(timeoutMs?, pollIntervalMs?)` / `ToBeObscuredAsync(...)` | locator only | A click at the element's center would / wouldn't reach it, via `App.IsUnobscuredAsync`; polls, since an overlay fading in or out can briefly report the old state |
 | `ToHaveValueAsync(string, timeoutMs?, pollIntervalMs?)` | locator only | The element's live value (not its `Name`) equals exactly. This is the one that reads what's actually typed into an editor. |
 | `ToMatchScreenshotAsync(path, maxDifferenceRatio?, timeoutMs?, pollIntervalMs?)` | app / locator | The window's (or element's) pixels match a stored baseline PNG within the ratio (default 1%). A missing baseline is recorded and the assertion fails so you review it. Same display scale only; see [Visual Stability and Baselines](README.md#visual-stability-and-baselines) for keeping captures stable |
+| `Expect(app).ToHaveTitleAsync(string \| Regex)` | app | The window title equals the string exactly, or matches the pattern |
+| `Expect(app).ToBeMinimizedAsync()` / `ToBeMaximizedAsync()` / `ToBeForegroundAsync()` | app | The window's state; minimize and maximize are applied asynchronously by Windows, so wait with these instead of acting straight away |
+| `Expect(app).ToHaveBoundsAsync(Rect, tolerancePx = 2)` | app | The window's bounds match on every edge within the tolerance |
+| `Expect(app).ToBeRunningAsync()` / `ToHaveExitedAsync()` / `ToBeRespondingAsync()` | app | Process state: running, exited (e.g. after a close), or processing window messages |
+| `Expect(app).ToHaveWindowCountAsync(int)` | app | Exactly that many visible top-level windows, the main one included |
+| `Expect(app).ToHaveDialogAsync(WindowMatchOptions)` / `ToHaveNoDialogAsync()` | app | A matching visible window other than the main one is open / none is |
+| `Expect(app).ToBeVisuallyStableAsync(maxDifferenceRatio = 0.001)` | app | Two consecutive window captures differ by at most that fraction of pixels |
+| `Expect(app).ToHaveMemoryBelowAsync(long)` / `ToHaveHandleCountBelowAsync(int)` | app | Private bytes / open handles are under the ceiling, for leak-style checks at the end of a test |
 
 The locator-based, retrying assertions and the element-based, one-shot ones live in separate helper classes internally, but you call both the same way, through the `Expect` you saw above. Either kind throws on failure, and the message names what was expected alongside what was actually found.
 

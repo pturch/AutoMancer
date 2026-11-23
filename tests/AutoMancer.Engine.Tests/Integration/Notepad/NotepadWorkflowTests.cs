@@ -201,6 +201,8 @@ public sealed class NotepadWorkflowTests(NotepadFixture fixture) : IClassFixture
         await _app.SetWindowStateAsync(WindowState.Minimized);
         try
         {
+            // SetWindowStateAsync returns before Windows has applied the state, so wait for it instead of racing the click's check.
+            await Expect(_app).ToBeMinimizedAsync();
             await Assert.ThrowsAsync<WindowMinimizedError>(() => _app.ClickAsync(Locator.ByControlType("Document")));
         }
         finally

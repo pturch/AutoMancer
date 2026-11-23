@@ -39,11 +39,9 @@ public sealed class ScopedFindIntegrationTests
     [Fact]
     public async Task FindAllScopedAsync_ScopedToMenuBar_EnumeratesFileEditView()
     {
-        var app = await App.LaunchAsync("notepad.exe");
+        var app = await LaunchWithMenuBarAsync();
         try
         {
-            // FindAllScopedAsync is a single pass — LaunchAsync returns once the window exists, which can be before its XAML MenuBar is fully populated, so wait for the last item before enumerating.
-            await app.FindScopedAsync(Locator.ByName("View"), Locator.ByAutomationId("MenuBar"));
             var menuItems = await app.FindAllScopedAsync(Locator.ByControlType("MenuItem"), Locator.ByAutomationId("MenuBar"));
 
             Assert.Equal(["File", "Edit", "View"], menuItems.Select(m => m.Name).ToList());
@@ -57,7 +55,7 @@ public sealed class ScopedFindIntegrationTests
     [Fact]
     public async Task FindScopedAsync_ScopedToMenuBar_FindsEditMenuItemSpecifically()
     {
-        var app = await App.LaunchAsync("notepad.exe");
+        var app = await LaunchWithMenuBarAsync();
         try
         {
             var edit = await app.FindScopedAsync(Locator.ByName("Edit"), Locator.ByAutomationId("MenuBar"));
@@ -74,7 +72,7 @@ public sealed class ScopedFindIntegrationTests
     [Fact]
     public async Task FindScopedAsync_ScopedToMenuBar_LocatorMatchingOnlyOutsideScope_ThrowsElementNotFoundError()
     {
-        var app = await App.LaunchAsync("notepad.exe");
+        var app = await LaunchWithMenuBarAsync();
         try
         {
             await Assert.ThrowsAsync<ElementNotFoundError>(() =>
@@ -83,6 +81,23 @@ public sealed class ScopedFindIntegrationTests
         finally
         {
             await app.KillAsync();
+        }
+    }
+
+    // Launches Notepad and waits for its XAML MenuBar to be populated, so a menu-scoped test never races a half-built tree or a window left mid-transition by an earlier test; kills the instance if the wait fails.
+    private static async Task<App> LaunchWithMenuBarAsync()
+    {
+        var app = await App.LaunchAsync("notepad.exe");
+        try
+        {
+            NotepadFixture.SendEscape();
+            await app.FindScopedAsync(Locator.ByName("View"), Locator.ByAutomationId("MenuBar"));
+            return app;
+        }
+        catch
+        {
+            await app.KillAsync();
+            throw;
         }
     }
 }

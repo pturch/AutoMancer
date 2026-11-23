@@ -30,6 +30,19 @@ All notable changes to AutoMancer are documented here, described by what you'll 
 - **Running several commands at once could fail, or wipe the saved settings and target.** The file the CLI keeps between commands is now safe to use from overlapping commands.
 - **A few inputs were mishandled instead of rejected.** An empty `--value` matched some arbitrary element, a `--tolerance` of NaN passed validation, trailing spaces in a check value were silently trimmed so the check could never match, and an empty `launch` or `configure --attach` argument was acted on. All of them are now handled.
 
+### Stage 2.8 — Pattern Actions, Clipboard and Window Assertions
+
+#### Added
+
+- **Drive checkboxes, menus, lists, grids and sliders directly** — `app` can now flip a checkbox or switch, expand and collapse a menu, tree node or combo box, select and deselect list items and read what's selected, read a grid's size and fetch one cell, and set or read a slider's value, all through UI Automation instead of pixel-aimed clicks. Each does nothing when the control doesn't support it, and a control that has gone away raises `StaleElementError`, as other actions do.
+- **Read and write the clipboard** — `GetClipboardTextAsync` and `SetClipboardTextAsync` handle text, Unicode included. Only the length of the text is ever logged.
+- **Assertions about the whole window** — `Expect(app)` can now check the window's title, whether it is minimized, maximized or in front, its bounds, whether the process is running, responding or has exited, how many windows and dialogs are open, that the window has stopped changing, and that memory and handle use stay under a ceiling. They retry like every other assertion.
+- **Examples** — `ExtendedPatternDemoTests` and `AppExpectDemoTests` in `samples/ConsumerNotepadTests`, and a small WPF test app in `fixtures/GridHost` that the selection, grid and range-value tests run against.
+
+#### Fixed
+
+- **A minimized-window test that failed about half the time** after a maximize/minimize test ran before it. `SetWindowStateAsync` returns before Windows has applied the state, so the test now waits for it.
+
 ### Stage 2.7 — Failure Screenshots
 
 #### Added
